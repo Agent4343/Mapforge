@@ -6,15 +6,19 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def _fixup_db_url(url: str) -> str:
+    """Convert any Postgres URL variant to postgresql+asyncpg:// for SQLAlchemy async."""
+    # Railway may prefix with "type: " — find the actual URL
+    for scheme in ("postgresql://", "postgres://"):
+        idx = url.find(scheme)
+        if idx != -1:
+            return "postgresql+asyncpg://" + url[idx + len(scheme):]
+    return url
+
+
 class Settings:
-    # Database — Railway provides postgres:// or postgresql://, SQLAlchemy async needs postgresql+asyncpg://
-    _raw_db_url: str = os.getenv("DATABASE_URL", "sqlite+aiosqlite:////tmp/mapforge.db")
-    if _raw_db_url.startswith("postgres://"):
-        DATABASE_URL: str = "postgresql+asyncpg://" + _raw_db_url.split("://", 1)[1]
-    elif _raw_db_url.startswith("postgresql://"):
-        DATABASE_URL: str = "postgresql+asyncpg://" + _raw_db_url.split("://", 1)[1]
-    else:
-        DATABASE_URL: str = _raw_db_url
+    # Database
+    DATABASE_URL: str = _fixup_db_url(os.getenv("DATABASE_URL", "sqlite+aiosqlite:////tmp/mapforge.db"))
 
     # Auth
     SECRET_KEY: str = os.getenv("SECRET_KEY", "mapforge-dev-secret-change-in-production")
