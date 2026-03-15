@@ -33,8 +33,8 @@ class User(Base):
     stripe_connect_account_id = Column(String(255), nullable=True)
     stripe_payouts_enabled = Column(Boolean, default=False)
     generation_count_this_month = Column(Integer, default=0)
-    month_reset_date = Column(DateTime, default=_utcnow)
-    created_at = Column(DateTime, default=_utcnow)
+    month_reset_date = Column(DateTime(timezone=True), default=_utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
 
     files = relationship("GeneratedFile", back_populates="owner")
     listings = relationship("MarketplaceListing", back_populates="seller")
@@ -66,7 +66,7 @@ class GeneratedFile(Base):
     province = Column(String(100), nullable=True, index=True)
     lat = Column(Float, nullable=True)
     lon = Column(Float, nullable=True)
-    created_at = Column(DateTime, default=_utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
 
     owner = relationship("User", back_populates="files")
     listing = relationship("MarketplaceListing", back_populates="file", uselist=False)
@@ -88,7 +88,7 @@ class MarketplaceListing(Base):
     sale_count = Column(Integer, default=0)
     average_rating = Column(Float, default=0.0)
     rating_count = Column(Integer, default=0)
-    created_at = Column(DateTime, default=_utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
 
     file = relationship("GeneratedFile", back_populates="listing")
     seller = relationship("User", back_populates="listings")
@@ -107,7 +107,7 @@ class Purchase(Base):
     seller_payout_cents = Column(Integer, nullable=False)
     stripe_payment_intent_id = Column(String(255), nullable=True)
     status = Column(String(20), default="completed")  # pending, completed, refunded
-    created_at = Column(DateTime, default=_utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
 
     __table_args__ = (
         UniqueConstraint("listing_id", "buyer_id", name="uq_purchase_listing_buyer"),
@@ -126,7 +126,7 @@ class Review(Base):
     rating = Column(Integer, nullable=False)  # 1-5
     comment = Column(Text, nullable=True)
     cnc_compatible = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=_utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
 
     __table_args__ = (
         UniqueConstraint("listing_id", "buyer_id", name="uq_review_listing_buyer"),
