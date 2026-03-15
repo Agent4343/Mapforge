@@ -1,7 +1,9 @@
-export default function CustomizePanel({ config, onChange }) {
+export default function CustomizePanel({ config, onChange, user }) {
   function update(key, value) {
     onChange({ ...config, [key]: value });
   }
+
+  const isPro = user?.tier === "pro";
 
   return (
     <div className="customize-section">
@@ -14,6 +16,7 @@ export default function CustomizePanel({ config, onChange }) {
           value={config.text}
           onChange={(e) => update("text", e.target.value)}
           placeholder="Location name"
+          maxLength={200}
         />
       </div>
 
@@ -24,11 +27,11 @@ export default function CustomizePanel({ config, onChange }) {
             value={config.boardSize}
             onChange={(e) => update("boardSize", e.target.value)}
           >
-            <option value="small">Small (12×16")</option>
-            <option value="medium">Medium (16×20")</option>
-            <option value="large">Large (20×24")</option>
-            <option value="xl">XL (24×32")</option>
-            <option value="max">Max (32×48")</option>
+            <option value="small">Small (12x16")</option>
+            <option value="medium">Medium (16x20")</option>
+            <option value="large">Large (20x24")</option>
+            <option value="xl">XL (24x32")</option>
+            <option value="max">Max (32x48")</option>
           </select>
         </div>
 
@@ -61,16 +64,29 @@ export default function CustomizePanel({ config, onChange }) {
         </div>
 
         <div className="control-group">
-          <label>Font Size (mm)</label>
-          <input
-            type="number"
-            min="6"
-            max="30"
-            step="1"
-            value={config.fontSize}
-            onChange={(e) => update("fontSize", Number(e.target.value))}
-          />
+          <label>Export Format</label>
+          <select
+            value={config.exportFormat}
+            onChange={(e) => update("exportFormat", e.target.value)}
+          >
+            <option value="svg">SVG</option>
+            <option value="dxf" disabled={!user || user.tier === "free"}>
+              DXF {!user || user.tier === "free" ? "(Maker+)" : ""}
+            </option>
+          </select>
         </div>
+      </div>
+
+      <div className="control-group">
+        <label>Font Size (mm)</label>
+        <input
+          type="number"
+          min="4"
+          max="40"
+          step="1"
+          value={config.fontSize}
+          onChange={(e) => update("fontSize", Number(e.target.value))}
+        />
       </div>
 
       <div className="toggle-row">
@@ -96,6 +112,60 @@ export default function CustomizePanel({ config, onChange }) {
           <span className="toggle-slider" />
         </label>
       </div>
+
+      {config.productType === "city" && (
+        <div className="toggle-row">
+          <label>Include Streets</label>
+          <label className="toggle-switch">
+            <input
+              type="checkbox"
+              checked={config.includeStreets}
+              onChange={(e) => update("includeStreets", e.target.checked)}
+            />
+            <span className="toggle-slider" />
+          </label>
+        </div>
+      )}
+
+      {(config.productType === "lake" || config.productType === "park") && (
+        <div className="toggle-row">
+          <label>Contours {!isPro && "(Pro)"}</label>
+          <label className="toggle-switch">
+            <input
+              type="checkbox"
+              checked={config.includeContours}
+              onChange={(e) => update("includeContours", e.target.checked)}
+              disabled={!isPro}
+            />
+            <span className="toggle-slider" />
+          </label>
+        </div>
+      )}
+
+      {config.includeContours && isPro && (
+        <div className="control-row">
+          <div className="control-group">
+            <label>Contour Type</label>
+            <select
+              value={config.contourType}
+              onChange={(e) => update("contourType", e.target.value)}
+            >
+              <option value="depth">Bathymetric (Depth)</option>
+              <option value="elevation">Topographic (Elevation)</option>
+            </select>
+          </div>
+          <div className="control-group">
+            <label>Depth Bands</label>
+            <input
+              type="number"
+              min="2"
+              max="10"
+              value={config.numDepthBands}
+              onChange={(e) => update("numDepthBands", Number(e.target.value))}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

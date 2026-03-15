@@ -1,0 +1,133 @@
+"""SQLAlchemy database models."""
+
+import uuid
+from datetime import datetime, timezone
+
+from sqlalchemy import (
+    Boolean, Column, DateTime, Enum, Float, ForeignKey, Integer, String, Text,
+    UniqueConstraint,
+)
+from sqlalchemy.orm import relationship
+
+from app.database import Base
+
+
+def _uuid() -> str:
+    return uuid.uuid4().hex[:16]
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    username = Column(String(100), unique=True, nullable=False, index=True)
+    hashed_password = Column(String(255), nullable=False)
+    tier = Column(String(20), default="free")  # free, maker, pro
+    stripe_customer_id = Column(String(255), nullable=True)
+    stripe_subscription_id = Column(String(255), nullable=True)
+    generation_count_this_month = Column(Integer, default=0)
+    month_reset_date = Column(DateTime, default=_utcnow)
+    created_at = Column(DateTime, default=_utcnow)
+
+    files = relationship("GeneratedFile", back_populates="owner")
+    listings = relationship("MarketplaceListing", back_populates="seller")
+    purchases = relationship("Purchase", back_populates="buyer")
+
+
+class GeneratedFile(Base):
+    __tablename__ = "generated_files"
+
+    id = Column(String(16), primary_key=True, default=_uuid)
+    owner_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    osm_id = Column(Integer, nullable=False, index=True)
+    osm_type = Column(String(20), nullable=False)
+    product_type = Column(String(20), nullable=False)
+    location_name = Column(String(255), nullable=False)
+    display_text = Column(String(255), nullable=False)
+    board_size = Column(String(20), nullable=False)
+    board_width_mm = Column(Float, nullable=False)
+    board_height_mm = Column(Float, nullable=False)
+    style = Column(String(20), nullable=False)
+    show_coordinates = Column(Boolean, default=True)
+    font_size_mm = Column(Float, default=14.0)
+    node_count = Column(Integer, default=0)
+    path_count = Column(Integer, default=0)
+    layer_count = Column(Integer, default=0)
+    svg_storage_key = Column(String(512), nullable=False)
+    dxf_storage_key = Column(String(512), nullable=True)
+    thumbnail_key = Column(String(512), nullable=True)
+    province = Column(String(100), nullable=True, index=True)
+    lat = Column(Float, nullable=True)
+    lon = Column(Float, nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
+
+    owner = relationship("User", back_populates="files")
+    listing = relationship("MarketplaceListing", back_populates="file", uselist=False)
+
+
+class MarketplaceListing(Base):
+    __tablename__ = "marketplace_listings"
+
+    id = Column(String(16), primary_key=True, default=_uuid)
+    file_id = Column(String(16), ForeignKey("generated_files.id"), unique=True, nullable=False)
+    seller_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    price_cents = Column(Integer, nullable=False)  # in cents
+    currency = Column(String(3), default="USD")
+    title = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    tags = Column(Text, nullable=True)  # comma-separated
+    is_active = Column(Boolean, default=True)
+    view_count = Column(Integer, default=0)
+    sale_count = Column(Integer, default=0)
+    average_rating = Column(Float, default=0.0)
+    rating_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=_utcnow)
+
+    file = relationship("GeneratedFile", back_populates="listing")
+    seller = relationship("User", back_populates="listings")
+    purchases = relationship("Purchase", back_populates="listing")
+    reviews = relationship("Review", back_populates="listing")
+
+
+class Purchase(Base):
+    __tablename__ = "purchases"
+
+    id = Column(String(16), primary_key=True, default=_uuid)
+    listing_id = Column(String(16), ForeignKey("marketplace_listings.id"), nullable=False)
+    buyer_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    price_cents = Column(Integer, nullable=False)
+    platform_fee_cents = Column(Integer, nullable=False)
+    seller_payout_cents = Column(Integer, nullable=False)
+    stripe_payment_intent_id = Column(String(255), nullable=True)
+    status = Column(String(20), default="completed")  # pending, completed, refunded
+    created_at = Column(DateTime, default=_utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("listing_id", "buyer_id", name="uq_purchase_listing_buyer"),
+    )
+
+    listing = relationship("MarketplaceListing", back_populates="purchases")
+    buyer = relationship("User", back_populates="purchases")
+
+
+class Review(Base):
+    __tablename__ = "reviews"
+
+    id = Column(String(16), primary_key=True, default=_uuid)
+    listing_id = Column(String(16), ForeignKey("marketplace_listings.id"), nullable=False)
+    buyer_id = Column(String(36), ForeignKey("users.id"), nullable=False)
+    rating = Column(Integer, nullable=False)  # 1-5
+    comment = Column(Text, nullable=True)
+    cnc_compatible = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=_utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("listing_id", "buyer_id", name="uq_review_listing_buyer"),
+    )
+
+    listing = relationship("MarketplaceListing", back_populates="reviews")

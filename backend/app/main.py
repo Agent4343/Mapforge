@@ -1,27 +1,59 @@
 """MapForge CNC — FastAPI Application Entry Point."""
 
 import os
+from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
-from app.routers import search, generate
+from app.config import settings
+from app.database import init_db
+from app.logging_config import log
+from app.routers import auth, generate, library, marketplace, search, webhooks
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup and shutdown events."""
+    log.info("MapForge CNC starting up...")
+    await init_db()
+    log.info("Database initialized")
+
+    # Ensure local storage directory exists
+    if settings.STORAGE_BACKEND == "local":
+        os.makedirs(settings.STORAGE_LOCAL_PATH, exist_ok=True)
+
+    yield
+    log.info("MapForge CNC shutting down...")
+
+
+# Rate limiter
+limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(
     title="MapForge CNC",
     description="Canadian Geographic SVG Generator for CNC Routing",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
-# Allow Railway frontend URL, localhost dev, and any custom origin via env
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# CORS
 allowed_origins = [
     "http://localhost:3000",
     "http://localhost:5173",
 ]
-if os.environ.get("FRONTEND_URL"):
-    allowed_origins.append(os.environ["FRONTEND_URL"])
-if os.environ.get("RAILWAY_PUBLIC_DOMAIN"):
-    allowed_origins.append(f"https://{os.environ['RAILWAY_PUBLIC_DOMAIN']}")
+if settings.FRONTEND_URL:
+    allowed_origins.append(settings.FRONTEND_URL)
+railway_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
+if railway_domain:
+    allowed_origins.append(f"https://{railway_domain}")
 
 app.add_middleware(
     CORSMiddleware,
@@ -31,8 +63,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Routers
+app.include_router(auth.router)
 app.include_router(search.router)
 app.include_router(generate.router)
+app.include_router(library.router)
+app.include_router(marketplace.router)
+app.include_router(webhooks.router)
 
 
 @app.get("/")
