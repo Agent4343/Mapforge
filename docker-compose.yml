@@ -5,10 +5,15 @@ services:
       - "8000:8000"
     environment:
       - PYTHONUNBUFFERED=1
+      - PORT=8000
+      - FRONTEND_URL=http://localhost:3000
 
   frontend:
     build: ./frontend
     ports:
       - "3000:3000"
+    environment:
+      - PORT=3000
+      - BACKEND_URL=http://backend:8000/
     depends_on:
       - backend
