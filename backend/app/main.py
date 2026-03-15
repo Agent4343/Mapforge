@@ -81,6 +81,16 @@ async def health():
     return {"status": "ok"}
 
 
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Catch unhandled exceptions and return JSON instead of HTML tracebacks."""
+    log.error(f"Unhandled error on {request.method} {request.url.path}: {exc}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal server error: {type(exc).__name__}: {exc}"},
+    )
+
+
 # Serve frontend static files (built React app)
 # This must come AFTER API routes so /api/* takes priority
 if STATIC_DIR.is_dir() and (STATIC_DIR / "index.html").is_file():
