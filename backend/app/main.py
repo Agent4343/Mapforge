@@ -83,8 +83,10 @@ async def health():
 
 # Serve frontend static files (built React app)
 # This must come AFTER API routes so /api/* takes priority
-if STATIC_DIR.is_dir():
-    app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
+if STATIC_DIR.is_dir() and (STATIC_DIR / "index.html").is_file():
+    assets_dir = STATIC_DIR / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
@@ -94,6 +96,8 @@ if STATIC_DIR.is_dir():
             return FileResponse(file_path)
         return FileResponse(STATIC_DIR / "index.html")
 else:
+    log.info("No frontend build found — serving API only")
+
     @app.get("/")
     async def root():
         return {

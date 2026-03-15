@@ -153,45 +153,50 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     # Parse province from location name for filtering
     province = _extract_province(location_name)
 
-    # Save to database
+    # Save to database (only for authenticated users)
     center = processed.get("center_latlon", (None, None))
-    file_record = GeneratedFile(
-        owner_id=user.id if user else "anonymous",
-        osm_id=req.osm_id,
-        osm_type=req.osm_type,
-        product_type=req.product_type.value,
-        location_name=location_name,
-        display_text=req.text,
-        board_size=req.board_size.value,
-        board_width_mm=board_w,
-        board_height_mm=board_h,
-        style=req.style.value,
-        show_coordinates=req.show_coordinates,
-        font_size_mm=req.font_size_mm,
-        node_count=result["node_count"],
-        path_count=result["path_count"],
-        layer_count=result["layer_count"],
-        svg_storage_key=svg_key,
-        dxf_storage_key=dxf_key,
-        province=province,
-        lat=center[0],
-        lon=center[1],
-    )
-    db.add(file_record)
+    file_id = None
 
-    # Increment generation count
     if user:
+        file_record = GeneratedFile(
+            owner_id=user.id,
+            osm_id=req.osm_id,
+            osm_type=req.osm_type,
+            product_type=req.product_type.value,
+            location_name=location_name,
+            display_text=req.text,
+            board_size=req.board_size.value,
+            board_width_mm=board_w,
+            board_height_mm=board_h,
+            style=req.style.value,
+            show_coordinates=req.show_coordinates,
+            font_size_mm=req.font_size_mm,
+            node_count=result["node_count"],
+            path_count=result["path_count"],
+            layer_count=result["layer_count"],
+            svg_storage_key=svg_key,
+            dxf_storage_key=dxf_key,
+            province=province,
+            lat=center[0],
+            lon=center[1],
+        )
+        db.add(file_record)
         user.generation_count_this_month += 1
-
-    await db.commit()
-    await db.refresh(file_record)
-
-    log.info(f"Generated file {file_record.id}: {location_name} ({result['node_count']} nodes)")
+        await db.commit()
+        await db.refresh(file_record)
+        file_id = file_record.id
+        log.info(f"Generated file {file_id}: {location_name} ({result['node_count']} nodes)")
+    else:
+        # Anonymous user — return SVG without persisting
+        import hashlib
+        key = f"anon:{req.osm_type}:{req.osm_id}:{req.style.value}:{int(board_w)}x{int(board_h)}"
+        file_id = hashlib.sha256(key.encode()).hexdigest()[:16]
+        log.info(f"Anonymous generation: {location_name} ({result['node_count']} nodes)")
 
     return GenerateResponse(
         svg=result["svg"] if req.export_format == ExportFormat.svg else None,
         dxf_available=dxf_key is not None,
-        file_id=file_record.id,
+        file_id=file_id,
         location_name=location_name,
         dimensions_mm=(board_w, board_h),
         node_count=result["node_count"],
