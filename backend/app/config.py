@@ -7,8 +7,9 @@ load_dotenv()
 
 
 class Settings:
-    # Database
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite+aiosqlite:////tmp/mapforge.db")
+    # Database — Railway provides postgresql://, SQLAlchemy async needs postgresql+asyncpg://
+    _raw_db_url: str = os.getenv("DATABASE_URL", "sqlite+aiosqlite:////tmp/mapforge.db")
+    DATABASE_URL: str = _raw_db_url.replace("postgresql://", "postgresql+asyncpg://", 1) if _raw_db_url.startswith("postgresql://") else _raw_db_url
 
     # Auth
     SECRET_KEY: str = os.getenv("SECRET_KEY", "mapforge-dev-secret-change-in-production")
