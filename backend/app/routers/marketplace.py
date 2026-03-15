@@ -91,7 +91,7 @@ async def create_listing(
     db: AsyncSession = Depends(get_db),
 ):
     """List a generated file on the marketplace."""
-    if user.tier not in ("maker", "pro"):
+    if user.tier not in ("maker", "pro", "admin"):
         raise HTTPException(status_code=403, detail="Marketplace listing requires Maker or Pro subscription.")
 
     # Verify file ownership
@@ -162,7 +162,7 @@ async def purchase_listing(
         raise HTTPException(status_code=409, detail="You already purchased this file.")
 
     # Calculate fees
-    fee_pct = settings.PLATFORM_FEE_PERCENT_PRO if user.tier == "pro" else settings.PLATFORM_FEE_PERCENT_MAKER
+    fee_pct = settings.PLATFORM_FEE_PERCENT_PRO if user.tier in ("pro", "admin") else settings.PLATFORM_FEE_PERCENT_MAKER
     platform_fee = int(listing.price_cents * fee_pct / 100)
     seller_payout = listing.price_cents - platform_fee
 

@@ -39,6 +39,9 @@ def _check_tier_limits(user: User | None, req: GenerateRequest):
         return
 
     tier = user.tier
+    if tier == "admin":
+        return  # Admin bypasses all limits
+
     if tier == "free":
         if user.generation_count_this_month >= settings.FREE_PROVINCE_LIMIT:
             raise HTTPException(status_code=403, detail=f"Free tier limit reached ({settings.FREE_PROVINCE_LIMIT} generations/month). Upgrade to Maker for more.")
@@ -137,7 +140,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
 
     # Generate DXF if requested or for persistence
     dxf_key = None
-    if req.export_format == ExportFormat.dxf or (user and user.tier in ("maker", "pro")):
+    if req.export_format == ExportFormat.dxf or (user and user.tier in ("maker", "pro", "admin")):
         try:
             dxf_bytes = generate_dxf(
                 processed=processed,
@@ -234,7 +237,7 @@ async def batch_generate(
     db: AsyncSession = Depends(get_db),
 ):
     """Batch generate multiple SVG/DXF files (Pro tier only)."""
-    if user.tier != "pro":
+    if user.tier not in ("pro", "admin"):
         raise HTTPException(status_code=403, detail="Batch generation requires Pro subscription.")
 
     if len(req.items) > settings.PRO_BATCH_LIMIT:

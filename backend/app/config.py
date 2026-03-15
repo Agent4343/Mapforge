@@ -53,6 +53,9 @@ class Settings:
     MAKER_LIBRARY_LIMIT: int = 100
     PRO_BATCH_LIMIT: int = 50
 
+    # Admin
+    ADMIN_EMAILS: list[str] = ["mathesonashley@hotmail.com"]
+
     # Seller payouts
     STRIPE_PAYOUT_DELAY_DAYS: int = 7  # Days before payout to sellers
 

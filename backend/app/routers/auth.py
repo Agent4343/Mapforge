@@ -10,6 +10,7 @@ from app.models.schemas import (
     AuthResponse, LoginRequest, RegisterRequest, UserProfile,
     SubscriptionRequest, SubscriptionResponse,
 )
+from app.config import settings
 from app.services.auth import (
     create_access_token, get_current_user, hash_password, verify_password,
 )
@@ -35,11 +36,13 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
     # Create Stripe customer
     stripe_id = await create_customer(req.email, req.username)
 
+    tier = "admin" if req.email in settings.ADMIN_EMAILS else "free"
     user = User(
         email=req.email,
         username=req.username,
         hashed_password=hash_password(req.password),
         stripe_customer_id=stripe_id,
+        tier=tier,
     )
     db.add(user)
     await db.commit()
@@ -68,6 +71,11 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
 
     if not user or not verify_password(req.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    # Auto-promote admin if not already
+    if user.email in settings.ADMIN_EMAILS and user.tier != "admin":
+        user.tier = "admin"
+        await db.commit()
 
     token = create_access_token(user.id)
     log.info(f"User logged in: {user.username}")
@@ -124,7 +132,7 @@ async def seller_onboard(
     db: AsyncSession = Depends(get_db),
 ):
     """Start Stripe Connect onboarding for a seller."""
-    if user.tier not in ("maker", "pro"):
+    if user.tier not in ("maker", "pro", "admin"):
         raise HTTPException(status_code=403, detail="Seller features require Maker or Pro subscription.")
 
     # Create connected account if not exists

@@ -38,6 +38,7 @@ class UserTier(str, Enum):
     free = "free"
     maker = "maker"
     pro = "pro"
+    admin = "admin"
 
 
 BOARD_DIMENSIONS_INCHES = {
