@@ -30,28 +30,27 @@ router = APIRouter(prefix="/api/v1", tags=["generate"])
 def _check_tier_limits(user: User | None, req: GenerateRequest):
     """Enforce subscription tier limits."""
     if user is None:
-        # Anonymous — only province silhouettes allowed (up to 3 tracked via cookies/IP in production)
-        if req.product_type.value != "province":
-            raise HTTPException(
-                status_code=403,
-                detail="Sign up for free to generate province silhouettes, or subscribe for all product types.",
-            )
+        # Anonymous — allow basic generation so users can try the app
+        if req.include_contours:
+            raise HTTPException(status_code=403, detail="Contour layers require a Pro subscription. Sign up free to get started.")
+        if req.export_format == ExportFormat.dxf:
+            raise HTTPException(status_code=403, detail="DXF export requires a Maker or Pro subscription.")
         return
 
     tier = user.tier
     if tier == "free":
-        if req.product_type.value != "province":
-            raise HTTPException(status_code=403, detail="Free tier only supports province silhouettes. Upgrade to Maker.")
         if user.generation_count_this_month >= settings.FREE_PROVINCE_LIMIT:
-            raise HTTPException(status_code=403, detail=f"Free tier limit reached ({settings.FREE_PROVINCE_LIMIT} provinces). Upgrade to continue.")
+            raise HTTPException(status_code=403, detail=f"Free tier limit reached ({settings.FREE_PROVINCE_LIMIT} generations/month). Upgrade to Maker for more.")
+        if req.include_contours:
+            raise HTTPException(status_code=403, detail="Bathymetric/topo layers require Pro subscription.")
+        if req.export_format == ExportFormat.dxf:
+            raise HTTPException(status_code=403, detail="DXF export requires Maker or Pro subscription.")
 
     elif tier == "maker":
         if user.generation_count_this_month >= settings.MAKER_MONTHLY_LIMIT:
             raise HTTPException(status_code=403, detail=f"Maker tier limit reached ({settings.MAKER_MONTHLY_LIMIT}/month). Upgrade to Pro for unlimited.")
         if req.include_contours:
             raise HTTPException(status_code=403, detail="Bathymetric/topo layers require Pro subscription.")
-        if req.export_format == ExportFormat.dxf and tier == "free":
-            raise HTTPException(status_code=403, detail="DXF export requires Maker or Pro subscription.")
 
     # Pro: unlimited
 
