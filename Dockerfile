@@ -1,0 +1,30 @@
+# Stage 1: Build frontend
+FROM node:22-alpine AS frontend-build
+
+WORKDIR /frontend
+COPY frontend/package.json ./
+RUN npm install
+COPY frontend/ .
+RUN npm run build
+
+# Stage 2: Python backend + built frontend
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgeos-dev \
+    libproj-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY backend/ .
+
+# Copy built frontend into static directory
+COPY --from=frontend-build /frontend/dist /app/static
+
+EXPOSE 8000
+
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
