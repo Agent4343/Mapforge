@@ -2,10 +2,13 @@
 
 from datetime import datetime, timedelta, timezone
 
+import base64
+import hashlib
+
+import bcrypt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,23 +16,24 @@ from app.config import settings
 from app.database import get_db
 from app.models.db_models import User
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=12)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
 
 
-def _prep_password(password: str) -> str:
-    """Pre-hash with SHA-256 to handle bcrypt's 72-byte limit."""
-    import base64
-    import hashlib
-    return base64.b64encode(hashlib.sha256(password.encode("utf-8")).digest()).decode("ascii")
+def _prep_password(password: str) -> bytes:
+    """Pre-hash with SHA-256 to handle bcrypt's 72-byte limit. Returns bytes."""
+    digest = hashlib.sha256(password.encode("utf-8")).digest()
+    return base64.b64encode(digest)
 
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(_prep_password(password))
+    return bcrypt.hashpw(_prep_password(password), bcrypt.gensalt(rounds=12)).decode("ascii")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(_prep_password(plain), hashed)
+    try:
+        return bcrypt.checkpw(_prep_password(plain), hashed.encode("ascii"))
+    except Exception:
+        return False
 
 
 def create_access_token(user_id: str) -> str:
