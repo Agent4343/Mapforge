@@ -23,6 +23,7 @@ from app.services.dxf_generator import generate_dxf
 from app.services.street_fetcher import fetch_streets
 from app.services.contour_fetcher import fetch_contour_lines, generate_depth_bands
 from app.services.file_storage import store_file, retrieve_file
+from app.services.thumbnail_generator import generate_thumbnail
 
 router = APIRouter(prefix="/api/v1", tags=["generate"])
 
@@ -149,6 +150,15 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         except Exception as e:
             log.warning(f"DXF generation failed (non-fatal): {e}")
 
+    # Generate PNG thumbnail for Etsy product mockups
+    thumbnail_key = None
+    try:
+        png_bytes = generate_thumbnail(result["svg"])
+        thumbnail_key = svg_key.replace("svg/", "thumbnails/").replace(".svg", ".png")
+        await store_file(thumbnail_key, png_bytes, content_type="image/png")
+    except Exception as e:
+        log.warning(f"Thumbnail generation failed (non-fatal): {e}")
+
     # Parse province from location name for filtering
     province = _extract_province(location_name)
 
@@ -175,6 +185,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             layer_count=result["layer_count"],
             svg_storage_key=svg_key,
             dxf_storage_key=dxf_key,
+            thumbnail_key=thumbnail_key,
             province=province,
             lat=center[0],
             lon=center[1],
@@ -195,6 +206,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     return GenerateResponse(
         svg=result["svg"] if req.export_format == ExportFormat.svg else None,
         dxf_available=dxf_key is not None,
+        thumbnail_available=thumbnail_key is not None,
         file_id=file_id,
         location_name=location_name,
         dimensions_mm=(board_w, board_h),
@@ -310,6 +322,37 @@ async def download(
             "Content-Disposition": f'attachment; filename="{filename}"',
             "X-MapForge-Nodes": str(file_record.node_count),
             "X-MapForge-Paths": str(file_record.path_count),
+        },
+    )
+
+
+@router.get("/download/{file_id}/thumbnail")
+async def download_thumbnail(
+    file_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Download a PNG thumbnail image for Etsy/product listings."""
+    from sqlalchemy import select
+    result = await db.execute(
+        select(GeneratedFile).where(GeneratedFile.id == file_id)
+    )
+    file_record = result.scalar_one_or_none()
+    if not file_record:
+        raise HTTPException(status_code=404, detail="File not found.")
+
+    if not file_record.thumbnail_key:
+        raise HTTPException(status_code=404, detail="Thumbnail not available for this file.")
+
+    content = await retrieve_file(file_record.thumbnail_key)
+    if content is None:
+        raise HTTPException(status_code=404, detail="Thumbnail file not found in storage.")
+
+    filename = file_record.location_name.replace(" ", "_").lower() + "_mockup.png"
+    return Response(
+        content=content,
+        media_type="image/png",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
         },
     )
 

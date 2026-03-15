@@ -6,6 +6,7 @@ export default function ExportPanel({
   onGenerate,
   onDownload,
   onDownloadDXF,
+  onDownloadThumbnail,
   canGenerate,
   generating,
   user,
@@ -73,6 +74,11 @@ export default function ExportPanel({
             {result.dxf_available && (
               <button className="btn btn-secondary" onClick={onDownloadDXF}>
                 Download DXF
+              </button>
+            )}
+            {result.thumbnail_available && (
+              <button className="btn btn-secondary" onClick={onDownloadThumbnail}>
+                Download PNG Mockup
               </button>
             )}
           </div>

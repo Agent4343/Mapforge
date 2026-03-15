@@ -9,7 +9,7 @@ import MarketplaceView from "./components/MarketplaceView.jsx";
 import SellerDashboard from "./components/SellerDashboard.jsx";
 import BatchPanel from "./components/BatchPanel.jsx";
 import {
-  generateSVG, downloadSVG, downloadDXF,
+  generateSVG, downloadSVG, downloadDXF, downloadThumbnail,
   getProfile, logout, getToken,
 } from "./services/api.js";
 
@@ -216,6 +216,16 @@ export default function App() {
     }
   }, [result, config.text]);
 
+  const handleDownloadThumbnail = useCallback(async () => {
+    if (!result) return;
+    try {
+      const blob = await downloadThumbnail(result.file_id);
+      _triggerDownload(blob, config.text + "_mockup", "png");
+    } catch (err) {
+      setError(err.message);
+    }
+  }, [result, config.text]);
+
   function _triggerDownload(blob, name, ext) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -332,6 +342,7 @@ export default function App() {
             onGenerate={handleGenerate}
             onDownload={handleDownload}
             onDownloadDXF={handleDownloadDXF}
+            onDownloadThumbnail={handleDownloadThumbnail}
             canGenerate={!!selectedResult}
             generating={generating}
             user={user}

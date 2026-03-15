@@ -131,6 +131,12 @@ async function downloadDXF(fileId) {
   return resp.blob();
 }
 
+async function downloadThumbnail(fileId) {
+  const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}/thumbnail`);
+  if (!resp.ok) throw new Error("Thumbnail download failed");
+  return resp.blob();
+}
+
 // --- Library ---
 
 async function getLibrary(page = 1, perPage = 20, filters = {}) {
@@ -231,7 +237,7 @@ async function getReviews(listingId) {
 export {
   setToken, getToken, register, login, logout, getProfile,
   searchLocations, generateSVG, batchGenerate,
-  downloadSVG, downloadDXF,
+  downloadSVG, downloadDXF, downloadThumbnail,
   getLibrary, deleteLibraryFile,
   browseMarketplace, createListing, purchaseListing,
   getSellerDashboard, submitReview, getReviews,

@@ -131,6 +131,7 @@ class GenerateRequest(BaseModel):
 class GenerateResponse(BaseModel):
     svg: Optional[str] = None
     dxf_available: bool = False
+    thumbnail_available: bool = False
     file_id: str
     location_name: str
     dimensions_mm: tuple[float, float]
