@@ -1,5 +1,6 @@
 import { useState, useRef } from "react";
 import { searchLocations } from "../services/api.js";
+import MapPreview from "./MapPreview.jsx";
 
 const TYPE_LABELS = {
   lake: "Lake",
@@ -8,7 +9,7 @@ const TYPE_LABELS = {
   park: "Park",
 };
 
-export default function SearchPanel({ onSelect, selectedResult }) {
+export default function SearchPanel({ onSelect, selectedResult, country }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -29,7 +30,7 @@ export default function SearchPanel({ onSelect, selectedResult }) {
       setLoading(true);
       setError(null);
       try {
-        const data = await searchLocations(val.trim());
+        const data = await searchLocations(val.trim(), country);
         setResults(data.results || []);
       } catch (err) {
         setError(err.message);
@@ -85,6 +86,15 @@ export default function SearchPanel({ onSelect, selectedResult }) {
             </div>
           ))}
         </div>
+      )}
+
+      {selectedResult && (
+        <MapPreview
+          lat={selectedResult.lat}
+          lon={selectedResult.lon}
+          boundingbox={selectedResult.boundingbox}
+          name={selectedResult.display_name.split(",")[0]}
+        />
       )}
     </div>
   );

@@ -13,7 +13,10 @@ from app.models.schemas import (
 from app.services.auth import (
     create_access_token, get_current_user, hash_password, verify_password,
 )
-from app.services.payments import create_customer, create_checkout_session, SUBSCRIPTION_PRICES
+from app.services.payments import (
+    create_customer, create_checkout_session, SUBSCRIPTION_PRICES,
+    create_connected_account, create_account_onboarding_link, get_account_status,
+)
 from app.logging_config import log
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -113,3 +116,48 @@ async def subscribe(
         cancel_url=req.cancel_url,
     )
     return SubscriptionResponse(checkout_url=checkout_url)
+
+
+@router.post("/seller/onboard")
+async def seller_onboard(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Start Stripe Connect onboarding for a seller."""
+    if user.tier not in ("maker", "pro"):
+        raise HTTPException(status_code=403, detail="Seller features require Maker or Pro subscription.")
+
+    # Create connected account if not exists
+    if not user.stripe_connect_account_id:
+        account_id = await create_connected_account(user.email)
+        user.stripe_connect_account_id = account_id
+        await db.commit()
+    else:
+        account_id = user.stripe_connect_account_id
+
+    # Create onboarding link
+    onboarding_url = await create_account_onboarding_link(
+        account_id=account_id,
+        refresh_url="https://mapforge.app/seller/onboard",
+        return_url="https://mapforge.app/seller/dashboard",
+    )
+
+    return {"onboarding_url": onboarding_url}
+
+
+@router.get("/seller/status")
+async def seller_status(user: User = Depends(get_current_user)):
+    """Check seller payout account status."""
+    if not user.stripe_connect_account_id:
+        return {
+            "has_account": False,
+            "payouts_enabled": False,
+            "charges_enabled": False,
+            "details_submitted": False,
+        }
+
+    status = await get_account_status(user.stripe_connect_account_id)
+    return {
+        "has_account": True,
+        **status,
+    }

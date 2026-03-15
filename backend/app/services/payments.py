@@ -1,4 +1,4 @@
-"""Stripe payment integration for marketplace and subscriptions."""
+"""Stripe payment integration for marketplace, subscriptions, and seller payouts."""
 
 import stripe
 from fastapi import HTTPException
@@ -52,6 +52,7 @@ async def create_payment_intent(
     amount_cents: int,
     currency: str = "usd",
     metadata: dict | None = None,
+    transfer_group: str | None = None,
 ) -> dict:
     """Create a payment intent for a marketplace purchase."""
     if not settings.STRIPE_SECRET_KEY:
@@ -62,13 +63,17 @@ async def create_payment_intent(
             "status": "succeeded",
         }
 
-    intent = stripe.PaymentIntent.create(
-        amount=amount_cents,
-        currency=currency,
-        customer=customer_id,
-        metadata=metadata or {},
-        automatic_payment_methods={"enabled": True},
-    )
+    params = {
+        "amount": amount_cents,
+        "currency": currency,
+        "customer": customer_id,
+        "metadata": metadata or {},
+        "automatic_payment_methods": {"enabled": True},
+    }
+    if transfer_group:
+        params["transfer_group"] = transfer_group
+
+    intent = stripe.PaymentIntent.create(**params)
     return {
         "id": intent.id,
         "client_secret": intent.client_secret,
@@ -92,6 +97,79 @@ async def create_transfer(
         transfer_group=transfer_group,
     )
     return transfer.id
+
+
+# --- Connected Accounts for Seller Payouts ---
+
+async def create_connected_account(email: str, country: str = "CA") -> str:
+    """Create a Stripe Connect Express account for a seller."""
+    if not settings.STRIPE_SECRET_KEY:
+        log.warning("Stripe not configured — returning mock account ID")
+        return f"acct_mock_{email.split('@')[0]}"
+
+    account = stripe.Account.create(
+        type="express",
+        country=country,
+        email=email,
+        capabilities={
+            "transfers": {"requested": True},
+        },
+    )
+    log.info(f"Created Stripe connected account: {account.id}")
+    return account.id
+
+
+async def create_account_onboarding_link(
+    account_id: str,
+    refresh_url: str,
+    return_url: str,
+) -> str:
+    """Create an onboarding link for a seller to complete Stripe setup."""
+    if not settings.STRIPE_SECRET_KEY:
+        raise HTTPException(status_code=503, detail="Payments not configured")
+
+    link = stripe.AccountLink.create(
+        account=account_id,
+        refresh_url=refresh_url,
+        return_url=return_url,
+        type="account_onboarding",
+    )
+    return link.url
+
+
+async def get_account_status(account_id: str) -> dict:
+    """Check the status of a connected account."""
+    if not settings.STRIPE_SECRET_KEY:
+        return {"charges_enabled": False, "payouts_enabled": False, "details_submitted": False}
+
+    account = stripe.Account.retrieve(account_id)
+    return {
+        "charges_enabled": account.charges_enabled,
+        "payouts_enabled": account.payouts_enabled,
+        "details_submitted": account.details_submitted,
+    }
+
+
+async def create_payout(
+    amount_cents: int,
+    destination_account: str,
+    description: str = "MapForge marketplace payout",
+) -> str | None:
+    """Create a payout to a seller's connected account bank."""
+    if not settings.STRIPE_SECRET_KEY:
+        return None
+
+    try:
+        payout = stripe.Payout.create(
+            amount=amount_cents,
+            currency="usd",
+            description=description,
+            stripe_account=destination_account,
+        )
+        return payout.id
+    except stripe.error.StripeError as e:
+        log.error(f"Payout failed for {destination_account}: {e}")
+        return None
 
 
 def verify_webhook_signature(payload: bytes, sig_header: str) -> dict:

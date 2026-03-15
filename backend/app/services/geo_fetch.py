@@ -1,7 +1,13 @@
-"""Fetch full geometry from OpenStreetMap Overpass API and Nominatim."""
+"""Fetch full geometry from OpenStreetMap Overpass API and Nominatim with caching."""
+
+import json
 
 import httpx
-from shapely.geometry import shape, MultiPolygon, Polygon, GeometryCollection
+from shapely.geometry import shape, mapping, MultiPolygon, Polygon, GeometryCollection
+
+from app.config import settings
+from app.logging_config import log
+from app.services.cache import cache_get, cache_set, make_geometry_key
 
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 NOMINATIM_LOOKUP_URL = "https://nominatim.openstreetmap.org/lookup"
@@ -13,13 +19,31 @@ OSM_TYPE_MAP = {"node": "N", "way": "W", "relation": "R"}
 async def fetch_geometry(osm_id: int, osm_type: str = "relation") -> MultiPolygon | Polygon | None:
     """Fetch full polygon geometry for an OSM feature.
 
-    Tries Nominatim first (fast path), falls back to Overpass for complex relations.
+    Checks cache first, then tries Nominatim (fast path), falls back to Overpass.
     """
-    geom = await _fetch_via_nominatim(osm_id, osm_type)
-    if geom is not None:
-        return geom
+    # Check cache
+    cache_key = make_geometry_key(osm_id, osm_type)
+    cached = await cache_get(cache_key)
+    if cached is not None:
+        try:
+            geom = shape(cached)
+            if isinstance(geom, (Polygon, MultiPolygon)):
+                log.info(f"Geometry cache hit: {osm_type}/{osm_id}")
+                return geom
+        except Exception:
+            pass
 
-    geom = await _fetch_via_overpass(osm_id, osm_type)
+    geom = await _fetch_via_nominatim(osm_id, osm_type)
+    if geom is None:
+        geom = await _fetch_via_overpass(osm_id, osm_type)
+
+    # Cache the result
+    if geom is not None:
+        try:
+            await cache_set(cache_key, mapping(geom), ttl=settings.CACHE_TTL_GEOMETRY)
+        except Exception as e:
+            log.debug(f"Failed to cache geometry: {e}")
+
     return geom
 
 

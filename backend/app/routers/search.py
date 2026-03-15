@@ -1,4 +1,4 @@
-"""Search API router with rate limiting."""
+"""Search API router with rate limiting — supports Canada, US, and global."""
 
 from fastapi import APIRouter, Query, Request
 from slowapi import Limiter
@@ -17,9 +17,9 @@ limiter = Limiter(key_func=get_remote_address)
 async def search(
     request: Request,
     q: str = Query(..., min_length=1, description="Location search query"),
-    country: str = Query("ca", description="Country code (default: Canada)"),
+    country: str = Query("ca", description="Country code: ca, us, or empty for global"),
     limit: int = Query(10, ge=1, le=25, description="Max results"),
 ):
-    """Search for Canadian geographic locations."""
+    """Search for geographic locations. Supports Canada, US, and global search."""
     results = await search_location(q, country=country, limit=limit)
     return SearchResponse(results=results, query=q, count=len(results))

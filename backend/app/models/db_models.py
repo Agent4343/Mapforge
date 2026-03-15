@@ -30,6 +30,8 @@ class User(Base):
     tier = Column(String(20), default="free")  # free, maker, pro
     stripe_customer_id = Column(String(255), nullable=True)
     stripe_subscription_id = Column(String(255), nullable=True)
+    stripe_connect_account_id = Column(String(255), nullable=True)
+    stripe_payouts_enabled = Column(Boolean, default=False)
     generation_count_this_month = Column(Integer, default=0)
     month_reset_date = Column(DateTime, default=_utcnow)
     created_at = Column(DateTime, default=_utcnow)

@@ -1,24 +1,35 @@
-"""Geographic search service using OpenStreetMap Nominatim API."""
+"""Geographic search service using OpenStreetMap Nominatim API with caching."""
 
 import httpx
 
+from app.config import settings
 from app.models.schemas import SearchResult
+from app.services.cache import cache_get, cache_set, make_search_key
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 NOMINATIM_HEADERS = {"User-Agent": "MapForgeCNC/1.0 (mapforge-cnc-app)"}
 
 
 async def search_location(query: str, country: str = "ca", limit: int = 10) -> list[SearchResult]:
-    """Search for a Canadian geographic location via Nominatim."""
+    """Search for a geographic location via Nominatim. Supports ca, us, or empty for global."""
+    # Check cache first
+    cache_key = make_search_key(query, country, limit)
+    cached = await cache_get(cache_key)
+    if cached is not None:
+        return [SearchResult(**r) for r in cached]
+
     params = {
         "q": query,
         "format": "json",
         "addressdetails": 1,
         "limit": limit,
-        "countrycodes": country,
         "polygon_geojson": 1,
         "extratags": 1,
     }
+
+    # Only add countrycodes if a specific country is selected
+    if country:
+        params["countrycodes"] = country
 
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.get(NOMINATIM_URL, params=params, headers=NOMINATIM_HEADERS)
@@ -43,6 +54,9 @@ async def search_location(query: str, country: str = "ca", limit: int = 10) -> l
             boundingbox=[float(b) for b in item.get("boundingbox", [])],
             has_geometry=has_geometry,
         ))
+
+    # Cache results
+    await cache_set(cache_key, [r.model_dump() for r in results], ttl=settings.CACHE_TTL_SEARCH)
 
     return results
 

@@ -32,6 +32,7 @@ export default function CustomizePanel({ config, onChange, user }) {
             <option value="large">Large (20x24")</option>
             <option value="xl">XL (24x32")</option>
             <option value="max">Max (32x48")</option>
+            <option value="custom">Custom</option>
           </select>
         </div>
 
@@ -47,6 +48,33 @@ export default function CustomizePanel({ config, onChange, user }) {
           </select>
         </div>
       </div>
+
+      {config.boardSize === "custom" && (
+        <div className="control-row">
+          <div className="control-group">
+            <label>Width (inches)</label>
+            <input
+              type="number"
+              min="2"
+              max="60"
+              step="0.5"
+              value={config.customWidth || 16}
+              onChange={(e) => update("customWidth", Number(e.target.value))}
+            />
+          </div>
+          <div className="control-group">
+            <label>Height (inches)</label>
+            <input
+              type="number"
+              min="2"
+              max="60"
+              step="0.5"
+              value={config.customHeight || 20}
+              onChange={(e) => update("customHeight", Number(e.target.value))}
+            />
+          </div>
+        </div>
+      )}
 
       <div className="control-row">
         <div className="control-group">

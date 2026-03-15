@@ -31,6 +31,13 @@ async def lifespan(app: FastAPI):
     if settings.STORAGE_BACKEND == "local":
         os.makedirs(settings.STORAGE_LOCAL_PATH, exist_ok=True)
 
+    # Pre-fetch popular locations (non-blocking, runs in background)
+    if settings.REDIS_URL:
+        import asyncio
+        from app.services.popular_locations import prefetch_popular_locations
+        asyncio.create_task(prefetch_popular_locations(include_us=True))
+        log.info("Popular locations pre-fetch started in background")
+
     yield
     log.info("MapForge CNC shutting down...")
 
@@ -40,7 +47,7 @@ limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(
     title="MapForge CNC",
-    description="Canadian Geographic SVG Generator for CNC Routing",
+    description="Geographic SVG Generator for CNC Routing — Canada, US, and Global",
     version="1.0.0",
     lifespan=lifespan,
 )

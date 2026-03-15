@@ -1,8 +1,8 @@
 # MapForge CNC — Product Story Bible
 
-**Canadian Geographic SVG Generator for CNC Routing**
+**Geographic SVG Generator for CNC Routing — Canada, US, and Global**
 
-MapForge CNC is a cross-platform application that transforms any Canadian geographic location — lakes, provinces, cities, national parks, communities — into production-ready SVG files optimized for CNC routing with VCarve Pro and similar CAM software. Users search for a location, customize the design, and export a dimensionally accurate SVG file ready for immediate import and toolpath generation.
+MapForge CNC is a cross-platform application that transforms any geographic location — lakes, provinces/states, cities, national parks, communities — into production-ready SVG files optimized for CNC routing with VCarve Pro and similar CAM software. Users search for a location, customize the design, and export a dimensionally accurate SVG file ready for immediate import and toolpath generation. Now with US and global support, Redis caching, mobile-first design, and a full seller payout system.
 
 The application serves two revenue streams: (1) generating files for in-house CNC production of physical wood signs and maps, and (2) selling the SVG files as digital downloads on Etsy, Shopify, and the app's own marketplace.
 
@@ -10,7 +10,7 @@ The application serves two revenue streams: (1) generating files for in-house CN
 |---|---|
 | **Document** | Product Story Bible — Complete Technical & Business Specification |
 | **Product** | MapForge CNC |
-| **Version** | 1.0 |
+| **Version** | 2.0 |
 | **Date** | March 15, 2026 |
 | **Platform** | iOS (primary) • Web App (secondary) • Desktop (future) |
 | **Tech Stack** | SwiftUI / React • Python Backend • OpenStreetMap APIs • QGIS Libraries |
@@ -41,6 +41,7 @@ The application serves two revenue streams: (1) generating files for in-house CN
 18. [Technical Specifications & SVG Output Reference](#18-technical-specifications--svg-output-reference)
 19. [Competitive Analysis](#19-competitive-analysis)
 20. [Appendix: SVG Code Examples](#20-appendix-svg-code-examples)
+21. [Version 2.0 — Major Product Improvements](#21-version-20--major-product-improvements)
 
 ---
 
@@ -48,7 +49,7 @@ The application serves two revenue streams: (1) generating files for in-house CN
 
 ### The One-Liner
 
-**MapForge CNC turns any Canadian location into a CNC-ready SVG file in under 60 seconds.**
+**MapForge CNC turns any location — Canada, US, or global — into a CNC-ready SVG file in under 60 seconds.**
 
 ### The Elevator Pitch
 
@@ -762,6 +763,171 @@ Create Etsy digital download listings for popular SVG files. Each file is listed
 
 ---
 
-*End of MapForge CNC Product Story Bible — Version 1.0*
+---
 
-*Generated March 15, 2026. This is a living document and will be updated as the product evolves.*
+## 21. Version 2.0 — Major Product Improvements
+
+Version 2.0 represents a significant evolution of MapForge CNC, expanding from a Canada-only tool to a global platform with professional-grade features for CNC operators, digital file sellers, and marketplace buyers.
+
+### 21.1 Geographic Expansion — US and Global Support
+
+MapForge now supports searching and generating SVG files for **any location worldwide**, not just Canada. Key changes:
+
+- **Multi-country search**: Users can select Canada, United States, or Global from a dropdown in the header
+- **Backend**: The search API accepts a `country` parameter (`ca`, `us`, or empty for global)
+- **OpenStreetMap data**: Works globally since OSM has worldwide coverage
+- **US Popular Locations**: Pre-cached list of popular US lakes, states, and national parks (Lake Tahoe, Yellowstone, Grand Canyon, etc.)
+- **Future**: USGS topographic data integration for enhanced US elevation contours
+
+### 21.2 Redis Caching Layer
+
+An optional Redis caching layer dramatically improves performance for repeated searches and geometry fetches:
+
+- **Search cache**: Results cached for 1 hour (configurable via `CACHE_TTL_SEARCH`)
+- **Geometry cache**: Fetched geometries cached for 24 hours (configurable via `CACHE_TTL_GEOMETRY`)
+- **Graceful fallback**: When Redis is not available, the app works normally without caching
+- **Configuration**: Set `REDIS_URL` environment variable to enable
+- **Cache keys**: Namespaced by query type (`search:`, `geom:`) for easy management
+
+### 21.3 Popular Locations Pre-Generation
+
+On startup (when Redis is configured), MapForge pre-fetches and caches geometry for the ~45 most popular Canadian and US locations:
+
+- **13 Canadian provinces/territories**
+- **10 major Canadian cities** (Toronto, Montreal, Vancouver, etc.)
+- **7 popular Canadian lakes** (Muskoka, Simcoe, Okanagan, etc.)
+- **5 national parks** (Banff, Jasper, Algonquin, etc.)
+- **9 popular US locations** (Lake Tahoe, Yellowstone, NYC, etc.)
+
+This means generation for popular locations is **near-instant** (~200ms vs 5-30 seconds).
+
+### 21.4 Mobile-First Responsive Design
+
+Complete mobile experience added for users browsing on phones and tablets:
+
+- **Mobile bottom tab bar**: Fixed navigation (Generate, Market, Library, Sign In/Out) visible on screens < 600px
+- **Collapsible control panel**: "Show/Hide Controls" toggle for the left panel on mobile
+- **Touch-friendly controls**: Larger buttons (12px padding), 16px font inputs (prevents iOS zoom), wider toggles
+- **Responsive layouts**: Control rows stack vertically, dashboard stats go 2-column, grids go single-column
+- **Tablet breakpoint** (900px): Panels stack vertically, marketplace controls stack
+- **Safe area support**: Bottom tab bar respects `env(safe-area-inset-bottom)` for notched devices
+
+### 21.5 Real-Time Map Preview (Leaflet)
+
+A live OpenStreetMap preview appears below search results when a location is selected:
+
+- **Leaflet CDN**: Lazy-loaded from unpkg (no npm dependency needed)
+- **Circle marker**: Red (#c0392b) circle marker with popup showing location name and coordinates
+- **Auto-fit**: Automatically fits the map to the location's bounding box
+- **Zero-config**: Works immediately with no API keys required (uses OSM tile server)
+
+### 21.6 Custom Board Dimensions
+
+Users can now enter **exact custom board dimensions** in addition to preset sizes:
+
+- **New "Custom" option** in Board Size dropdown
+- **Width and Height inputs** (inches, 2-60 range, 0.5 step)
+- **Backend support**: `board_width_inches` and `board_height_inches` parameters passed to generation API
+- **Enables**: Any CNC bed size, not just the 5 presets
+
+### 21.7 Undo/Redo for Customization
+
+Full undo/redo system for all customization changes:
+
+- **History stack**: Up to 30 states tracked
+- **Keyboard shortcuts**: `Ctrl+Z` (undo), `Ctrl+Shift+Z` (redo)
+- **UI buttons**: Undo/Redo buttons above the customize panel
+- **All config changes tracked**: Text, board size, style, toggles, etc.
+
+### 21.8 SVG Editor Mode (Zoom & Pan)
+
+The SVG preview now includes interactive editing controls:
+
+- **Zoom slider**: 50% to 200% with visual percentage display
+- **Pan mode**: Click and drag to move the SVG around the preview area
+- **Fit to View**: One-click button to reset zoom and position
+- **Floating toolbar**: Translucent toolbar at the bottom of the preview
+- **Smooth transitions**: CSS transitions for non-drag zoom changes
+
+### 21.9 Batch Generation UI
+
+Pro users can now access batch generation directly from the UI:
+
+- **Batch button**: Appears in the header nav for Pro-tier users
+- **Modal interface**: Enter OSM IDs (one per line, format: `relation/12345` or just ID)
+- **Up to 50 items**: Per batch, using current customize settings
+- **Result summary**: Shows total/succeeded/failed counts
+- **API integration**: Uses existing `/api/v1/generate/batch` endpoint
+
+### 21.10 Geometry Quality Warnings
+
+Smart warnings help users avoid poor-quality outputs:
+
+- **Pre-generation**: Warns when a location has no polygon data ("This location may not have polygon data")
+- **Post-generation**: Warns when node count is very low (< 20 nodes) or very high (> 50,000 nodes)
+- **Visual**: Yellow warning banner in the control panel with amber styling
+- **Non-blocking**: Warnings don't prevent generation, just inform the user
+
+### 21.11 Complete Stripe Webhook System
+
+Enhanced webhook handling for full payment lifecycle:
+
+| Event | Handler | Action |
+|-------|---------|--------|
+| `checkout.session.completed` | Activate subscription | Set user tier, store subscription ID |
+| `customer.subscription.updated` | Plan change | Update tier based on new price ID |
+| `customer.subscription.deleted` | Cancellation | Downgrade to free tier |
+| `invoice.payment_failed` | Payment failure | Log warning |
+| `invoice.payment_succeeded` | Renewal success | **Reset monthly generation count** |
+| `payment_intent.succeeded` | Marketplace purchase | **Transfer funds to seller** |
+| `account.updated` | Connect account change | **Update payout readiness** |
+
+### 21.12 Seller Payout System (Stripe Connect)
+
+Full seller payout infrastructure using Stripe Connect Express:
+
+- **Connected Accounts**: Sellers onboard via `POST /api/v1/auth/seller/onboard`
+- **Express accounts**: Stripe handles identity verification, bank account setup
+- **Automatic transfers**: When a marketplace purchase succeeds, the seller's share is automatically transferred
+- **Platform fee**: 25% for Maker tier, 15% for Pro tier (configurable)
+- **Status checking**: `GET /api/v1/auth/seller/status` returns payout readiness
+- **Database fields**: `stripe_connect_account_id` and `stripe_payouts_enabled` added to User model
+
+### 21.13 Updated Tech Stack
+
+| Component | v1.0 | v2.0 |
+|-----------|------|------|
+| Geographic Coverage | Canada only | Canada, US, Global |
+| Search | Nominatim (Canada) | Nominatim (multi-country) |
+| Caching | None | Redis (optional) |
+| Payments | Stripe (basic) | Stripe + Connect (full payouts) |
+| Mobile | Basic media query | Full mobile-first design |
+| Map Preview | None | Leaflet (CDN) |
+| SVG Preview | Static | Interactive (zoom/pan) |
+| Board Sizes | 5 presets | 5 presets + custom |
+| Undo/Redo | None | 30-state history + keyboard shortcuts |
+| Batch UI | API only | Full modal UI |
+| Quality Warnings | None | Pre/post-generation warnings |
+
+### 21.14 New Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `REDIS_URL` | `` (disabled) | Redis connection URL for caching |
+| `CACHE_TTL_SEARCH` | `3600` | Search result cache TTL (seconds) |
+| `CACHE_TTL_GEOMETRY` | `86400` | Geometry cache TTL (seconds) |
+| `STRIPE_PAYOUT_DELAY_DAYS` | `7` | Days before seller payout |
+
+### 21.15 New Dependencies
+
+**Backend** (requirements.txt):
+- `redis[hiredis]==5.2.1` — Async Redis client with C extension for performance
+
+**Frontend** (CDN, no npm install):
+- Leaflet 1.9.4 — Map tiles and interactive preview (loaded on-demand from unpkg)
+
+---
+
+*End of MapForge CNC Product Story Bible — Version 2.0*
+
+*Updated March 15, 2026. This is a living document and will be updated as the product evolves.*

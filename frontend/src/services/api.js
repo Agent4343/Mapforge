@@ -81,9 +81,9 @@ async function getProfile() {
 
 // --- Search ---
 
-async function searchLocations(query) {
+async function searchLocations(query, country = "ca") {
   const resp = await fetchWithTimeout(
-    `${API_BASE}/search?q=${encodeURIComponent(query)}&country=ca&limit=10`
+    `${API_BASE}/search?q=${encodeURIComponent(query)}&country=${encodeURIComponent(country)}&limit=10`
   );
   if (!resp.ok) throw new Error(`Search failed: ${resp.statusText}`);
   return resp.json();

@@ -41,12 +41,20 @@ class Settings:
     # CORS
     FRONTEND_URL: str = os.getenv("FRONTEND_URL", "")
 
+    # Redis (optional caching layer)
+    REDIS_URL: str = os.getenv("REDIS_URL", "")
+    CACHE_TTL_SEARCH: int = 3600  # 1 hour
+    CACHE_TTL_GEOMETRY: int = 86400  # 24 hours
+
     # Subscription limits
     FREE_PROVINCE_LIMIT: int = 3
     FREE_LIBRARY_LIMIT: int = 5
     MAKER_MONTHLY_LIMIT: int = 20
     MAKER_LIBRARY_LIMIT: int = 100
     PRO_BATCH_LIMIT: int = 50
+
+    # Seller payouts
+    STRIPE_PAYOUT_DELAY_DAYS: int = 7  # Days before payout to sellers
 
 
 settings = Settings()
