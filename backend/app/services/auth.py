@@ -13,16 +13,23 @@ from app.config import settings
 from app.database import get_db
 from app.models.db_models import User
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=12)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
 
 
+def _prep_password(password: str) -> str:
+    """Pre-hash with SHA-256 to handle bcrypt's 72-byte limit."""
+    import base64
+    import hashlib
+    return base64.b64encode(hashlib.sha256(password.encode("utf-8")).digest()).decode("ascii")
+
+
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    return pwd_context.hash(_prep_password(password))
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    return pwd_context.verify(_prep_password(plain), hashed)
 
 
 def create_access_token(user_id: str) -> str:
