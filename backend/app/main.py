@@ -26,8 +26,11 @@ async def lifespan(app: FastAPI):
     log.info("MapForge CNC starting up...")
     log.info(f"DATABASE_URL dialect: {settings.DATABASE_URL.split('://')[0]}")
     log.info(f"PORT: {os.environ.get('PORT', 'not set (defaulting to 8000)')}")
-    await init_db()
-    log.info("Database initialized")
+    try:
+        await init_db()
+        log.info("Database initialized")
+    except Exception as e:
+        log.error(f"Database initialization failed — app will start without DB: {e}")
 
     # Ensure local storage directory exists
     if settings.STORAGE_BACKEND == "local":
