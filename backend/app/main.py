@@ -24,6 +24,8 @@ STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
     log.info("MapForge CNC starting up...")
+    log.info(f"DATABASE_URL dialect: {settings.DATABASE_URL.split('://')[0]}")
+    log.info(f"PORT: {os.environ.get('PORT', 'not set (defaulting to 8000)')}")
     await init_db()
     log.info("Database initialized")
 

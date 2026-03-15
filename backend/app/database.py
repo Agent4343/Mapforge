@@ -8,15 +8,21 @@ from sqlalchemy.orm import DeclarativeBase
 from app.config import settings
 from app.logging_config import log
 
-# Use check_same_thread=False only for SQLite
+# Build connect_args per dialect
 connect_args = {}
 if settings.DATABASE_URL.startswith("sqlite"):
     connect_args["check_same_thread"] = False
+elif settings.DATABASE_URL.startswith("postgresql+asyncpg"):
+    # Fast-fail on cold-start: 10s connection timeout instead of asyncpg's 60s default
+    connect_args["timeout"] = 10
+
+log.info(f"Database dialect: {settings.DATABASE_URL.split('://')[0]}")
 
 engine = create_async_engine(
     settings.DATABASE_URL,
     connect_args=connect_args,
     echo=False,
+    pool_pre_ping=True,
 )
 
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
