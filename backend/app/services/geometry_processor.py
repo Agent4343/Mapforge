@@ -22,6 +22,7 @@ SIMPLIFICATION_TOLERANCES = {
     ProductType.province: 800.0,
     ProductType.lake: 50.0,
     ProductType.city: 75.0,
+    ProductType.community: 30.0,
     ProductType.park: 100.0,
     ProductType.name_sign: 50.0,
 }

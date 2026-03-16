@@ -10,6 +10,7 @@ class ProductType(str, Enum):
     lake = "lake"
     province = "province"
     city = "city"
+    community = "community"
     park = "park"
     name_sign = "name_sign"
 

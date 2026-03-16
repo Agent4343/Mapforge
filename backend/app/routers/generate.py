@@ -93,16 +93,16 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     except ValueError as e:
         raise HTTPException(status_code=422, detail=f"Geometry processing failed: {e}")
 
-    # Fetch streets for city maps
+    # Fetch streets — enabled for city/community maps, available for all types
     streets_data = None
-    if req.include_streets and req.product_type.value == "city":
+    street_types = ("city", "community", "park")
+    auto_streets = req.product_type.value in street_types
+    if req.include_streets or auto_streets:
         try:
-            centroid = geom.centroid
-            # Build bbox from geometry bounds
             bounds = geom.bounds  # minx, miny, maxx, maxy
             streets_data = await fetch_streets(
                 bbox=(bounds[1], bounds[0], bounds[3], bounds[2]),
-                include_minor=True,
+                include_minor=req.product_type.value in street_types,
             )
         except Exception as e:
             log.warning(f"Street fetch failed (non-fatal): {e}")
