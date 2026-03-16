@@ -29,6 +29,15 @@ from app.services.thumbnail_generator import generate_thumbnail
 router = APIRouter(prefix="/api/v1", tags=["generate"])
 
 
+async def _maybe_reset_monthly_counter(user: User, db: AsyncSession):
+    """Reset generation counter if a new month has started."""
+    now = datetime.now(timezone.utc)
+    if user.month_reset_date is None or now.month != user.month_reset_date.month or now.year != user.month_reset_date.year:
+        user.generation_count_this_month = 0
+        user.month_reset_date = now
+        await db.commit()
+
+
 def _check_tier_limits(user: User | None, req: GenerateRequest):
     """Enforce subscription tier limits."""
     if user is None:
@@ -241,6 +250,8 @@ async def generate(
     db: AsyncSession = Depends(get_db),
 ):
     """Generate a CNC-ready SVG/DXF from a geographic location."""
+    if user:
+        await _maybe_reset_monthly_counter(user, db)
     _check_tier_limits(user, req)
     return await _do_generate(req, user, db)
 

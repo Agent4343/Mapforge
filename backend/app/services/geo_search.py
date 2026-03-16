@@ -72,11 +72,16 @@ def _classify_feature(item: dict) -> str:
         admin_level = item.get("extratags", {}).get("admin_level", "")
         if admin_level in ("2", "4"):
             return "province"
+        if admin_level in ("8", "9", "10"):
+            return "community"
         return "city"
     if osm_class == "leisure" and osm_type_tag == "park":
         return "park"
     if osm_class == "boundary" and osm_type_tag == "national_park":
         return "park"
     if osm_class == "place":
+        place_type = item.get("type", "")
+        if place_type in ("village", "hamlet", "locality", "isolated_dwelling"):
+            return "community"
         return "city"
     return "lake"

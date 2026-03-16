@@ -79,7 +79,7 @@ export default function MapPreview({ lat, lon, boundingbox, name }) {
 
       if (name) {
         markerRef.current.bindPopup(
-          `<strong>${name}</strong><br/>${lat.toFixed(4)}°N, ${Math.abs(lon).toFixed(4)}°W`
+          `<strong>${name}</strong><br/>${Math.abs(lat).toFixed(4)}°${lat >= 0 ? "N" : "S"}, ${Math.abs(lon).toFixed(4)}°${lon < 0 ? "W" : "E"}`
         );
       }
 

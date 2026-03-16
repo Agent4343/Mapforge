@@ -177,7 +177,7 @@ def generate_dxf(
                 align=TextEntityAlignment.MIDDLE_CENTER,
             )
 
-    # Write to bytes
-    stream = io.BytesIO()
+    # Write to bytes — ezdxf writes text to a StringIO, then encode
+    stream = io.StringIO()
     doc.write(stream)
-    return stream.getvalue()
+    return stream.getvalue().encode("utf-8")

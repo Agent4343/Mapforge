@@ -6,7 +6,9 @@ const TYPE_LABELS = {
   lake: "Lake",
   province: "Province",
   city: "City",
+  community: "Community",
   park: "Park",
+  name_sign: "Name Sign",
 };
 
 export default function SearchPanel({ onSelect, selectedResult, country }) {

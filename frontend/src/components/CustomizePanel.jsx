@@ -156,7 +156,7 @@ export default function CustomizePanel({ config, onChange, user }) {
         </div>
       )}
 
-      {(config.productType === "lake" || config.productType === "park") && (
+      {(config.productType === "lake" || config.productType === "park" || config.productType === "community") && (
         <div className="toggle-row">
           <label>Contours {!isPro && "(Pro)"}</label>
           <label className="toggle-switch">

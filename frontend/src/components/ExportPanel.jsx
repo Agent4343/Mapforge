@@ -39,7 +39,7 @@ export default function ExportPanel({
     }
   }
 
-  const canSell = user && (user.tier === "maker" || user.tier === "pro");
+  const canSell = user && (user.tier === "maker" || user.tier === "pro" || user.tier === "admin");
 
   return (
     <div className="export-section">
