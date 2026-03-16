@@ -7,6 +7,7 @@ export default function ExportPanel({
   onDownload,
   onDownloadDXF,
   onDownloadThumbnail,
+  onDownloadPrintPNG,
   canGenerate,
   generating,
   user,
@@ -88,6 +89,11 @@ export default function ExportPanel({
             {result.thumbnail_available && (
               <button className="btn btn-secondary" onClick={onDownloadThumbnail}>
                 PNG Mockup
+              </button>
+            )}
+            {result.print_png_available && (
+              <button className="btn btn-secondary" onClick={onDownloadPrintPNG}>
+                Print PNG (300 DPI)
               </button>
             )}
           </div>

@@ -204,6 +204,12 @@ async function downloadThumbnail(fileId) {
   return resp.blob();
 }
 
+async function downloadPrintPNG(fileId) {
+  const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}?format=png`);
+  if (!resp.ok) throw new Error("Print PNG download failed");
+  return resp.blob();
+}
+
 // --- Library ---
 
 async function getLibrary(page = 1, perPage = 20, filters = {}) {
@@ -333,7 +339,7 @@ async function getReviews(listingId) {
 export {
   setToken, getToken, register, login, logout, getProfile, requestPasswordReset, resetPassword, subscribe,
   searchLocations, generateSVG, generatePin, batchGenerate,
-  downloadSVG, downloadDXF, downloadThumbnail,
+  downloadSVG, downloadDXF, downloadThumbnail, downloadPrintPNG,
   getLibrary, deleteLibraryFile,
   browseMarketplace, createListing, purchaseListing,
   getMyPurchases, updateListing, removeListing,

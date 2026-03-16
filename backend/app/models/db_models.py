@@ -63,6 +63,7 @@ class GeneratedFile(Base):
     svg_storage_key = Column(String(512), nullable=False)
     dxf_storage_key = Column(String(512), nullable=True)
     thumbnail_key = Column(String(512), nullable=True)
+    print_png_key = Column(String(512), nullable=True)
     province = Column(String(100), nullable=True, index=True)
     lat = Column(Float, nullable=True)
     lon = Column(Float, nullable=True)

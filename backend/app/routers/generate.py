@@ -26,7 +26,7 @@ from app.services.street_fetcher import fetch_streets
 from app.services.water_fetcher import fetch_water_features
 from app.services.contour_fetcher import fetch_contour_lines, generate_depth_bands
 from app.services.file_storage import store_file, retrieve_file
-from app.services.thumbnail_generator import generate_thumbnail
+from app.services.thumbnail_generator import generate_thumbnail, generate_print_image
 
 router = APIRouter(prefix="/api/v1", tags=["generate"])
 limiter = Limiter(key_func=get_remote_address)
@@ -207,6 +207,15 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     except Exception as e:
         log.warning(f"Thumbnail generation failed (non-fatal): {e}")
 
+    # Generate high-res print PNG with proper land/water colors for wall art
+    print_png_key = None
+    try:
+        print_bytes = generate_print_image(result["svg"])
+        print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
+        await store_file(print_png_key, print_bytes, content_type="image/png")
+    except Exception as e:
+        log.warning(f"Print PNG generation failed (non-fatal): {e}")
+
     # Parse province from location name for filtering
     province = _extract_province(location_name)
 
@@ -234,6 +243,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             svg_storage_key=svg_key,
             dxf_storage_key=dxf_key,
             thumbnail_key=thumbnail_key,
+            print_png_key=print_png_key,
             province=province,
             lat=center[0],
             lon=center[1],
@@ -255,6 +265,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         svg=result["svg"] if req.export_format == ExportFormat.svg else None,
         dxf_available=dxf_key is not None,
         thumbnail_available=thumbnail_key is not None,
+        print_png_available=print_png_key is not None,
         file_id=file_id,
         location_name=location_name,
         dimensions_mm=(board_w, board_h),
@@ -391,6 +402,15 @@ async def generate_pin(
     except Exception as e:
         log.warning(f"Thumbnail generation failed (non-fatal): {e}")
 
+    # Generate high-res print PNG
+    print_png_key = None
+    try:
+        print_bytes = generate_print_image(result["svg"])
+        print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
+        await store_file(print_png_key, print_bytes, content_type="image/png")
+    except Exception as e:
+        log.warning(f"Print PNG generation failed (non-fatal): {e}")
+
     # Save to database
     file_id = None
     if user:
@@ -413,6 +433,7 @@ async def generate_pin(
             svg_storage_key=svg_key,
             dxf_storage_key=dxf_key,
             thumbnail_key=thumbnail_key,
+            print_png_key=print_png_key,
             lat=req.lat,
             lon=req.lon,
         )
@@ -430,6 +451,7 @@ async def generate_pin(
         svg=result["svg"] if req.export_format == ExportFormat.svg else None,
         dxf_available=dxf_key is not None,
         thumbnail_available=thumbnail_key is not None,
+        print_png_available=print_png_key is not None,
         file_id=file_id,
         location_name=location_name,
         dimensions_mm=(board_w, board_h),
@@ -520,6 +542,12 @@ async def download(
         content = await retrieve_file(file_record.dxf_storage_key)
         media_type = "application/dxf"
         ext = "dxf"
+    elif format == ExportFormat.png:
+        if not file_record.print_png_key:
+            raise HTTPException(status_code=404, detail="Print PNG not available for this file.")
+        content = await retrieve_file(file_record.print_png_key)
+        media_type = "image/png"
+        ext = "png"
     else:
         content = await retrieve_file(file_record.svg_storage_key)
         media_type = "image/svg+xml"

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { getLibrary, deleteLibraryFile, downloadSVG, downloadDXF } from "../services/api.js";
+import { getLibrary, deleteLibraryFile, downloadSVG, downloadDXF, downloadPrintPNG } from "../services/api.js";
 
 export default function LibraryView({ onBack }) {
   const [files, setFiles] = useState([]);
@@ -38,7 +38,10 @@ export default function LibraryView({ onBack }) {
 
   async function handleDownload(fileId, name, format) {
     try {
-      const blob = format === "dxf" ? await downloadDXF(fileId) : await downloadSVG(fileId);
+      let blob;
+      if (format === "dxf") blob = await downloadDXF(fileId);
+      else if (format === "png") blob = await downloadPrintPNG(fileId);
+      else blob = await downloadSVG(fileId);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -93,6 +96,9 @@ export default function LibraryView({ onBack }) {
                     DXF
                   </button>
                 )}
+                <button className="btn btn-secondary" onClick={() => handleDownload(f.id, f.location_name, "png")}>
+                  Print PNG
+                </button>
                 <button className="btn btn-secondary" onClick={() => handleDelete(f.id)}>
                   Delete
                 </button>

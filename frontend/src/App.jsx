@@ -14,7 +14,7 @@ import LandingPage from "./components/LandingPage.jsx";
 import PricingModal from "./components/PricingModal.jsx";
 import PurchasesView from "./components/PurchasesView.jsx";
 import {
-  generateSVG, generatePin, downloadSVG, downloadDXF, downloadThumbnail,
+  generateSVG, generatePin, downloadSVG, downloadDXF, downloadThumbnail, downloadPrintPNG,
   getProfile, logout, getToken, subscribe,
 } from "./services/api.js";
 
@@ -279,6 +279,16 @@ export default function App() {
     }
   }, [result, config.text]);
 
+  const handleDownloadPrintPNG = useCallback(async () => {
+    if (!result) return;
+    try {
+      const blob = await downloadPrintPNG(result.file_id);
+      _triggerDownload(blob, config.text + "_print_300dpi", "png");
+    } catch (err) {
+      setError(err.message);
+    }
+  }, [result, config.text]);
+
   function _triggerDownload(blob, name, ext) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -473,6 +483,7 @@ export default function App() {
             onDownload={handleDownload}
             onDownloadDXF={handleDownloadDXF}
             onDownloadThumbnail={handleDownloadThumbnail}
+            onDownloadPrintPNG={handleDownloadPrintPNG}
             canGenerate={!!selectedResult || (config.productType === "name_sign" && !!pinCoords)}
             generating={generating}
             user={user}
