@@ -555,15 +555,27 @@ async def download_thumbnail(
 
 
 def _extract_province(location_name: str) -> str | None:
-    """Try to extract province from location name (comma-separated)."""
-    provinces = {
+    """Try to extract province/state from location name (comma-separated)."""
+    regions = {
+        # Canadian provinces and territories
         "Ontario", "Quebec", "British Columbia", "Alberta", "Manitoba",
         "Saskatchewan", "Nova Scotia", "New Brunswick",
         "Newfoundland and Labrador", "Prince Edward Island",
         "Northwest Territories", "Yukon", "Nunavut",
+        # US states
+        "Alabama", "Alaska", "Arizona", "Arkansas", "California",
+        "Colorado", "Connecticut", "Delaware", "Florida", "Georgia",
+        "Hawaii", "Idaho", "Illinois", "Indiana", "Iowa",
+        "Kansas", "Kentucky", "Louisiana", "Maine", "Maryland",
+        "Massachusetts", "Michigan", "Minnesota", "Mississippi", "Missouri",
+        "Montana", "Nebraska", "Nevada", "New Hampshire", "New Jersey",
+        "New Mexico", "New York", "North Carolina", "North Dakota", "Ohio",
+        "Oklahoma", "Oregon", "Pennsylvania", "Rhode Island", "South Carolina",
+        "South Dakota", "Tennessee", "Texas", "Utah", "Vermont",
+        "Virginia", "Washington", "West Virginia", "Wisconsin", "Wyoming",
     }
     parts = [p.strip() for p in location_name.split(",")]
     for part in parts:
-        if part in provinces:
+        if part in regions:
             return part
     return None

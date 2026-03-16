@@ -23,7 +23,7 @@ POPULAR_LOCATIONS_CA = [
     {"name": "Newfoundland and Labrador", "osm_id": 391196, "osm_type": "relation"},
     {"name": "Northwest Territories", "osm_id": 391220, "osm_type": "relation"},
     {"name": "Yukon", "osm_id": 391455, "osm_type": "relation"},
-    {"name": "Nunavut", "osm_id": 390840, "osm_type": "relation"},
+    {"name": "Nunavut", "osm_id": 390847, "osm_type": "relation"},
     # Major cities
     {"name": "Toronto", "osm_id": 324211, "osm_type": "relation"},
     {"name": "Montreal", "osm_id": 1634158, "osm_type": "relation"},
@@ -51,18 +51,72 @@ POPULAR_LOCATIONS_CA = [
     {"name": "Algonquin Provincial Park", "osm_id": 2309706, "osm_type": "relation"},
 ]
 
-# Popular US locations for expansion
-POPULAR_LOCATIONS_US = [
+# All 50 US states
+POPULAR_LOCATIONS_US_STATES = [
+    {"name": "Alabama", "osm_id": 161950, "osm_type": "relation"},
+    {"name": "Alaska", "osm_id": 1116270, "osm_type": "relation"},
+    {"name": "Arizona", "osm_id": 162018, "osm_type": "relation"},
+    {"name": "Arkansas", "osm_id": 161646, "osm_type": "relation"},
+    {"name": "California", "osm_id": 165475, "osm_type": "relation"},
+    {"name": "Colorado", "osm_id": 161961, "osm_type": "relation"},
+    {"name": "Connecticut", "osm_id": 165794, "osm_type": "relation"},
+    {"name": "Delaware", "osm_id": 162110, "osm_type": "relation"},
+    {"name": "Florida", "osm_id": 162050, "osm_type": "relation"},
+    {"name": "Georgia", "osm_id": 161957, "osm_type": "relation"},
+    {"name": "Hawaii", "osm_id": 166563, "osm_type": "relation"},
+    {"name": "Idaho", "osm_id": 162116, "osm_type": "relation"},
+    {"name": "Illinois", "osm_id": 122586, "osm_type": "relation"},
+    {"name": "Indiana", "osm_id": 161816, "osm_type": "relation"},
+    {"name": "Iowa", "osm_id": 161650, "osm_type": "relation"},
+    {"name": "Kansas", "osm_id": 161644, "osm_type": "relation"},
+    {"name": "Kentucky", "osm_id": 161655, "osm_type": "relation"},
+    {"name": "Louisiana", "osm_id": 224922, "osm_type": "relation"},
+    {"name": "Maine", "osm_id": 63512, "osm_type": "relation"},
+    {"name": "Maryland", "osm_id": 162112, "osm_type": "relation"},
+    {"name": "Massachusetts", "osm_id": 61315, "osm_type": "relation"},
+    {"name": "Michigan", "osm_id": 165789, "osm_type": "relation"},
+    {"name": "Minnesota", "osm_id": 165471, "osm_type": "relation"},
+    {"name": "Mississippi", "osm_id": 161943, "osm_type": "relation"},
+    {"name": "Missouri", "osm_id": 161638, "osm_type": "relation"},
+    {"name": "Montana", "osm_id": 162115, "osm_type": "relation"},
+    {"name": "Nebraska", "osm_id": 161648, "osm_type": "relation"},
+    {"name": "Nevada", "osm_id": 165473, "osm_type": "relation"},
+    {"name": "New Hampshire", "osm_id": 67213, "osm_type": "relation"},
+    {"name": "New Jersey", "osm_id": 224951, "osm_type": "relation"},
+    {"name": "New Mexico", "osm_id": 162014, "osm_type": "relation"},
+    {"name": "New York", "osm_id": 61320, "osm_type": "relation"},
+    {"name": "North Carolina", "osm_id": 224045, "osm_type": "relation"},
+    {"name": "North Dakota", "osm_id": 161653, "osm_type": "relation"},
+    {"name": "Ohio", "osm_id": 162061, "osm_type": "relation"},
+    {"name": "Oklahoma", "osm_id": 161645, "osm_type": "relation"},
+    {"name": "Oregon", "osm_id": 165476, "osm_type": "relation"},
+    {"name": "Pennsylvania", "osm_id": 162109, "osm_type": "relation"},
+    {"name": "Rhode Island", "osm_id": 392915, "osm_type": "relation"},
+    {"name": "South Carolina", "osm_id": 224040, "osm_type": "relation"},
+    {"name": "South Dakota", "osm_id": 161652, "osm_type": "relation"},
+    {"name": "Tennessee", "osm_id": 161838, "osm_type": "relation"},
+    {"name": "Texas", "osm_id": 114690, "osm_type": "relation"},
+    {"name": "Utah", "osm_id": 161993, "osm_type": "relation"},
+    {"name": "Vermont", "osm_id": 60759, "osm_type": "relation"},
+    {"name": "Virginia", "osm_id": 224042, "osm_type": "relation"},
+    {"name": "Washington", "osm_id": 165479, "osm_type": "relation"},
+    {"name": "West Virginia", "osm_id": 162068, "osm_type": "relation"},
+    {"name": "Wisconsin", "osm_id": 165466, "osm_type": "relation"},
+    {"name": "Wyoming", "osm_id": 161991, "osm_type": "relation"},
+]
+
+# Popular US landmarks and cities
+POPULAR_LOCATIONS_US_OTHER = [
     {"name": "Lake Tahoe", "osm_id": 1646953, "osm_type": "relation"},
     {"name": "Lake Michigan", "osm_id": 4039486, "osm_type": "relation"},
     {"name": "Yellowstone", "osm_id": 1453306, "osm_type": "relation"},
     {"name": "Grand Canyon", "osm_id": 11933756, "osm_type": "relation"},
     {"name": "New York City", "osm_id": 175905, "osm_type": "relation"},
     {"name": "San Francisco", "osm_id": 111968, "osm_type": "relation"},
-    {"name": "Texas", "osm_id": 114690, "osm_type": "relation"},
-    {"name": "California", "osm_id": 165475, "osm_type": "relation"},
-    {"name": "Florida", "osm_id": 162050, "osm_type": "relation"},
 ]
+
+# Combined US locations
+POPULAR_LOCATIONS_US = POPULAR_LOCATIONS_US_STATES + POPULAR_LOCATIONS_US_OTHER
 
 
 async def prefetch_popular_locations(include_us: bool = True):
