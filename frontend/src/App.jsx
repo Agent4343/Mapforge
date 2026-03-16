@@ -9,6 +9,7 @@ import MarketplaceView from "./components/MarketplaceView.jsx";
 import SellerDashboard from "./components/SellerDashboard.jsx";
 import BatchPanel from "./components/BatchPanel.jsx";
 import MapPreview from "./components/MapPreview.jsx";
+import MarkersPanel from "./components/MarkersPanel.jsx";
 import LandingPage from "./components/LandingPage.jsx";
 import PricingModal from "./components/PricingModal.jsx";
 import PurchasesView from "./components/PurchasesView.jsx";
@@ -60,6 +61,7 @@ export default function App() {
   const [country, setCountry] = useState("ca");
   const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [pinCoords, setPinCoords] = useState(null); // {lat, lon} for name_sign pin drop
+  const [markers, setMarkers] = useState([]); // custom markers [{lat, lon, label, icon}]
 
   // Undo/redo state
   const [configHistory, setConfigHistory] = useState([DEFAULT_CONFIG]);
@@ -193,6 +195,16 @@ export default function App() {
         }
         data = await generatePin(pinParams);
       } else {
+        // Build markers list from valid entries
+        const validMarkers = markers
+          .filter((m) => m.lat !== "" && m.lon !== "" && !isNaN(m.lat) && !isNaN(m.lon))
+          .map((m) => ({
+            lat: parseFloat(m.lat),
+            lon: parseFloat(m.lon),
+            label: m.label || "",
+            icon: m.icon || "pin",
+          }));
+
         const params = {
           osm_id: selectedResult.osm_id,
           osm_type: selectedResult.osm_type,
@@ -210,6 +222,7 @@ export default function App() {
           include_contours: config.includeContours,
           contour_type: config.contourType,
           num_depth_bands: config.numDepthBands,
+          markers: validMarkers,
         };
         if (config.boardSize === "custom") {
           params.board_width_inches = config.customWidth || 16;
@@ -234,7 +247,7 @@ export default function App() {
     } finally {
       setGenerating(false);
     }
-  }, [selectedResult, config, pinCoords]);
+  }, [selectedResult, config, pinCoords, markers]);
 
   const handleDownload = useCallback(async () => {
     if (!result) return;
@@ -435,6 +448,9 @@ export default function App() {
           </div>
 
           <CustomizePanel config={config} onChange={handleConfigChange} user={user} />
+
+          <MarkersPanel markers={markers} onChange={setMarkers} />
+
           <hr className="section-divider" />
 
           {qualityWarning && (

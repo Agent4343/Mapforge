@@ -102,6 +102,22 @@ class SearchResponse(BaseModel):
 
 # --- Generate ---
 
+class MarkerIcon(str, Enum):
+    pin = "pin"
+    heart = "heart"
+    star = "star"
+    home = "home"
+    diamond = "diamond"
+
+
+class MapMarker(BaseModel):
+    """A custom location marker to place on a map (e.g. Home, The Cottage)."""
+    lat: float = Field(..., ge=-90, le=90)
+    lon: float = Field(..., ge=-180, le=180)
+    label: str = Field("", max_length=60)
+    icon: MarkerIcon = MarkerIcon.pin
+
+
 class GenerateRequest(BaseModel):
     osm_id: int
     osm_type: str = "relation"
@@ -121,6 +137,7 @@ class GenerateRequest(BaseModel):
     include_contours: bool = False
     contour_type: str = "elevation"  # elevation or depth
     num_depth_bands: int = Field(5, ge=2, le=10)
+    markers: list[MapMarker] = Field(default_factory=list, max_length=10)
 
     @field_validator("text")
     @classmethod

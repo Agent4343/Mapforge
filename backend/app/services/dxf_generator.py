@@ -21,6 +21,7 @@ def generate_dxf(
     center_latlon: tuple[float, float] | None = None,
     streets_data: dict | None = None,
     pin_location: tuple[float, float] | None = None,
+    markers: list[dict] | None = None,
 ) -> bytes:
     """Generate a CNC-ready DXF file from processed geometry.
 
@@ -204,6 +205,74 @@ def generate_dxf(
             close=True,
             dxfattribs={"layer": "PIN_MARKER"},
         )
+
+    # Custom markers (Home, Cottage, etc.)
+    if markers:
+        doc.layers.add("CUSTOM_MARKERS", color=1)  # red
+        doc.layers.add("MARKER_LABELS", color=7)
+        r = font_size_mm * 0.3
+        label_size = font_size_mm * 0.35
+
+        for m in markers:
+            mx = m["x"]
+            my_svg = m["y"]
+            my = board_h - my_svg  # flip Y for DXF
+            label = m.get("label", "")
+            icon = m.get("icon", "pin")
+
+            # Skip out-of-bounds
+            if mx < 0 or mx > board_w or my_svg < 0 or my_svg > board_h:
+                continue
+
+            # All icons rendered as circle + label in DXF for CAM compatibility
+            msp.add_circle(
+                center=(mx, my),
+                radius=r,
+                dxfattribs={"layer": "CUSTOM_MARKERS"},
+            )
+
+            # Diamond pointer below circle (for pin/diamond icons)
+            if icon in ("pin", "diamond"):
+                h = r * 2.5
+                msp.add_lwpolyline(
+                    [
+                        (mx, my - r),
+                        (mx - r * 0.5, my - r - h * 0.3),
+                        (mx, my - r - h),
+                        (mx + r * 0.5, my - r - h * 0.3),
+                        (mx, my - r),
+                    ],
+                    close=True,
+                    dxfattribs={"layer": "CUSTOM_MARKERS"},
+                )
+
+            # Star points (for star icon)
+            if icon == "star":
+                outer_r = r * 1.2
+                inner_r = r * 0.5
+                pts = []
+                for i in range(5):
+                    angle_outer = math.radians(-90 + i * 72)
+                    pts.append((mx + outer_r * math.cos(angle_outer), my + outer_r * math.sin(angle_outer)))
+                    angle_inner = math.radians(-90 + i * 72 + 36)
+                    pts.append((mx + inner_r * math.cos(angle_inner), my + inner_r * math.sin(angle_inner)))
+                pts.append(pts[0])
+                msp.add_lwpolyline(pts, close=True, dxfattribs={"layer": "CUSTOM_MARKERS"})
+
+            # Label
+            if label:
+                label_y = my - r * 2.8  # below marker (DXF Y-flipped)
+                msp.add_text(
+                    label.upper(),
+                    height=label_size,
+                    dxfattribs={
+                        "layer": "MARKER_LABELS",
+                        "style": "Standard",
+                    },
+                ).set_placement(
+                    (mx, label_y),
+                    align=TextEntityAlignment.TOP_CENTER,
+                )
 
     # Write to bytes — ezdxf writes text to a StringIO, then encode
     stream = io.StringIO()

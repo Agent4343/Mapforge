@@ -27,6 +27,7 @@ def generate_svg(
     contour_data: list[dict] | None = None,
     water_data: dict | None = None,
     pin_location: tuple[float, float] | None = None,
+    markers: list[dict] | None = None,
 ) -> dict:
     """Generate a CNC-ready SVG string from processed geometry.
 
@@ -107,6 +108,13 @@ def generate_svg(
         _render_pin_marker(lines, pin_location, board_w, board_h, font_size_mm)
         lines.append("")
         layer_count += 1
+
+    # Layer: custom_markers (Home, Cottage, etc. placed on province/state maps)
+    if markers:
+        _render_custom_markers(lines, markers, board_w, board_h, font_size_mm)
+        lines.append("")
+        layer_count += 1
+        path_count += len(markers)
 
     # Layer: text_primary
     text_y = board_h - font_size_mm * 2.5
@@ -445,6 +453,191 @@ def _render_pin_marker(
     )
 
     lines.append("  </g>")
+
+
+def _render_custom_markers(
+    lines: list[str],
+    markers: list[dict],
+    board_w: float,
+    board_h: float,
+    font_size_mm: float,
+):
+    """Render custom location markers with labels on province/state maps.
+
+    Each marker has: x, y (board mm), label (str), icon (pin/heart/star/home/diamond).
+    """
+    lines.append("  <!-- Layer: custom_markers -->")
+    lines.append('  <!-- Toolpath: V-carve, 60 deg V-bit, flat depth 0.04" -->')
+    lines.append('  <g id="custom_markers">')
+
+    r = font_size_mm * 0.3  # icon radius
+    label_size = font_size_mm * 0.35  # label font size
+
+    for i, m in enumerate(markers):
+        mx, my = m["x"], m["y"]
+        label = m.get("label", "")
+        icon = m.get("icon", "pin")
+
+        # Skip markers outside the board
+        if mx < 0 or mx > board_w or my < 0 or my > board_h:
+            continue
+
+        lines.append(f"    <!-- Marker {i + 1}: {_escape_xml(label or icon)} -->")
+        lines.append(f'    <g id="marker_{i + 1}">')
+
+        # Render icon shape
+        if icon == "heart":
+            _render_heart_icon(lines, mx, my, r)
+        elif icon == "star":
+            _render_star_icon(lines, mx, my, r)
+        elif icon == "home":
+            _render_home_icon(lines, mx, my, r)
+        elif icon == "diamond":
+            _render_diamond_icon(lines, mx, my, r)
+        else:  # default: pin
+            _render_pin_icon(lines, mx, my, r)
+
+        # Render label below the icon
+        if label:
+            label_y = round(my + r * 2.8, 2)
+            lines.append(
+                f'      <text x="{round(mx, 2)}" y="{label_y}"'
+                f' text-anchor="middle" font-family="Arial, Helvetica, sans-serif"'
+                f' font-size="{round(label_size, 2)}" font-weight="bold"'
+                f' fill="#1a1a1a">{_escape_xml(label.upper())}</text>'
+            )
+
+        lines.append("    </g>")
+
+    lines.append("  </g>")
+
+
+def _render_pin_icon(lines: list[str], cx: float, cy: float, r: float):
+    """CNC-friendly map pin (circle + diamond pointer)."""
+    h = r * 2.5
+    # Diamond pointer
+    d = (
+        f"M{round(cx, 2)},{round(cy + r, 2)} "
+        f"L{round(cx - r * 0.5, 2)},{round(cy + r + h * 0.3, 2)} "
+        f"L{round(cx, 2)},{round(cy + r + h, 2)} "
+        f"L{round(cx + r * 0.5, 2)},{round(cy + r + h * 0.3, 2)} Z"
+    )
+    lines.append(
+        f'      <path d="{d}"'
+        f' fill="#c0392b" stroke="#1a1a1a" stroke-width="0.35"'
+        f' stroke-linejoin="round"/>'
+    )
+    # Circle
+    lines.append(
+        f'      <circle cx="{round(cx, 2)}" cy="{round(cy, 2)}" r="{round(r, 2)}"'
+        f' fill="#e74c3c" stroke="#1a1a1a" stroke-width="0.35"/>'
+    )
+    # Inner dot
+    lines.append(
+        f'      <circle cx="{round(cx, 2)}" cy="{round(cy, 2)}" r="{round(r * 0.3, 2)}"'
+        f' fill="#ffffff" stroke="none"/>'
+    )
+
+
+def _render_heart_icon(lines: list[str], cx: float, cy: float, r: float):
+    """CNC-friendly heart shape built from straight lines (no curves)."""
+    # Heart approximated with line segments for CNC compatibility
+    s = r * 1.2
+    pts = [
+        (cx, cy + s * 0.9),           # bottom point
+        (cx - s * 1.0, cy - s * 0.1),  # left
+        (cx - s * 0.8, cy - s * 0.7),  # upper left
+        (cx - s * 0.3, cy - s * 0.9),  # top left indent
+        (cx, cy - s * 0.5),            # top center dip
+        (cx + s * 0.3, cy - s * 0.9),  # top right indent
+        (cx + s * 0.8, cy - s * 0.7),  # upper right
+        (cx + s * 1.0, cy - s * 0.1),  # right
+    ]
+    d = f"M{round(pts[0][0], 2)},{round(pts[0][1], 2)}"
+    for px, py in pts[1:]:
+        d += f" L{round(px, 2)},{round(py, 2)}"
+    d += " Z"
+    lines.append(
+        f'      <path d="{d}"'
+        f' fill="#e74c3c" stroke="#1a1a1a" stroke-width="0.35"'
+        f' stroke-linejoin="round"/>'
+    )
+
+
+def _render_star_icon(lines: list[str], cx: float, cy: float, r: float):
+    """Five-pointed star."""
+    outer_r = r * 1.2
+    inner_r = r * 0.5
+    pts = []
+    for i in range(5):
+        # Outer point (start at top, -90 degrees)
+        angle_outer = math.radians(-90 + i * 72)
+        pts.append((cx + outer_r * math.cos(angle_outer), cy + outer_r * math.sin(angle_outer)))
+        # Inner point
+        angle_inner = math.radians(-90 + i * 72 + 36)
+        pts.append((cx + inner_r * math.cos(angle_inner), cy + inner_r * math.sin(angle_inner)))
+
+    d = f"M{round(pts[0][0], 2)},{round(pts[0][1], 2)}"
+    for px, py in pts[1:]:
+        d += f" L{round(px, 2)},{round(py, 2)}"
+    d += " Z"
+    lines.append(
+        f'      <path d="{d}"'
+        f' fill="#f39c12" stroke="#1a1a1a" stroke-width="0.35"'
+        f' stroke-linejoin="round"/>'
+    )
+
+
+def _render_home_icon(lines: list[str], cx: float, cy: float, r: float):
+    """Simple house shape (pentagon roof + rectangle body)."""
+    s = r * 1.1
+    # House outline: roof peak, then clockwise around
+    pts = [
+        (cx, cy - s * 1.0),           # roof peak
+        (cx + s * 0.9, cy - s * 0.1),  # roof right
+        (cx + s * 0.7, cy - s * 0.1),  # wall right top
+        (cx + s * 0.7, cy + s * 0.7),  # wall right bottom
+        (cx - s * 0.7, cy + s * 0.7),  # wall left bottom
+        (cx - s * 0.7, cy - s * 0.1),  # wall left top
+        (cx - s * 0.9, cy - s * 0.1),  # roof left
+    ]
+    d = f"M{round(pts[0][0], 2)},{round(pts[0][1], 2)}"
+    for px, py in pts[1:]:
+        d += f" L{round(px, 2)},{round(py, 2)}"
+    d += " Z"
+    lines.append(
+        f'      <path d="{d}"'
+        f' fill="#3498db" stroke="#1a1a1a" stroke-width="0.35"'
+        f' stroke-linejoin="miter"/>'
+    )
+    # Door
+    dw, dh = s * 0.3, s * 0.45
+    door = (
+        f"M{round(cx - dw, 2)},{round(cy + s * 0.7, 2)} "
+        f"L{round(cx - dw, 2)},{round(cy + s * 0.7 - dh, 2)} "
+        f"L{round(cx + dw, 2)},{round(cy + s * 0.7 - dh, 2)} "
+        f"L{round(cx + dw, 2)},{round(cy + s * 0.7, 2)} Z"
+    )
+    lines.append(
+        f'      <path d="{door}"'
+        f' fill="#1a1a1a" stroke="none"/>'
+    )
+
+
+def _render_diamond_icon(lines: list[str], cx: float, cy: float, r: float):
+    """Simple diamond/rhombus marker."""
+    s = r * 1.1
+    d = (
+        f"M{round(cx, 2)},{round(cy - s, 2)} "
+        f"L{round(cx + s * 0.7, 2)},{round(cy, 2)} "
+        f"L{round(cx, 2)},{round(cy + s, 2)} "
+        f"L{round(cx - s * 0.7, 2)},{round(cy, 2)} Z"
+    )
+    lines.append(
+        f'      <path d="{d}"'
+        f' fill="#9b59b6" stroke="#1a1a1a" stroke-width="0.35"'
+        f' stroke-linejoin="round"/>'
+    )
 
 
 def _coords_to_path(coords: list[tuple]) -> str:

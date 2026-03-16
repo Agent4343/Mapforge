@@ -19,7 +19,7 @@ from app.models.schemas import (
 )
 from app.services.auth import get_current_user, get_optional_user
 from app.services.geo_fetch import fetch_area_around_point, fetch_geometry
-from app.services.geometry_processor import process_geometry
+from app.services.geometry_processor import process_geometry, transform_wgs84_to_board
 from app.services.svg_generator import generate_svg
 from app.services.dxf_generator import generate_dxf
 from app.services.street_fetcher import fetch_streets
@@ -146,6 +146,22 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         except Exception as e:
             log.warning(f"Contour fetch failed (non-fatal): {e}")
 
+    # Transform custom markers from lat/lon to board mm coordinates
+    board_markers = None
+    if req.markers:
+        transform = processed.get("transform")
+        if transform:
+            board_markers = []
+            for m in req.markers:
+                coords = transform_wgs84_to_board([(m.lon, m.lat)], transform)
+                if coords:
+                    board_markers.append({
+                        "x": coords[0][0],
+                        "y": coords[0][1],
+                        "label": m.label,
+                        "icon": m.icon.value,
+                    })
+
     # Generate SVG
     location_name = req.text or f"Location {req.osm_id}"
     result = generate_svg(
@@ -157,6 +173,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         streets_data=streets_data,
         contour_data=contour_data,
         water_data=water_data,
+        markers=board_markers,
     )
 
     # Store SVG
@@ -174,6 +191,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                 show_coordinates=req.show_coordinates,
                 font_size_mm=req.font_size_mm,
                 streets_data=streets_data,
+                markers=board_markers,
             )
             dxf_key = svg_key.replace("svg/", "dxf/").replace(".svg", ".dxf")
             await store_file(dxf_key, dxf_bytes, content_type="application/dxf")
@@ -297,7 +315,6 @@ async def generate_pin(
 
     # The pin should be at the center of the board area
     # Transform the pin lat/lon to board mm coordinates
-    from app.services.geometry_processor import transform_wgs84_to_board
     transform = processed.get("transform")
     if transform:
         pin_board = transform_wgs84_to_board([(req.lon, req.lat)], transform)
