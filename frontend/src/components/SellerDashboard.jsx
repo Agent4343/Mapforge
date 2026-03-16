@@ -1,10 +1,15 @@
 import { useState, useEffect } from "react";
-import { getSellerDashboard } from "../services/api.js";
+import { getSellerDashboard, removeListing, updateListing } from "../services/api.js";
 
 export default function SellerDashboard({ onBack }) {
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [editTarget, setEditTarget] = useState(null);
+  const [editPrice, setEditPrice] = useState("");
+  const [editTitle, setEditTitle] = useState("");
+  const [editDesc, setEditDesc] = useState("");
+  const [saving, setSaving] = useState(false);
 
   async function load() {
     try {
@@ -19,8 +24,42 @@ export default function SellerDashboard({ onBack }) {
 
   useEffect(() => { load(); }, []);
 
+  async function handleRemove(listingId) {
+    if (!confirm("Remove this listing from the marketplace?")) return;
+    try {
+      await removeListing(listingId);
+      load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  function openEdit(listing) {
+    setEditTarget(listing.id);
+    setEditPrice((listing.price_cents / 100).toFixed(2));
+    setEditTitle(listing.title);
+    setEditDesc(listing.description || "");
+  }
+
+  async function handleSaveEdit() {
+    setSaving(true);
+    try {
+      await updateListing(editTarget, {
+        price_cents: Math.round(parseFloat(editPrice) * 100),
+        title: editTitle,
+        description: editDesc || null,
+      });
+      setEditTarget(null);
+      load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   if (loading) return <div className="loading-overlay"><div className="spinner" /></div>;
-  if (error) return (
+  if (error && !dashboard) return (
     <div className="seller-dashboard">
       <div className="view-header">
         <button className="btn btn-secondary" onClick={onBack}>Back</button>
@@ -41,6 +80,8 @@ export default function SellerDashboard({ onBack }) {
         <button className="btn btn-secondary" onClick={onBack}>Back</button>
         <h2>Seller Dashboard</h2>
       </div>
+
+      {error && <div className="error-message">{error}<button className="link-btn" onClick={() => setError(null)} style={{ marginLeft: 8 }}>dismiss</button></div>}
 
       <div className="dashboard-stats">
         <div className="dashboard-stat">
@@ -91,8 +132,39 @@ export default function SellerDashboard({ onBack }) {
                 {l.board_width_mm}x{l.board_height_mm}mm
                 {l.province && ` \u00b7 ${l.province}`}
               </div>
+              <div className="export-buttons" style={{ marginTop: 8 }}>
+                <button className="btn btn-secondary" onClick={() => openEdit(l)}>Edit</button>
+                <button className="btn btn-secondary" style={{ color: "var(--crimson)" }} onClick={() => handleRemove(l.id)}>Remove</button>
+              </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Edit listing modal */}
+      {editTarget && (
+        <div className="modal-overlay" onClick={() => setEditTarget(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ width: "360px" }}>
+            <h2>Edit Listing</h2>
+            <div className="control-group">
+              <label>Title</label>
+              <input type="text" value={editTitle} onChange={(e) => setEditTitle(e.target.value)} maxLength={255} />
+            </div>
+            <div className="control-group">
+              <label>Price (USD)</label>
+              <input type="number" min="1.99" max="99.99" step="0.01" value={editPrice} onChange={(e) => setEditPrice(e.target.value)} />
+            </div>
+            <div className="control-group">
+              <label>Description</label>
+              <input type="text" value={editDesc} onChange={(e) => setEditDesc(e.target.value)} maxLength={2000} />
+            </div>
+            <div className="export-buttons" style={{ marginTop: 12 }}>
+              <button className="btn btn-primary" onClick={handleSaveEdit} disabled={saving}>
+                {saving ? "Saving..." : "Save Changes"}
+              </button>
+              <button className="btn btn-secondary" onClick={() => setEditTarget(null)}>Cancel</button>
+            </div>
+          </div>
         </div>
       )}
     </div>

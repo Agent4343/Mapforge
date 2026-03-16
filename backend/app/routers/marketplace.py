@@ -13,7 +13,7 @@ from app.models.db_models import (
 from app.models.schemas import (
     CreateListingRequest, CreateReviewRequest, ListingResponse,
     MarketplaceResponse, PurchaseRequest, PurchaseResponse,
-    ReviewResponse, SellerDashboardResponse,
+    ReviewResponse, SellerDashboardResponse, UpdateListingRequest,
 )
 from app.services.auth import get_current_user, get_optional_user
 from app.services.payments import create_payment_intent
@@ -60,13 +60,19 @@ async def browse_marketplace(
     else:
         query = query.order_by(MarketplaceListing.created_at.desc())
 
-    # Count
-    count_q = select(func.count()).select_from(
+    # Count (apply same filters)
+    count_sub = (
         select(MarketplaceListing.id)
         .join(GeneratedFile, MarketplaceListing.file_id == GeneratedFile.id)
         .where(MarketplaceListing.is_active == True)
-        .subquery()
     )
+    if product_type:
+        count_sub = count_sub.where(GeneratedFile.product_type == product_type)
+    if province:
+        count_sub = count_sub.where(GeneratedFile.province == province)
+    if search:
+        count_sub = count_sub.where(MarketplaceListing.title.ilike(f"%{search}%"))
+    count_q = select(func.count()).select_from(count_sub.subquery())
     total = (await db.execute(count_q)).scalar() or 0
 
     # Paginate
@@ -329,6 +335,76 @@ async def seller_dashboard(
         total_views=total_views,
         listings=listings,
     )
+
+
+# --- Update Listing ---
+
+@router.patch("/{listing_id}", response_model=ListingResponse)
+async def update_listing(
+    listing_id: str,
+    req: UpdateListingRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a listing's price, title, description, or tags."""
+    result = await db.execute(
+        select(MarketplaceListing, GeneratedFile)
+        .join(GeneratedFile, MarketplaceListing.file_id == GeneratedFile.id)
+        .where(
+            MarketplaceListing.id == listing_id,
+            MarketplaceListing.seller_id == user.id,
+        )
+    )
+    row = result.one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Listing not found.")
+    listing, file = row
+
+    if req.price_cents is not None:
+        listing.price_cents = req.price_cents
+    if req.title is not None:
+        listing.title = req.title
+    if req.description is not None:
+        listing.description = req.description
+    if req.tags is not None:
+        listing.tags = req.tags
+
+    await db.commit()
+    await db.refresh(listing)
+
+    log.info(f"Listing updated: {listing.id} by {user.username}")
+    return _listing_response(listing, file, user)
+
+
+# --- My Purchases ---
+
+@router.get("/purchases", response_model=list[PurchaseResponse])
+async def my_purchases(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get current user's purchased files."""
+    result = await db.execute(
+        select(Purchase, MarketplaceListing, GeneratedFile)
+        .join(MarketplaceListing, Purchase.listing_id == MarketplaceListing.id)
+        .join(GeneratedFile, MarketplaceListing.file_id == GeneratedFile.id)
+        .where(Purchase.buyer_id == user.id, Purchase.status == "completed")
+        .order_by(Purchase.created_at.desc())
+    )
+    rows = result.all()
+    return [
+        PurchaseResponse(
+            purchase_id=purchase.id,
+            file_id=listing.file_id,
+            payment_status=purchase.status,
+            title=listing.title,
+            product_type=file.product_type,
+            board_width_mm=file.board_width_mm,
+            board_height_mm=file.board_height_mm,
+            purchased_at=purchase.created_at.isoformat(),
+        )
+        for purchase, listing, file in rows
+    ]
 
 
 # --- Remove Listing ---

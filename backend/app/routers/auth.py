@@ -1,5 +1,7 @@
 """Authentication router — registration, login, profile."""
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -104,30 +106,75 @@ async def get_profile(user: User = Depends(get_current_user)):
     )
 
 
-@router.post("/reset-password")
-async def reset_password(
+@router.post("/request-reset")
+async def request_password_reset(
     email: str,
-    new_password: str,
     db: AsyncSession = Depends(get_db),
 ):
-    """Reset password for a user by email.
-
-    In production this would require an email-verified token.
-    For now, accepts the request directly (to be secured with email verification).
-    """
-    if len(new_password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    """Request a password reset token. Returns the token directly (in production, email it)."""
+    import secrets
+    from datetime import timedelta
+    from app.models.db_models import PasswordResetToken
 
     result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
+
+    # Always return success to avoid email enumeration
     if not user:
-        # Don't reveal whether the email exists
-        return {"message": "If an account with that email exists, the password has been reset."}
+        return {"message": "If an account with that email exists, a reset link has been sent."}
+
+    token = secrets.token_urlsafe(48)
+    reset = PasswordResetToken(
+        user_id=user.id,
+        token=token,
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
+    db.add(reset)
+    await db.commit()
+
+    log.info(f"Password reset requested for: {user.email}")
+    # In production: send email with reset link containing token
+    # For now: return token directly so the frontend can use it
+    return {"message": "If an account with that email exists, a reset link has been sent.", "reset_token": token}
+
+
+@router.post("/reset-password")
+async def reset_password(
+    token: str,
+    new_password: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Reset password using a valid reset token."""
+    from app.models.db_models import PasswordResetToken
+
+    if len(new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    result = await db.execute(
+        select(PasswordResetToken).where(
+            PasswordResetToken.token == token,
+            PasswordResetToken.used == False,
+        )
+    )
+    reset = result.scalar_one_or_none()
+    if not reset:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+
+    if reset.expires_at < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="Reset token has expired")
+
+    # Find user and update password
+    user_result = await db.execute(select(User).where(User.id == reset.user_id))
+    user = user_result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid reset token")
 
     user.hashed_password = hash_password(new_password)
+    reset.used = True
     await db.commit()
-    log.info(f"Password reset for: {user.email}")
-    return {"message": "If an account with that email exists, the password has been reset."}
+
+    log.info(f"Password reset completed for: {user.email}")
+    return {"message": "Password has been reset successfully."}
 
 
 @router.post("/subscribe", response_model=SubscriptionResponse)

@@ -218,6 +218,13 @@ class CreateListingRequest(BaseModel):
     tags: Optional[str] = Field(None, max_length=500)
 
 
+class UpdateListingRequest(BaseModel):
+    price_cents: Optional[int] = Field(None, ge=199, le=9999)
+    title: Optional[str] = Field(None, min_length=5, max_length=255)
+    description: Optional[str] = Field(None, max_length=2000)
+    tags: Optional[str] = Field(None, max_length=500)
+
+
 class ListingResponse(BaseModel):
     id: str
     file_id: str
@@ -257,6 +264,11 @@ class PurchaseResponse(BaseModel):
     file_id: str
     payment_status: str
     client_secret: Optional[str] = None
+    title: Optional[str] = None
+    product_type: Optional[str] = None
+    board_width_mm: Optional[float] = None
+    board_height_mm: Optional[float] = None
+    purchased_at: Optional[str] = None
 
 
 class CreateReviewRequest(BaseModel):

@@ -96,10 +96,10 @@ async def health():
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Catch unhandled exceptions and return JSON instead of HTML tracebacks."""
-    log.error(f"Unhandled error on {request.method} {request.url.path}: {exc}")
+    log.error(f"Unhandled error on {request.method} {request.url.path}: {type(exc).__name__}: {exc}")
     return JSONResponse(
         status_code=500,
-        content={"detail": f"Internal server error: {type(exc).__name__}: {exc}"},
+        content={"detail": "Internal server error. Please try again later."},
     )
 
 

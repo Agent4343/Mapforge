@@ -2,8 +2,10 @@
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -27,6 +29,7 @@ from app.services.file_storage import store_file, retrieve_file
 from app.services.thumbnail_generator import generate_thumbnail
 
 router = APIRouter(prefix="/api/v1", tags=["generate"])
+limiter = Limiter(key_func=get_remote_address)
 
 
 async def _maybe_reset_monthly_counter(user: User, db: AsyncSession):
@@ -244,7 +247,9 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
 
 
 @router.post("/generate", response_model=GenerateResponse)
+@limiter.limit(settings.RATE_LIMIT_GENERATE)
 async def generate(
+    request: Request,
     req: GenerateRequest,
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
@@ -257,7 +262,9 @@ async def generate(
 
 
 @router.post("/generate/pin", response_model=GenerateResponse)
+@limiter.limit(settings.RATE_LIMIT_GENERATE)
 async def generate_pin(
+    request: Request,
     req: PinGenerateRequest,
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
@@ -416,7 +423,9 @@ async def generate_pin(
 
 
 @router.post("/generate/batch", response_model=BatchGenerateResponse)
+@limiter.limit(settings.RATE_LIMIT_BATCH)
 async def batch_generate(
+    request: Request,
     req: BatchGenerateRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),

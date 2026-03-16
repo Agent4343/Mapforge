@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { browseMarketplace, purchaseListing, submitReview, getReviews } from "../services/api.js";
+import { browseMarketplace, purchaseListing, submitReview, getReviews, getMyPurchases } from "../services/api.js";
 
 const PRODUCT_TYPES = [
   { value: "", label: "All Types" },
@@ -31,6 +31,9 @@ export default function MarketplaceView({ user, onBack }) {
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewError, setReviewError] = useState(null);
 
+  // Purchased listing IDs (to show Review button only for owned items)
+  const [purchasedIds, setPurchasedIds] = useState(new Set());
+
   // Reviews viewer
   const [viewReviews, setViewReviews] = useState(null);
   const [reviews, setReviews] = useState([]);
@@ -55,6 +58,14 @@ export default function MarketplaceView({ user, onBack }) {
   useEffect(() => {
     loadListings();
   }, [page, search, sort, typeFilter]);
+
+  useEffect(() => {
+    if (user) {
+      getMyPurchases().then((data) => {
+        setPurchasedIds(new Set(data.map((p) => p.file_id)));
+      }).catch(() => {});
+    }
+  }, [user, purchaseSuccess]);
 
   async function handlePurchase(listingId) {
     if (!user) {
@@ -167,7 +178,7 @@ export default function MarketplaceView({ user, onBack }) {
               <div className="marketplace-card-footer">
                 <span className="marketplace-price">${(l.price_cents / 100).toFixed(2)}</span>
                 <div style={{ display: "flex", gap: "6px" }}>
-                  {user && (
+                  {user && purchasedIds.has(l.file_id) && (
                     <button
                       className="btn btn-secondary"
                       style={{ padding: "6px 10px", fontSize: "11px" }}
@@ -176,13 +187,17 @@ export default function MarketplaceView({ user, onBack }) {
                       Review
                     </button>
                   )}
-                  <button
-                    className="btn btn-primary"
-                    onClick={() => handlePurchase(l.id)}
-                    disabled={purchasing === l.id}
-                  >
-                    {purchasing === l.id ? "..." : purchaseSuccess === l.id ? "Purchased!" : "Buy"}
-                  </button>
+                  {purchasedIds.has(l.file_id) ? (
+                    <span style={{ fontSize: "11px", color: "var(--green)", fontWeight: 600, padding: "6px 10px" }}>Owned</span>
+                  ) : (
+                    <button
+                      className="btn btn-primary"
+                      onClick={() => handlePurchase(l.id)}
+                      disabled={purchasing === l.id}
+                    >
+                      {purchasing === l.id ? "..." : purchaseSuccess === l.id ? "Purchased!" : "Buy"}
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

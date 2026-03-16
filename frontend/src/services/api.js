@@ -79,8 +79,19 @@ async function getProfile() {
   return resp.json();
 }
 
-async function resetPassword(email, newPassword) {
-  const resp = await fetchWithTimeout(`${API_BASE}/auth/reset-password?email=${encodeURIComponent(email)}&new_password=${encodeURIComponent(newPassword)}`, {
+async function requestPasswordReset(email) {
+  const resp = await fetchWithTimeout(`${API_BASE}/auth/request-reset?email=${encodeURIComponent(email)}`, {
+    method: "POST",
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(err.detail || "Reset request failed");
+  }
+  return resp.json();
+}
+
+async function resetPassword(token, newPassword) {
+  const resp = await fetchWithTimeout(`${API_BASE}/auth/reset-password?token=${encodeURIComponent(token)}&new_password=${encodeURIComponent(newPassword)}`, {
     method: "POST",
   });
   if (!resp.ok) {
@@ -245,6 +256,35 @@ async function purchaseListing(listingId) {
   return resp.json();
 }
 
+async function getMyPurchases() {
+  const resp = await fetchWithTimeout(`${API_BASE}/marketplace/purchases`);
+  if (!resp.ok) throw new Error("Failed to load purchases");
+  return resp.json();
+}
+
+async function updateListing(listingId, updates) {
+  const resp = await fetchWithTimeout(`${API_BASE}/marketplace/${listingId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(err.detail || "Update failed");
+  }
+  return resp.json();
+}
+
+async function removeListing(listingId) {
+  const resp = await fetchWithTimeout(`${API_BASE}/marketplace/${listingId}`, {
+    method: "DELETE",
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(err.detail || "Remove failed");
+  }
+}
+
 async function getSellerDashboard() {
   const resp = await fetchWithTimeout(`${API_BASE}/marketplace/dashboard`);
   if (!resp.ok) throw new Error("Failed to load dashboard");
@@ -276,10 +316,11 @@ async function getReviews(listingId) {
 }
 
 export {
-  setToken, getToken, register, login, logout, getProfile, resetPassword, subscribe,
+  setToken, getToken, register, login, logout, getProfile, requestPasswordReset, resetPassword, subscribe,
   searchLocations, generateSVG, generatePin, batchGenerate,
   downloadSVG, downloadDXF, downloadThumbnail,
   getLibrary, deleteLibraryFile,
   browseMarketplace, createListing, purchaseListing,
+  getMyPurchases, updateListing, removeListing,
   getSellerDashboard, submitReview, getReviews,
 };

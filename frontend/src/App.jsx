@@ -11,6 +11,7 @@ import BatchPanel from "./components/BatchPanel.jsx";
 import MapPreview from "./components/MapPreview.jsx";
 import LandingPage from "./components/LandingPage.jsx";
 import PricingModal from "./components/PricingModal.jsx";
+import PurchasesView from "./components/PurchasesView.jsx";
 import {
   generateSVG, generatePin, downloadSVG, downloadDXF, downloadThumbnail,
   getProfile, logout, getToken, subscribe,
@@ -293,6 +294,7 @@ export default function App() {
   if (view === "library") return <LibraryView onBack={() => setView("main")} />;
   if (view === "marketplace") return <MarketplaceView user={user} onBack={() => setView("main")} />;
   if (view === "dashboard") return <SellerDashboard onBack={() => setView("main")} />;
+  if (view === "purchases") return <PurchasesView onBack={() => setView("main")} />;
 
   const canUndo = historyIndex > 0;
   const canRedo = historyIndex < configHistory.length - 1;
@@ -321,6 +323,7 @@ export default function App() {
           <button className="nav-btn" onClick={() => setShowPricing(true)}>Pricing</button>
           <button className="nav-btn" onClick={() => setView("marketplace")}>Marketplace</button>
           {user && <button className="nav-btn" onClick={() => setView("library")}>Library</button>}
+          {user && <button className="nav-btn" onClick={() => setView("purchases")}>Purchases</button>}
           {user && (user.tier === "maker" || user.tier === "pro" || user.tier === "admin") && (
             <button className="nav-btn" onClick={() => setView("dashboard")}>Seller</button>
           )}
