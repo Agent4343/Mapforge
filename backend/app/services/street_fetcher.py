@@ -39,7 +39,7 @@ async def fetch_streets(
 
     Returns:
         dict with 'major_roads' and 'minor_roads' as lists of
-        (coords_list, road_class) tuples
+        (coords_list, road_class, width, name) tuples
     """
     south, west, north, east = bbox
 
@@ -85,7 +85,8 @@ async def fetch_streets(
         if len(coords) < 2:
             continue
 
-        entry = (coords, highway_tag, road_info["width"])
+        name = way.get("tags", {}).get("name", "")
+        entry = (coords, highway_tag, road_info["width"], name)
 
         if road_info["layer"] == "major":
             major_roads.append(entry)

@@ -9,9 +9,11 @@ Produces SVG files conforming to the MapForge CNC output spec:
 - CNC metadata in XML comments
 """
 
+import math
 from datetime import datetime, timezone
 
 from app.models.schemas import CutStyle
+from app.services.geometry_processor import transform_wgs84_to_board
 
 
 def generate_svg(
@@ -37,7 +39,7 @@ def generate_svg(
     layer_count = 3 + (1 if show_coordinates else 0)
 
     if streets_data:
-        layer_count += 1
+        layer_count += 2  # detail_lines + street_labels
         path_count += len(streets_data.get("major_roads", [])) + len(streets_data.get("minor_roads", []))
     if contour_data:
         layer_count += 1
@@ -220,30 +222,125 @@ def _render_contour_bands(lines: list[str], contour_data: list[dict], processed:
 
 
 def _render_streets(lines: list[str], streets_data: dict, processed: dict):
-    """Render city street network."""
+    """Render city street network with lines and name labels."""
+    transform = processed.get("transform")
+
     lines.append("  <!-- Layer: detail_lines (streets) -->")
     lines.append('  <!-- Toolpath: Engrave, 1/8" ball nose, 0.03"-0.05" -->')
     lines.append('  <g id="detail_lines">')
 
+    board_w, board_h = processed["board_mm"]
+    label_candidates = []
+
     # Major roads first (wider strokes)
-    for coords, road_class, width in streets_data.get("major_roads", []):
-        if len(coords) >= 2:
-            path_d = _coords_to_open_path(coords)
-            lines.append(
-                f'    <path d="{path_d}"'
-                f' fill="none" stroke="#333333" stroke-width="{width}"'
-                f' stroke-linecap="round" stroke-linejoin="round"/>'
-            )
+    for coords, road_class, width, name in streets_data.get("major_roads", []):
+        if len(coords) < 2:
+            continue
+        board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
+        path_d = _coords_to_open_path(board_coords)
+        lines.append(
+            f'    <path d="{path_d}"'
+            f' fill="none" stroke="#333333" stroke-width="{width}"'
+            f' stroke-linecap="round" stroke-linejoin="round"/>'
+        )
+        if name:
+            label_candidates.append((board_coords, name, "major"))
 
     # Minor roads (thinner)
-    for coords, road_class, width in streets_data.get("minor_roads", []):
-        if len(coords) >= 2:
-            path_d = _coords_to_open_path(coords)
-            lines.append(
-                f'    <path d="{path_d}"'
-                f' fill="none" stroke="#555555" stroke-width="{width}"'
-                f' stroke-linecap="round" stroke-linejoin="round"/>'
-            )
+    for coords, road_class, width, name in streets_data.get("minor_roads", []):
+        if len(coords) < 2:
+            continue
+        board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
+        path_d = _coords_to_open_path(board_coords)
+        lines.append(
+            f'    <path d="{path_d}"'
+            f' fill="none" stroke="#555555" stroke-width="{width}"'
+            f' stroke-linecap="round" stroke-linejoin="round"/>'
+        )
+        if name:
+            label_candidates.append((board_coords, name, "minor"))
+
+    lines.append("  </g>")
+    lines.append("")
+
+    # Layer: street_labels
+    _render_street_labels(lines, label_candidates, board_w, board_h)
+
+
+def _render_street_labels(
+    lines: list[str],
+    label_candidates: list[tuple],
+    board_w: float,
+    board_h: float,
+):
+    """Render street name labels along road paths.
+
+    Places labels at the midpoint of each road segment, rotated to follow
+    the road direction. Deduplicates by name and filters labels that would
+    overlap or fall outside the board.
+    """
+    lines.append("  <!-- Layer: street_labels -->")
+    lines.append('  <!-- Toolpath: V-carve, 60 deg V-bit, flat depth 0.02" -->')
+    lines.append('  <g id="street_labels">')
+
+    # Font sizes by road class (mm)
+    font_sizes = {"major": 2.5, "minor": 1.8}
+
+    # Deduplicate: pick the longest segment for each street name
+    best_segments: dict[str, tuple] = {}
+    for coords, name, road_type in label_candidates:
+        seg_len = _path_length(coords)
+        existing = best_segments.get(name)
+        if existing is None or seg_len > existing[0]:
+            best_segments[name] = (seg_len, coords, road_type)
+
+    # Place labels, track positions to avoid overlap
+    placed: list[tuple[float, float, float]] = []  # (x, y, text_width_approx)
+    min_spacing = 8.0  # mm between label centers
+
+    for name, (seg_len, coords, road_type) in best_segments.items():
+        font_size = font_sizes[road_type]
+        approx_text_width = len(name) * font_size * 0.55
+
+        # Skip if road segment is shorter than the label
+        if seg_len < approx_text_width * 1.2:
+            continue
+
+        # Find midpoint and angle along the path
+        mid_x, mid_y, angle_deg = _path_midpoint_and_angle(coords)
+
+        # Skip labels outside the board bounds (with margin)
+        margin = 5.0
+        if mid_x < margin or mid_x > board_w - margin:
+            continue
+        if mid_y < margin or mid_y > board_h - margin:
+            continue
+
+        # Skip if too close to an existing label
+        too_close = False
+        for px, py, pw in placed:
+            dist = math.hypot(mid_x - px, mid_y - py)
+            if dist < max(min_spacing, (pw + approx_text_width) / 2):
+                too_close = True
+                break
+        if too_close:
+            continue
+
+        placed.append((mid_x, mid_y, approx_text_width))
+
+        # Ensure text reads left-to-right
+        if angle_deg > 90:
+            angle_deg -= 180
+        elif angle_deg < -90:
+            angle_deg += 180
+
+        lines.append(
+            f'    <text x="{round(mid_x, 2)}" y="{round(mid_y, 2)}"'
+            f' text-anchor="middle" font-family="Arial, Helvetica, sans-serif"'
+            f' font-size="{font_size}" fill="#444444"'
+            f' transform="rotate({round(angle_deg, 1)},{round(mid_x, 2)},{round(mid_y, 2)})">'
+            f'{_escape_xml(name.upper())}</text>'
+        )
 
     lines.append("  </g>")
 
@@ -267,6 +364,44 @@ def _coords_to_open_path(coords: list[tuple]) -> str:
     for x, y in coords[1:]:
         parts.append(f"L{round(x, 2)},{round(y, 2)}")
     return " ".join(parts)
+
+
+def _path_length(coords: list[tuple]) -> float:
+    """Calculate total length of a coordinate path in mm."""
+    total = 0.0
+    for i in range(1, len(coords)):
+        total += math.hypot(coords[i][0] - coords[i-1][0], coords[i][1] - coords[i-1][1])
+    return total
+
+
+def _path_midpoint_and_angle(coords: list[tuple]) -> tuple[float, float, float]:
+    """Find the midpoint along a path and the angle (degrees) at that point."""
+    total = _path_length(coords)
+    half = total / 2.0
+    traveled = 0.0
+
+    for i in range(1, len(coords)):
+        dx = coords[i][0] - coords[i-1][0]
+        dy = coords[i][1] - coords[i-1][1]
+        seg_len = math.hypot(dx, dy)
+        if traveled + seg_len >= half and seg_len > 0:
+            # Midpoint falls on this segment
+            frac = (half - traveled) / seg_len
+            mid_x = coords[i-1][0] + dx * frac
+            mid_y = coords[i-1][1] + dy * frac
+            angle = math.degrees(math.atan2(dy, dx))
+            return mid_x, mid_y, angle
+        traveled += seg_len
+
+    # Fallback: use first segment
+    if len(coords) >= 2:
+        dx = coords[1][0] - coords[0][0]
+        dy = coords[1][1] - coords[0][1]
+        mid_x = (coords[0][0] + coords[1][0]) / 2
+        mid_y = (coords[0][1] + coords[1][1]) / 2
+        angle = math.degrees(math.atan2(dy, dx))
+        return mid_x, mid_y, angle
+    return coords[0][0], coords[0][1], 0.0
 
 
 def _escape_xml(text: str) -> str:

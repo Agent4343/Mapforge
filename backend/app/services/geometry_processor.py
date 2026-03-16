@@ -83,7 +83,7 @@ def process_geometry(
     board_h_mm = board_height_inches * INCHES_TO_MM
     margin_mm = min(board_w_mm, board_h_mm) * 0.08  # 8% margin for text area
 
-    scaled_polys, bounds_mm = _scale_to_board(
+    scaled_polys, bounds_mm, _scale_params = _scale_to_board(
         oriented, board_w_mm, board_h_mm, margin_mm,
     )
 
@@ -106,7 +106,31 @@ def process_geometry(
         "board_mm": (board_w_mm, board_h_mm),
         "center_latlon": center_latlon,
         "node_count": node_count,
+        "transform": _scale_params,
     }
+
+
+def transform_wgs84_to_board(
+    coords: list[tuple[float, float]],
+    transform: dict,
+) -> list[tuple[float, float]]:
+    """Transform WGS84 (lon, lat) coordinates to board mm coordinates.
+
+    Uses the same projection and scale as the main geometry.
+    """
+    min_x = transform["min_x"]
+    max_y = transform["max_y"]
+    scale = transform["scale"]
+    offset_x = transform["offset_x"]
+    offset_y = transform["offset_y"]
+
+    result = []
+    for lon, lat in coords:
+        mx, my = _transformer.transform(lon, lat)
+        x = round((mx - min_x) * scale + offset_x, 2)
+        y = round((max_y - my) * scale + offset_y, 2)
+        result.append((x, y))
+    return result
 
 
 def _reproject(geom: Polygon | MultiPolygon) -> Polygon | MultiPolygon:
@@ -212,7 +236,14 @@ def _scale_to_board(
         scaled_polys.append(Polygon(ext, holes))
 
     bounds_mm = (offset_x, offset_y, offset_x + scaled_geo_w, offset_y + scaled_geo_h)
-    return scaled_polys, bounds_mm
+    transform_params = {
+        "min_x": min_x,
+        "max_y": max_y,
+        "scale": scale,
+        "offset_x": offset_x,
+        "offset_y": offset_y,
+    }
+    return scaled_polys, bounds_mm, transform_params
 
 
 def _optimize_polygon(poly: Polygon) -> tuple[list[tuple], list[list[tuple]]]:

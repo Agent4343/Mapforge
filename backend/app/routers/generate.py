@@ -147,6 +147,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                 location_name=location_name,
                 show_coordinates=req.show_coordinates,
                 font_size_mm=req.font_size_mm,
+                streets_data=streets_data,
             )
             dxf_key = svg_key.replace("svg/", "dxf/").replace(".svg", ".dxf")
             await store_file(dxf_key, dxf_bytes, content_type="application/dxf")
