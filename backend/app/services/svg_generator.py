@@ -25,6 +25,7 @@ def generate_svg(
     center_latlon: tuple[float, float] | None = None,
     streets_data: dict | None = None,
     contour_data: list[dict] | None = None,
+    water_data: dict | None = None,
 ) -> dict:
     """Generate a CNC-ready SVG string from processed geometry.
 
@@ -38,6 +39,9 @@ def generate_svg(
     node_count = processed["node_count"]
     layer_count = 3 + (1 if show_coordinates else 0)
 
+    if water_data:
+        layer_count += 1
+        path_count += len(water_data.get("water_polygons", [])) + len(water_data.get("waterways", []))
     if streets_data:
         layer_count += 2  # detail_lines + street_labels
         path_count += len(streets_data.get("major_roads", [])) + len(streets_data.get("minor_roads", []))
@@ -81,6 +85,11 @@ def generate_svg(
     # Layer: geography
     _render_geography(lines, polygons, style)
     lines.append("")
+
+    # Layer: water_features
+    if water_data:
+        _render_water(lines, water_data, processed)
+        lines.append("")
 
     # Layer: depth_bands (bathymetric/topo contours)
     if contour_data:
@@ -194,6 +203,43 @@ def _render_geography(lines: list[str], polygons: list, style: CutStyle):
                     f' stroke-linejoin="round"/>'
                 )
         lines.append("  </g>")
+
+
+def _render_water(lines: list[str], water_data: dict, processed: dict):
+    """Render water features (lakes, rivers, coastlines)."""
+    transform = processed.get("transform")
+
+    lines.append("  <!-- Layer: water_features -->")
+    lines.append('  <!-- Toolpath: Pocket, 1/8" ball nose, 0.03"-0.05" -->')
+    lines.append('  <g id="water_features">')
+
+    # Water polygons (lakes, ponds) — rendered as closed filled shapes
+    for coords, water_type, name in water_data.get("water_polygons", []):
+        if len(coords) < 3:
+            continue
+        board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
+        path_d = _coords_to_path(board_coords)
+        comment = f" <!-- {_escape_xml(name)} -->" if name else ""
+        lines.append(
+            f'    <path d="{path_d}"'
+            f' fill="#d4e6f1" stroke="#7fb3d3" stroke-width="0.3"'
+            f' stroke-linejoin="round"/>{comment}'
+        )
+
+    # Waterways (rivers, streams) — rendered as open strokes
+    for coords, water_type, name in water_data.get("waterways", []):
+        if len(coords) < 2:
+            continue
+        board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
+        path_d = _coords_to_open_path(board_coords)
+        width = 0.8 if water_type in ("river", "coastline") else 0.4
+        lines.append(
+            f'    <path d="{path_d}"'
+            f' fill="none" stroke="#7fb3d3" stroke-width="{width}"'
+            f' stroke-linecap="round" stroke-linejoin="round"/>'
+        )
+
+    lines.append("  </g>")
 
 
 def _render_contour_bands(lines: list[str], contour_data: list[dict], processed: dict):

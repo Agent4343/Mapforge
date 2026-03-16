@@ -21,6 +21,7 @@ from app.services.geometry_processor import process_geometry
 from app.services.svg_generator import generate_svg
 from app.services.dxf_generator import generate_dxf
 from app.services.street_fetcher import fetch_streets
+from app.services.water_fetcher import fetch_water_features
 from app.services.contour_fetcher import fetch_contour_lines, generate_depth_bands
 from app.services.file_storage import store_file, retrieve_file
 from app.services.thumbnail_generator import generate_thumbnail
@@ -107,6 +108,18 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         except Exception as e:
             log.warning(f"Street fetch failed (non-fatal): {e}")
 
+    # Fetch water features for community/city/park maps
+    water_data = None
+    water_types = ("community", "city", "park")
+    if req.product_type.value in water_types:
+        try:
+            bounds = geom.bounds
+            water_data = await fetch_water_features(
+                bbox=(bounds[1], bounds[0], bounds[3], bounds[2]),
+            )
+        except Exception as e:
+            log.warning(f"Water feature fetch failed (non-fatal): {e}")
+
     # Fetch contours for premium products
     contour_data = None
     if req.include_contours:
@@ -131,6 +144,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         font_size_mm=req.font_size_mm,
         streets_data=streets_data,
         contour_data=contour_data,
+        water_data=water_data,
     )
 
     # Store SVG

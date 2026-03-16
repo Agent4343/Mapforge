@@ -1,0 +1,160 @@
+"""Water feature fetcher from OpenStreetMap Overpass API.
+
+Fetches lakes, rivers, coastlines, and other water bodies within a bounding box
+for rendering on community, city, and park maps.
+"""
+
+import httpx
+from app.logging_config import log
+
+OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+
+
+async def fetch_water_features(
+    bbox: tuple[float, float, float, float],
+) -> dict:
+    """Fetch water features within bounding box.
+
+    Args:
+        bbox: (south, west, north, east) in WGS84
+
+    Returns:
+        dict with 'water_polygons' (closed areas) and 'waterways' (rivers/streams)
+        as lists of (coords_list, water_type, name) tuples
+    """
+    south, west, north, east = bbox
+
+    query = f"""
+    [out:json][timeout:30];
+    (
+      way["natural"="water"]({south},{west},{north},{east});
+      way["natural"="coastline"]({south},{west},{north},{east});
+      way["waterway"~"^(river|stream|canal)$"]({south},{west},{north},{east});
+      relation["natural"="water"]({south},{west},{north},{east});
+      way["water"~"^(lake|reservoir|pond|river)$"]({south},{west},{north},{east});
+      relation["water"~"^(lake|reservoir|pond|river)$"]({south},{west},{north},{east});
+    );
+    out body;
+    >;
+    out skel qt;
+    """
+
+    log.info(f"Fetching water features for bbox: {bbox}")
+
+    async with httpx.AsyncClient(timeout=35.0) as client:
+        resp = await client.post(OVERPASS_URL, data={"data": query})
+        resp.raise_for_status()
+        data = resp.json()
+
+    elements = data.get("elements", [])
+    nodes = {}
+    ways_data = {}
+    relations = []
+
+    for el in elements:
+        if el["type"] == "node":
+            nodes[el["id"]] = (el["lon"], el["lat"])
+        elif el["type"] == "way":
+            ways_data[el["id"]] = el
+        elif el["type"] == "relation":
+            relations.append(el)
+
+    water_polygons = []
+    waterways = []
+
+    # Process ways
+    for way_id, way in ways_data.items():
+        tags = way.get("tags", {})
+        if not tags:
+            continue
+
+        coords = [nodes[nid] for nid in way.get("nodes", []) if nid in nodes]
+        if len(coords) < 2:
+            continue
+
+        name = tags.get("name", "")
+        water_type = tags.get("water", tags.get("natural", tags.get("waterway", "")))
+
+        # Closed ways (polygons) vs open ways (rivers/streams)
+        is_area = (
+            tags.get("natural") == "water"
+            or tags.get("water") in ("lake", "reservoir", "pond", "river")
+        )
+        is_closed = len(coords) >= 4 and coords[0] == coords[-1]
+
+        if is_area and is_closed:
+            water_polygons.append((coords, water_type, name))
+        elif tags.get("waterway") in ("river", "stream", "canal"):
+            waterways.append((coords, water_type, name))
+        elif tags.get("natural") == "coastline":
+            waterways.append((coords, "coastline", name))
+
+    # Process relations (multipolygon water bodies like large lakes)
+    for rel in relations:
+        tags = rel.get("tags", {})
+        name = tags.get("name", "")
+        water_type = tags.get("water", tags.get("natural", "water"))
+
+        outer_rings = []
+        for member in rel.get("members", []):
+            if member["type"] != "way" or member.get("role", "outer") != "outer":
+                continue
+            way_id = member["ref"]
+            if way_id not in ways_data:
+                continue
+            way = ways_data[way_id]
+            coords = [nodes[nid] for nid in way.get("nodes", []) if nid in nodes]
+            if len(coords) >= 2:
+                outer_rings.append(coords)
+
+        # Merge connected segments
+        merged = _merge_segments(outer_rings)
+        for ring in merged:
+            if len(ring) >= 4:
+                if ring[0] != ring[-1]:
+                    ring.append(ring[0])
+                water_polygons.append((ring, water_type, name))
+
+    log.info(f"Fetched {len(water_polygons)} water polygons, {len(waterways)} waterways")
+    return {"water_polygons": water_polygons, "waterways": waterways}
+
+
+def _merge_segments(segments: list[list[tuple]]) -> list[list[tuple]]:
+    """Merge connected way segments into complete rings."""
+    if not segments:
+        return []
+
+    merged = []
+    remaining = list(segments)
+
+    while remaining:
+        current = list(remaining.pop(0))
+        changed = True
+        while changed:
+            changed = False
+            for i, seg in enumerate(remaining):
+                if not seg:
+                    continue
+                if current[-1] == seg[0]:
+                    current.extend(seg[1:])
+                    remaining.pop(i)
+                    changed = True
+                    break
+                elif current[-1] == seg[-1]:
+                    current.extend(reversed(seg[:-1]))
+                    remaining.pop(i)
+                    changed = True
+                    break
+                elif current[0] == seg[-1]:
+                    current = list(seg[:-1]) + current
+                    remaining.pop(i)
+                    changed = True
+                    break
+                elif current[0] == seg[0]:
+                    current = list(reversed(seg[1:])) + current
+                    remaining.pop(i)
+                    changed = True
+                    break
+        merged.append(current)
+
+    return merged
