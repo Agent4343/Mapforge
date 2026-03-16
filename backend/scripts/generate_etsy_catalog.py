@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
-"""Generate clean province/state map designs for Etsy marketplace listings.
+"""Generate clean map designs for Etsy marketplace listings.
 
-Batch-generates SVG, DXF, and PNG mockup files for all Canadian provinces
-and US states with Etsy-optimized settings. Requires a Pro or Admin account.
+Batch-generates SVG, DXF, and PNG mockup files for Canadian provinces,
+US states, and Canadian cities with Etsy-optimized settings.
+Requires a Pro or Admin account.
 
 Usage:
+    # Generate all provinces + states (default):
     python scripts/generate_etsy_catalog.py --base-url http://localhost:8000 --token YOUR_JWT
 
-    # Generate only US states:
-    python scripts/generate_etsy_catalog.py --base-url http://localhost:8000 --token YOUR_JWT --country us
+    # Generate Canadian cities with street maps:
+    python scripts/generate_etsy_catalog.py --base-url http://localhost:8000 --token YOUR_JWT --type cities
 
-    # Generate only Canadian provinces:
-    python scripts/generate_etsy_catalog.py --base-url http://localhost:8000 --token YOUR_JWT --country ca
+    # Generate everything (provinces + states + cities):
+    python scripts/generate_etsy_catalog.py --base-url http://localhost:8000 --token YOUR_JWT --type all
 
-    # Specific board size:
-    python scripts/generate_etsy_catalog.py --base-url http://localhost:8000 --token YOUR_JWT --board-size large
+    # Only Canadian provinces:
+    python scripts/generate_etsy_catalog.py --base-url http://localhost:8000 --token YOUR_JWT --country ca --type provinces
 
     # All three cut styles:
     python scripts/generate_etsy_catalog.py --base-url http://localhost:8000 --token YOUR_JWT --all-styles
@@ -99,8 +101,32 @@ US_STATES = [
     {"name": "Wyoming", "osm_id": 161991},
 ]
 
-# Etsy-optimized generation settings
-ETSY_DEFAULTS = {
+# Top 20 Canadian cities by population
+CA_CITIES = [
+    {"name": "Toronto", "osm_id": 324211},
+    {"name": "Montreal", "osm_id": 1634158},
+    {"name": "Vancouver", "osm_id": 1852574},
+    {"name": "Calgary", "osm_id": 3463031},
+    {"name": "Edmonton", "osm_id": 2564506},
+    {"name": "Ottawa", "osm_id": 4136816},
+    {"name": "Winnipeg", "osm_id": 2084814},
+    {"name": "Quebec City", "osm_id": 3535832},
+    {"name": "Hamilton", "osm_id": 6989036},
+    {"name": "Kitchener", "osm_id": 7356967},
+    {"name": "London", "osm_id": 3377498},
+    {"name": "Halifax", "osm_id": 2094054},
+    {"name": "Victoria", "osm_id": 1688463},
+    {"name": "Oshawa", "osm_id": 7978172},
+    {"name": "Windsor", "osm_id": 7361845},
+    {"name": "Saskatoon", "osm_id": 2725768},
+    {"name": "Regina", "osm_id": 3373762},
+    {"name": "St. John's", "osm_id": 2220571},
+    {"name": "Kelowna", "osm_id": 2256964},
+    {"name": "Barrie", "osm_id": 7932498},
+]
+
+# Etsy-optimized generation settings for provinces/states
+ETSY_DEFAULTS_PROVINCE = {
     "product_type": "province",
     "board_size": "large",           # 20x24" — popular wall art size
     "style": "filled",               # Clean filled look photographs well
@@ -114,14 +140,30 @@ ETSY_DEFAULTS = {
     "export_format": "svg",
 }
 
+# Etsy-optimized generation settings for city street maps
+ETSY_DEFAULTS_CITY = {
+    "product_type": "city",
+    "board_size": "large",           # 20x24" — popular wall art size
+    "style": "filled",               # Clean filled look
+    "show_coordinates": True,
+    "font_size_mm": 14,
+    "simplification": "auto",
+    "include_islands": True,
+    "min_island_area_m2": 5000,
+    "include_streets": True,         # Streets make city maps look professional
+    "include_contours": False,
+    "export_format": "svg",
+}
+
 # All three styles for --all-styles mode
 CUT_STYLES = ["filled", "outline", "engraved"]
 
 
-def build_generate_request(location: dict, style: str, board_size: str) -> dict:
-    """Build a generation API request for a province/state."""
+def build_generate_request(location: dict, style: str, board_size: str, product_type: str = "province") -> dict:
+    """Build a generation API request for a province/state/city."""
+    defaults = ETSY_DEFAULTS_CITY if product_type == "city" else ETSY_DEFAULTS_PROVINCE
     req = {
-        **ETSY_DEFAULTS,
+        **defaults,
         "osm_id": location["osm_id"],
         "osm_type": "relation",
         "text": location["name"],
@@ -138,9 +180,10 @@ def generate_single(
     location: dict,
     style: str,
     board_size: str,
+    product_type: str = "province",
 ) -> dict | None:
     """Generate a single map via the API."""
-    req = build_generate_request(location, style, board_size)
+    req = build_generate_request(location, style, board_size, product_type)
     headers = {"Authorization": f"Bearer {token}"}
 
     try:
@@ -165,18 +208,28 @@ def generate_single(
 
 def run_catalog_generation(args):
     """Generate the full Etsy catalog."""
-    locations = []
-    if args.country in ("ca", "all"):
-        locations.extend(CA_PROVINCES)
-    if args.country in ("us", "all"):
-        locations.extend(US_STATES)
+    # Build location groups with their product types
+    groups = []  # list of (product_type, label, locations)
+
+    gen_type = args.type
+
+    if gen_type in ("provinces", "all"):
+        if args.country in ("ca", "all"):
+            groups.append(("province", "Canadian Provinces", CA_PROVINCES))
+        if args.country in ("us", "all"):
+            groups.append(("province", "US States", US_STATES))
+
+    if gen_type in ("cities", "all"):
+        groups.append(("city", "Canadian Cities", CA_CITIES))
 
     styles = CUT_STYLES if args.all_styles else [args.style]
 
-    total = len(locations) * len(styles)
+    total_locations = sum(len(g[2]) for g in groups)
+    total = total_locations * len(styles)
     print(f"\nMapForge Etsy Catalog Generator")
     print(f"================================")
-    print(f"Locations: {len(locations)}")
+    for ptype, label, locs in groups:
+        print(f"  {label}: {len(locs)} ({ptype})")
     print(f"Styles: {', '.join(styles)}")
     print(f"Board size: {args.board_size}")
     print(f"Total designs: {total}")
@@ -189,34 +242,40 @@ def run_catalog_generation(args):
     with httpx.Client() as client:
         for style in styles:
             print(f"\n--- Style: {style.upper()} ---")
-            for loc in locations:
-                count += 1
-                name = loc["name"]
-                print(f"[{count}/{total}] Generating {name} ({style})...", end=" ", flush=True)
+            for product_type, group_label, locations in groups:
+                print(f"\n  [{group_label}]")
+                for loc in locations:
+                    count += 1
+                    name = loc["name"]
+                    streets_note = " +streets" if product_type == "city" else ""
+                    print(f"[{count}/{total}] Generating {name} ({style}{streets_note})...", end=" ", flush=True)
 
-                result = generate_single(
-                    client, args.base_url, args.token, loc, style, args.board_size,
-                )
+                    result = generate_single(
+                        client, args.base_url, args.token, loc, style, args.board_size,
+                        product_type=product_type,
+                    )
 
-                if result:
-                    file_id = result.get("file_id", "?")
-                    nodes = result.get("node_count", 0)
-                    dims = result.get("dimensions_mm", [0, 0])
-                    print(f"OK — {file_id} ({nodes} nodes, {dims[0]:.0f}x{dims[1]:.0f}mm)")
-                    results["succeeded"].append({
-                        "name": name,
-                        "style": style,
-                        "file_id": file_id,
-                        "node_count": nodes,
-                        "dimensions_mm": dims,
-                        "dxf_available": result.get("dxf_available", False),
-                        "thumbnail_available": result.get("thumbnail_available", False),
-                    })
-                else:
-                    results["failed"].append({"name": name, "style": style})
+                    if result:
+                        file_id = result.get("file_id", "?")
+                        nodes = result.get("node_count", 0)
+                        dims = result.get("dimensions_mm", [0, 0])
+                        print(f"OK — {file_id} ({nodes} nodes, {dims[0]:.0f}x{dims[1]:.0f}mm)")
+                        results["succeeded"].append({
+                            "name": name,
+                            "style": style,
+                            "product_type": product_type,
+                            "file_id": file_id,
+                            "node_count": nodes,
+                            "dimensions_mm": dims,
+                            "dxf_available": result.get("dxf_available", False),
+                            "thumbnail_available": result.get("thumbnail_available", False),
+                        })
+                    else:
+                        results["failed"].append({"name": name, "style": style, "product_type": product_type})
 
-                # Brief pause between requests to avoid rate limits
-                time.sleep(1.5)
+                    # Brief pause — cities with streets take longer
+                    pause = 3.0 if product_type == "city" else 1.5
+                    time.sleep(pause)
 
     # Summary
     print(f"\n\n================================")
@@ -258,8 +317,12 @@ def main():
         help="JWT auth token (Pro or Admin account required)",
     )
     parser.add_argument(
+        "--type", choices=["provinces", "cities", "all"], default="provinces",
+        help="What to generate: provinces (states+provinces), cities (Canadian cities with streets), or all (default: provinces)",
+    )
+    parser.add_argument(
         "--country", choices=["us", "ca", "all"], default="all",
-        help="Which country to generate (default: all)",
+        help="Which country for provinces/states (default: all)",
     )
     parser.add_argument(
         "--board-size", default="large",

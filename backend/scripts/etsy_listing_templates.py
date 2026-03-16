@@ -103,6 +103,27 @@ LOCATION_META = {
     "West Virginia": {"capital": "Charleston", "nickname": "The Mountain State", "country": "USA"},
     "Wisconsin": {"capital": "Madison", "nickname": "The Badger State", "country": "USA"},
     "Wyoming": {"capital": "Cheyenne", "nickname": "The Cowboy State", "country": "USA"},
+    # Canadian Cities
+    "Toronto": {"province": "Ontario", "nickname": "The Six", "country": "Canada", "type": "city"},
+    "Montreal": {"province": "Quebec", "nickname": "The City of Saints", "country": "Canada", "type": "city"},
+    "Vancouver": {"province": "British Columbia", "nickname": "Hollywood North", "country": "Canada", "type": "city"},
+    "Calgary": {"province": "Alberta", "nickname": "Cowtown", "country": "Canada", "type": "city"},
+    "Edmonton": {"province": "Alberta", "nickname": "City of Champions", "country": "Canada", "type": "city"},
+    "Ottawa": {"province": "Ontario", "nickname": "The Capital", "country": "Canada", "type": "city"},
+    "Winnipeg": {"province": "Manitoba", "nickname": "The Peg", "country": "Canada", "type": "city"},
+    "Quebec City": {"province": "Quebec", "nickname": "La Vieille Capitale", "country": "Canada", "type": "city"},
+    "Hamilton": {"province": "Ontario", "nickname": "The Hammer", "country": "Canada", "type": "city"},
+    "Kitchener": {"province": "Ontario", "nickname": "K-W", "country": "Canada", "type": "city"},
+    "London": {"province": "Ontario", "nickname": "The Forest City", "country": "Canada", "type": "city"},
+    "Halifax": {"province": "Nova Scotia", "nickname": "The Halifax", "country": "Canada", "type": "city"},
+    "Victoria": {"province": "British Columbia", "nickname": "The Garden City", "country": "Canada", "type": "city"},
+    "Oshawa": {"province": "Ontario", "nickname": "The Dirty Shwa", "country": "Canada", "type": "city"},
+    "Windsor": {"province": "Ontario", "nickname": "The City of Roses", "country": "Canada", "type": "city"},
+    "Saskatoon": {"province": "Saskatchewan", "nickname": "Paris of the Prairies", "country": "Canada", "type": "city"},
+    "Regina": {"province": "Saskatchewan", "nickname": "Queen City", "country": "Canada", "type": "city"},
+    "St. John's": {"province": "Newfoundland and Labrador", "nickname": "The Oldest City", "country": "Canada", "type": "city"},
+    "Kelowna": {"province": "British Columbia", "nickname": "The Orchard City", "country": "Canada", "type": "city"},
+    "Barrie": {"province": "Ontario", "nickname": "Gateway to Cottage Country", "country": "Canada", "type": "city"},
 }
 
 
@@ -110,16 +131,22 @@ def generate_title(name: str, style: str) -> str:
     """Generate an Etsy-optimized title (max 140 chars)."""
     meta = LOCATION_META.get(name, {})
     country = meta.get("country", "")
+    is_city = meta.get("type") == "city"
     style_label = STYLE_NAMES.get(style, style.title())
 
-    if country == "Canada":
+    if is_city:
+        province = meta.get("province", "Canada")
+        title = f"{name} City Street Map SVG DXF — CNC Wood Carving — {style_label} — {province} Wall Art"
+    elif country == "Canada":
         title = f"{name} Map SVG DXF — CNC Wood Carving File — {style_label} Style — Canadian Province Wall Art"
     else:
         title = f"{name} State Map SVG DXF — CNC Wood Carving File — {style_label} Style — Wall Art Decor"
 
     # Etsy title limit is 140 characters
     if len(title) > 140:
-        if country == "Canada":
+        if is_city:
+            title = f"{name} Street Map SVG DXF — CNC Carving — {style_label} — City Art"
+        elif country == "Canada":
             title = f"{name} Map SVG DXF — CNC Carving File — {style_label} — Canadian Province Art"
         else:
             title = f"{name} Map SVG DXF — CNC Carving File — {style_label} — State Wall Art"
@@ -132,14 +159,39 @@ def generate_description(name: str, style: str) -> str:
     meta = LOCATION_META.get(name, {})
     country = meta.get("country", "")
     nickname = meta.get("nickname", "")
-    capital = meta.get("capital", "")
+    is_city = meta.get("type") == "city"
     style_desc = STYLE_DESCRIPTIONS.get(style, style)
 
-    country_label = "Canadian province" if country == "Canada" else "US state"
+    if is_city:
+        province = meta.get("province", "Canada")
+        product_label = f"city street map of {name}, {province}"
+        streets_section = """
+STREET MAP LAYERS:
+- detail_lines — Major and minor road network (engrave: 1/8" ball nose)
+- street_labels — Road names placed along paths (V-carve: 60° V-bit)
+- water_features — Rivers, lakes, and coastlines (pocket: 1/8" ball nose)
+"""
+        perfect_for = f"""PERFECT FOR:
+- CNC router projects (wood signs, wall art, cutting boards)
+- Laser cutting and engraving
+- City pride gifts and home decor for {name} locals
+- Housewarming gifts for someone moving to {name}
+- Real estate closing gifts
+- Wedding venue maps
+- {name}, {province} hometown pride"""
+    else:
+        product_label = f"{'Canadian province' if country == 'Canada' else 'US state'} map of {name}"
+        streets_section = ""
+        perfect_for = f"""PERFECT FOR:
+- CNC router projects (wood signs, wall art, cutting boards)
+- Laser cutting and engraving
+- 3D carving with depth layers
+- {name} pride gifts and home decor
+- Housewarming, birthday, and holiday gifts"""
 
     desc = f"""{name} — {nickname}
 
-A clean, CNC-ready map of {name} designed to be {style_desc} into wood, acrylic, or other materials.
+A clean, CNC-ready {product_label} designed to be {style_desc} into wood, acrylic, or other materials.
 
 WHAT YOU GET:
 - SVG file optimized for CNC routers (VCarve Pro, Fusion 360, Easel, Carbide Create)
@@ -150,10 +202,9 @@ WHAT YOU GET:
 - Millimeter-precision paths (2 decimal places)
 
 DESIGN DETAILS:
-- Product type: {country_label} map
+- Product type: {product_label}
 - Cut style: {STYLE_NAMES.get(style, style.title())} ({style_desc})
 - Board size: 20" x 24" (Large) — resizable in your CAM software
-- Islands included with proper detail
 - All paths closed and CNC-optimized (M/L/Z commands only, no curves)
 
 LAYER STRUCTURE (for VCarve / toolpath mapping):
@@ -161,13 +212,8 @@ LAYER STRUCTURE (for VCarve / toolpath mapping):
 - geography_{style} — Main map shape
 - text_primary — "{name}" location text (V-carve: 60° V-bit)
 - text_coordinates — Lat/lon coordinates
-
-PERFECT FOR:
-- CNC router projects (wood signs, wall art, cutting boards)
-- Laser cutting and engraving
-- 3D carving with depth layers
-- {name} state pride gifts and home decor
-- Housewarming, birthday, and holiday gifts
+{streets_section}
+{perfect_for}
 
 RECOMMENDED MATERIALS:
 - Hardwood (walnut, maple, cherry, oak) for CNC carving
@@ -178,7 +224,7 @@ NOTES:
 - This is a DIGITAL FILE — no physical product will be shipped
 - Geographic data sourced from OpenStreetMap (ODbL license)
 - File can be scaled to any board size in your CAM software
-- Contact us for custom sizes or multi-state combinations"""
+- Custom markers (Home, Cottage) available — contact us"""
 
     return desc
 
@@ -187,6 +233,7 @@ def generate_tags(name: str, style: str) -> str:
     """Generate Etsy tags (max 13 tags, max 20 chars each)."""
     meta = LOCATION_META.get(name, {})
     country = meta.get("country", "")
+    is_city = meta.get("type") == "city"
 
     # Base tags (always included)
     tags = [
@@ -201,8 +248,15 @@ def generate_tags(name: str, style: str) -> str:
         "digital download",
     ]
 
-    # Country-specific tags
-    if country == "Canada":
+    if is_city:
+        province = meta.get("province", "")
+        tags.extend([
+            "city map",
+            "street map",
+            f"{name} Canada",
+            province[:20] if province else "Canada map",
+        ])
+    elif country == "Canada":
         tags.extend([
             "Canada map",
             "Canadian art",
@@ -228,6 +282,16 @@ def generate_tags(name: str, style: str) -> str:
 
 def generate_price_cents(name: str, style: str) -> int:
     """Set price based on complexity. All prices in cents."""
+    meta = LOCATION_META.get(name, {})
+    is_city = meta.get("type") == "city"
+
+    # City street maps are more detailed — premium pricing
+    if is_city:
+        major_cities = {"Toronto", "Montreal", "Vancouver", "Calgary", "Ottawa", "Edmonton"}
+        if name in major_cities:
+            return 1999  # $19.99 — major metro with tons of streets
+        return 1499  # $14.99 — smaller cities
+
     # Large/complex states and provinces get premium pricing
     premium = {
         "Alaska", "California", "Texas", "Florida", "Michigan", "Hawaii",
