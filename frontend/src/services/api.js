@@ -47,6 +47,11 @@ async function fetchWithTimeout(url, options = {}) {
   try {
     const resp = await fetch(url, { ...options, headers, signal: controller.signal });
     return resp;
+  } catch (err) {
+    if (err.name === "AbortError") {
+      throw new Error("Request timed out. Please check your connection and try again.");
+    }
+    throw new Error("Network error. Please check your internet connection and try again.");
   } finally {
     clearTimeout(timeout);
   }
