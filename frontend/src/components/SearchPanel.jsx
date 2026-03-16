@@ -43,6 +43,12 @@ export default function SearchPanel({ onSelect, selectedResult, country }) {
     }, 400);
   }
 
+  function handleClear() {
+    setQuery("");
+    setResults([]);
+    setError(null);
+  }
+
   return (
     <div className="search-section">
       <h2>Search Location</h2>
@@ -50,10 +56,19 @@ export default function SearchPanel({ onSelect, selectedResult, country }) {
         <input
           type="text"
           className="search-input"
-          placeholder="Search lakes, provinces, cities, parks..."
+          placeholder="Search location..."
           value={query}
           onChange={handleInput}
         />
+        {query && (
+          <button
+            className="search-clear-btn"
+            onClick={handleClear}
+            title="Clear search"
+          >
+            &times;
+          </button>
+        )}
       </div>
 
       {loading && (
@@ -66,6 +81,7 @@ export default function SearchPanel({ onSelect, selectedResult, country }) {
 
       {results.length > 0 && (
         <div className="search-results">
+          <div className="search-results-count">{results.length} results</div>
           {results.map((r) => (
             <div
               key={`${r.osm_type}-${r.osm_id}`}
@@ -82,7 +98,7 @@ export default function SearchPanel({ onSelect, selectedResult, country }) {
               </div>
               <div className="result-meta">
                 {r.display_name.split(",").slice(1, 3).join(",")} &mdash;{" "}
-                {r.lat.toFixed(4)}°N, {Math.abs(r.lon).toFixed(4)}°W
+                {r.lat.toFixed(4)}&deg;{r.lat >= 0 ? "N" : "S"}, {Math.abs(r.lon).toFixed(4)}&deg;{r.lon < 0 ? "W" : "E"}
                 {r.has_geometry ? "" : " (no polygon)"}
               </div>
             </div>

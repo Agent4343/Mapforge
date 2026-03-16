@@ -7,6 +7,7 @@ import AuthModal from "./components/AuthModal.jsx";
 import LibraryView from "./components/LibraryView.jsx";
 import MarketplaceView from "./components/MarketplaceView.jsx";
 import SellerDashboard from "./components/SellerDashboard.jsx";
+import AdminDashboard from "./components/AdminDashboard.jsx";
 import BatchPanel from "./components/BatchPanel.jsx";
 import MapPreview from "./components/MapPreview.jsx";
 import MarkersPanel from "./components/MarkersPanel.jsx";
@@ -35,6 +36,20 @@ const DEFAULT_CONFIG = {
   numDepthBands: 5,
 };
 
+function loadSavedConfig() {
+  try {
+    const saved = localStorage.getItem("mapforge_config");
+    if (saved) return { ...DEFAULT_CONFIG, ...JSON.parse(saved) };
+  } catch {}
+  return DEFAULT_CONFIG;
+}
+
+function saveConfig(config) {
+  try {
+    localStorage.setItem("mapforge_config", JSON.stringify(config));
+  } catch {}
+}
+
 const MAX_UNDO = 30;
 
 const COUNTRIES = [
@@ -52,7 +67,7 @@ export default function App() {
   const [view, setView] = useState("main"); // main, library, marketplace, dashboard
 
   const [selectedResult, setSelectedResult] = useState(null);
-  const [config, setConfig] = useState(DEFAULT_CONFIG);
+  const [config, setConfig] = useState(loadSavedConfig);
   const [svgContent, setSvgContent] = useState(null);
   const [result, setResult] = useState(null);
   const [generating, setGenerating] = useState(false);
@@ -64,7 +79,7 @@ export default function App() {
   const [markers, setMarkers] = useState([]); // custom markers [{lat, lon, label, icon}]
 
   // Undo/redo state
-  const [configHistory, setConfigHistory] = useState([DEFAULT_CONFIG]);
+  const [configHistory, setConfigHistory] = useState([config]);
   const [historyIndex, setHistoryIndex] = useState(0);
   const skipHistory = useRef(false);
 
@@ -74,6 +89,11 @@ export default function App() {
       getProfile().then((p) => { if (p) setUser(p); });
     }
   }, []);
+
+  // Auto-save config to localStorage
+  useEffect(() => {
+    saveConfig(config);
+  }, [config]);
 
   // Config change with undo history
   function handleConfigChange(newConfig) {
@@ -318,6 +338,7 @@ export default function App() {
   if (view === "marketplace") return <MarketplaceView user={user} onBack={() => setView("main")} />;
   if (view === "dashboard") return <SellerDashboard onBack={() => setView("main")} />;
   if (view === "purchases") return <PurchasesView onBack={() => setView("main")} />;
+  if (view === "admin") return <AdminDashboard onBack={() => setView("main")} />;
 
   const canUndo = historyIndex > 0;
   const canRedo = historyIndex < configHistory.length - 1;
@@ -352,6 +373,9 @@ export default function App() {
           )}
           {user && (user.tier === "pro" || user.tier === "admin") && (
             <button className="nav-btn" onClick={() => setShowBatch(true)}>Batch</button>
+          )}
+          {user && user.tier === "admin" && (
+            <button className="nav-btn nav-btn-admin" onClick={() => setView("admin")}>Admin</button>
           )}
           {user ? (
             <div className="user-info">

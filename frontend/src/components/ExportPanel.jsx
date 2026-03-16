@@ -79,73 +79,108 @@ export default function ExportPanel({
       <h2>Export</h2>
 
       <button
-        className="btn btn-primary btn-full"
+        className="btn btn-primary btn-full generate-btn"
         onClick={onGenerate}
         disabled={!canGenerate || generating}
       >
-        {generating ? "Generating..." : "Generate SVG"}
+        {generating ? (
+          <span className="generate-btn-content">
+            <span className="spinner-inline" /> Generating...
+          </span>
+        ) : (
+          "Generate SVG"
+        )}
       </button>
+
+      {!canGenerate && !result && (
+        <p className="export-hint">Select a location above to generate</p>
+      )}
 
       {result && (
         <>
-          <div className="file-stats">
-            <span>
-              Dims: <span className="stat-value">{result.dimensions_mm[0]}x{result.dimensions_mm[1]}mm</span>
-            </span>
-            <span>
-              Nodes: <span className="stat-value">{result.node_count}</span>
-            </span>
-            <span>
-              Paths: <span className="stat-value">{result.path_count}</span>
-            </span>
+          {/* File Stats */}
+          <div className="file-stats-grid">
+            <div className="file-stat">
+              <span className="file-stat-label">Size</span>
+              <span className="file-stat-value">{result.dimensions_mm[0]}&times;{result.dimensions_mm[1]}mm</span>
+            </div>
+            <div className="file-stat">
+              <span className="file-stat-label">Nodes</span>
+              <span className="file-stat-value">{result.node_count.toLocaleString()}</span>
+            </div>
+            <div className="file-stat">
+              <span className="file-stat-label">Paths</span>
+              <span className="file-stat-value">{result.path_count}</span>
+            </div>
+            <div className="file-stat">
+              <span className="file-stat-label">Layers</span>
+              <span className="file-stat-value">{result.layer_count}</span>
+            </div>
           </div>
 
-          <div className="export-buttons">
-            <button className="btn btn-secondary" onClick={onDownload}>
-              Download SVG
-            </button>
-            {result.dxf_available && (
-              <button className="btn btn-secondary" onClick={onDownloadDXF}>
-                Download DXF
+          {/* Download Buttons */}
+          <div className="export-download-section">
+            <div className="export-buttons">
+              <button className="btn btn-secondary" onClick={onDownload}>
+                SVG
               </button>
-            )}
-            {result.thumbnail_available && (
-              <button className="btn btn-secondary" onClick={onDownloadThumbnail}>
-                PNG Mockup
-              </button>
-            )}
-            {result.print_png_available && (
-              <button className="btn btn-secondary" onClick={onDownloadPrintPNG}>
-                Print PNG (300 DPI)
-              </button>
-            )}
+              {result.dxf_available && (
+                <button className="btn btn-secondary" onClick={onDownloadDXF}>
+                  DXF
+                </button>
+              )}
+              {result.thumbnail_available && (
+                <button className="btn btn-secondary" onClick={onDownloadThumbnail}>
+                  Mockup PNG
+                </button>
+              )}
+              {result.print_png_available && (
+                <button className="btn btn-secondary" onClick={onDownloadPrintPNG}>
+                  Print 300DPI
+                </button>
+              )}
+            </div>
           </div>
 
+          {/* AI + Marketplace Section */}
           {canSell && !showListForm && (
             <button
-              className="btn btn-secondary btn-full"
+              className="btn btn-marketplace btn-full"
               onClick={() => {
                 setListTitle(result.location_name);
                 setShowListForm(true);
                 setListSuccess(false);
                 setListError(null);
               }}
-              style={{ marginTop: 8 }}
             >
-              List on Marketplace
+              Sell on Marketplace
             </button>
           )}
 
           {showListForm && (
             <div className="list-form">
+              <div className="list-form-header">
+                <h3>Create Listing</h3>
+                <button className="list-form-close" onClick={() => setShowListForm(false)}>
+                  &times;
+                </button>
+              </div>
+
+              {/* AI Assist Button */}
               <button
-                className="btn btn-secondary btn-full"
+                className="btn btn-ai btn-full"
                 onClick={handleAiDescribe}
                 disabled={aiLoading}
-                style={{ marginBottom: 8, background: "var(--accent-hover, #5a3d2b)", color: "#fff" }}
               >
-                {aiLoading ? "AI Writing..." : "AI Write Listing"}
+                {aiLoading ? (
+                  <span className="generate-btn-content">
+                    <span className="spinner-inline" /> AI Writing...
+                  </span>
+                ) : (
+                  "AI Write Title, Description & Tags"
+                )}
               </button>
+
               <div className="control-group">
                 <label>Title</label>
                 <input type="text" value={listTitle} onChange={(e) => setListTitle(e.target.value)} maxLength={255} />
@@ -166,32 +201,37 @@ export default function ExportPanel({
                 <textarea
                   value={listDesc}
                   onChange={(e) => setListDesc(e.target.value)}
-                  placeholder="Describe the design, wood recommendations..."
+                  placeholder="Describe the design, wood recommendations, CNC settings..."
                   maxLength={2000}
-                  rows={6}
-                  style={{ width: "100%", resize: "vertical", fontFamily: "inherit", fontSize: "12px" }}
+                  rows={5}
+                  className="list-textarea"
                 />
               </div>
               <div className="control-group">
-                <label>Tags (comma-separated)</label>
-                <input type="text" value={listTags} onChange={(e) => setListTags(e.target.value)} placeholder="lake, cottage, muskoka" maxLength={500} />
+                <label>Tags</label>
+                <input
+                  type="text"
+                  value={listTags}
+                  onChange={(e) => setListTags(e.target.value)}
+                  placeholder="lake, cottage, muskoka, cnc"
+                  maxLength={500}
+                />
               </div>
               {listError && <div className="error-message">{listError}</div>}
-              {listSuccess && <div className="success-message">Listed successfully! View it in the Marketplace.</div>}
-              <div className="export-buttons">
-                <button className="btn btn-primary" onClick={handleList} disabled={listing || listSuccess}>
-                  {listing ? "Listing..." : listSuccess ? "Listed!" : "List for Sale"}
-                </button>
-                <button className="btn btn-secondary" onClick={() => setShowListForm(false)}>
-                  Cancel
-                </button>
-              </div>
+              {listSuccess && <div className="success-message">Listed on Marketplace!</div>}
+              <button
+                className="btn btn-primary btn-full"
+                onClick={handleList}
+                disabled={listing || listSuccess}
+              >
+                {listing ? "Listing..." : listSuccess ? "Listed!" : "Publish Listing"}
+              </button>
             </div>
           )}
 
           {!canSell && user && user.tier === "free" && (
-            <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "8px", textAlign: "center" }}>
-              Upgrade to Maker to sell your designs on the marketplace.
+            <p className="export-hint">
+              Upgrade to Maker to sell on the marketplace.
             </p>
           )}
         </>

@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 
 export default function SVGPreview({ svgContent, loading, error }) {
   const [zoom, setZoom] = useState(100);
@@ -32,11 +32,47 @@ export default function SVGPreview({ svgContent, loading, error }) {
     setPan({ x: 0, y: 0 });
   };
 
+  // Keyboard zoom: +/- keys and Ctrl+scroll
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    function handleWheel(e) {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const delta = e.deltaY > 0 ? -10 : 10;
+        setZoom((z) => Math.min(300, Math.max(25, z + delta)));
+      }
+    }
+
+    function handleKeyDown(e) {
+      if (e.key === "=" || e.key === "+") {
+        setZoom((z) => Math.min(300, z + 10));
+      } else if (e.key === "-") {
+        setZoom((z) => Math.max(25, z - 10));
+      } else if (e.key === "0") {
+        handleFitToView();
+      }
+    }
+
+    el.addEventListener("wheel", handleWheel, { passive: false });
+    el.addEventListener("keydown", handleKeyDown);
+    el.setAttribute("tabindex", "0");
+
+    return () => {
+      el.removeEventListener("wheel", handleWheel);
+      el.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+
   if (loading) {
     return (
       <div className="loading-overlay">
         <div className="spinner" />
         <p>Generating CNC-ready SVG...</p>
+        <p style={{ fontSize: "10px", color: "var(--text-muted)" }}>
+          Fetching geometry, streets, and water features...
+        </p>
       </div>
     );
   }
@@ -54,46 +90,16 @@ export default function SVGPreview({ svgContent, loading, error }) {
       <div className="preview-empty">
         <div className="preview-empty-icon">&#9670;</div>
         <p>
-          Search for a Canadian location
+          Search for a location and click
           <br />
-          to generate a CNC-ready SVG
+          <strong>Generate SVG</strong> to preview
+        </p>
+        <p style={{ fontSize: "10px", color: "var(--text-muted)", marginTop: "4px" }}>
+          Canada, US, and Global locations supported
         </p>
       </div>
     );
   }
-
-  const toolbarStyle = {
-    display: "flex",
-    alignItems: "center",
-    gap: "12px",
-    padding: "8px 12px",
-    background: "rgba(0, 0, 0, 0.6)",
-    borderRadius: "8px",
-    position: "absolute",
-    bottom: "16px",
-    left: "50%",
-    transform: "translateX(-50%)",
-    zIndex: 10,
-    color: "#fff",
-    fontSize: "13px",
-    userSelect: "none",
-  };
-
-  const buttonStyle = {
-    background: "rgba(255, 255, 255, 0.15)",
-    border: "1px solid rgba(255, 255, 255, 0.25)",
-    borderRadius: "4px",
-    color: "#fff",
-    padding: "4px 10px",
-    cursor: "pointer",
-    fontSize: "12px",
-    whiteSpace: "nowrap",
-  };
-
-  const sliderStyle = {
-    width: "120px",
-    cursor: "pointer",
-  };
 
   return (
     <div
@@ -117,27 +123,48 @@ export default function SVGPreview({ svgContent, loading, error }) {
         }}
         dangerouslySetInnerHTML={{ __html: svgContent }}
       />
-      <div style={toolbarStyle}>
-        <input
-          type="range"
-          min={50}
-          max={200}
-          value={zoom}
-          onChange={(e) => setZoom(Number(e.target.value))}
-          style={sliderStyle}
-          onMouseDown={(e) => e.stopPropagation()}
-        />
-        <span style={{ minWidth: "40px", textAlign: "center" }}>{zoom}%</span>
+      {/* Toolbar - positioned above the preview */}
+      <div className="preview-toolbar">
         <button
           type="button"
-          style={buttonStyle}
+          className="preview-toolbar-btn"
+          onClick={(e) => { e.stopPropagation(); setZoom((z) => Math.max(25, z - 25)); }}
+          onMouseDown={(e) => e.stopPropagation()}
+          title="Zoom out (-)"
+        >
+          &minus;
+        </button>
+        <input
+          type="range"
+          min={25}
+          max={300}
+          value={zoom}
+          onChange={(e) => setZoom(Number(e.target.value))}
+          className="preview-zoom-slider"
+          onMouseDown={(e) => e.stopPropagation()}
+        />
+        <span className="preview-zoom-label">{zoom}%</span>
+        <button
+          type="button"
+          className="preview-toolbar-btn"
+          onClick={(e) => { e.stopPropagation(); setZoom((z) => Math.min(300, z + 25)); }}
+          onMouseDown={(e) => e.stopPropagation()}
+          title="Zoom in (+)"
+        >
+          +
+        </button>
+        <div className="preview-toolbar-divider" />
+        <button
+          type="button"
+          className="preview-toolbar-btn"
           onClick={(e) => {
             e.stopPropagation();
             handleFitToView();
           }}
           onMouseDown={(e) => e.stopPropagation()}
+          title="Reset view (0)"
         >
-          Fit to View
+          Fit
         </button>
       </div>
     </div>
