@@ -9,9 +9,11 @@ import MarketplaceView from "./components/MarketplaceView.jsx";
 import SellerDashboard from "./components/SellerDashboard.jsx";
 import BatchPanel from "./components/BatchPanel.jsx";
 import MapPreview from "./components/MapPreview.jsx";
+import LandingPage from "./components/LandingPage.jsx";
+import PricingModal from "./components/PricingModal.jsx";
 import {
   generateSVG, generatePin, downloadSVG, downloadDXF, downloadThumbnail,
-  getProfile, logout, getToken,
+  getProfile, logout, getToken, subscribe,
 } from "./services/api.js";
 
 const DEFAULT_CONFIG = {
@@ -43,6 +45,8 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [showAuth, setShowAuth] = useState(false);
   const [showBatch, setShowBatch] = useState(false);
+  const [showPricing, setShowPricing] = useState(false);
+  const [showLanding, setShowLanding] = useState(!getToken());
   const [view, setView] = useState("main"); // main, library, marketplace, dashboard
 
   const [selectedResult, setSelectedResult] = useState(null);
@@ -118,6 +122,18 @@ export default function App() {
   function handleAuth(userData) {
     setUser(userData);
     setShowAuth(false);
+    setShowLanding(false);
+  }
+
+  async function handleSubscribe(plan) {
+    try {
+      const data = await subscribe(plan);
+      if (data.checkout_url) {
+        window.location.href = data.checkout_url;
+      }
+    } catch (err) {
+      alert(err.message);
+    }
   }
 
   function handleLogout() {
@@ -260,6 +276,19 @@ export default function App() {
     URL.revokeObjectURL(url);
   }
 
+  // Landing page for new visitors
+  if (showLanding && !user) {
+    return (
+      <>
+        <LandingPage
+          onGetStarted={() => setShowLanding(false)}
+          onSignIn={() => { setShowAuth(true); }}
+        />
+        {showAuth && <AuthModal onAuth={handleAuth} onClose={() => setShowAuth(false)} />}
+      </>
+    );
+  }
+
   // Sub-views
   if (view === "library") return <LibraryView onBack={() => setView("main")} />;
   if (view === "marketplace") return <MarketplaceView user={user} onBack={() => setView("main")} />;
@@ -289,6 +318,7 @@ export default function App() {
               <option key={c.code} value={c.code}>{c.label}</option>
             ))}
           </select>
+          <button className="nav-btn" onClick={() => setShowPricing(true)}>Pricing</button>
           <button className="nav-btn" onClick={() => setView("marketplace")}>Marketplace</button>
           {user && <button className="nav-btn" onClick={() => setView("library")}>Library</button>}
           {user && (user.tier === "maker" || user.tier === "pro" || user.tier === "admin") && (
@@ -467,6 +497,7 @@ export default function App() {
 
       {showAuth && <AuthModal onAuth={handleAuth} onClose={() => setShowAuth(false)} />}
       {showBatch && <BatchPanel config={config} onClose={() => setShowBatch(false)} />}
+      {showPricing && <PricingModal user={user} onClose={() => setShowPricing(false)} onSubscribe={handleSubscribe} />}
     </div>
   );
 }

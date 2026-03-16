@@ -104,6 +104,32 @@ async def get_profile(user: User = Depends(get_current_user)):
     )
 
 
+@router.post("/reset-password")
+async def reset_password(
+    email: str,
+    new_password: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Reset password for a user by email.
+
+    In production this would require an email-verified token.
+    For now, accepts the request directly (to be secured with email verification).
+    """
+    if len(new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    result = await db.execute(select(User).where(User.email == email))
+    user = result.scalar_one_or_none()
+    if not user:
+        # Don't reveal whether the email exists
+        return {"message": "If an account with that email exists, the password has been reset."}
+
+    user.hashed_password = hash_password(new_password)
+    await db.commit()
+    log.info(f"Password reset for: {user.email}")
+    return {"message": "If an account with that email exists, the password has been reset."}
+
+
 @router.post("/subscribe", response_model=SubscriptionResponse)
 async def subscribe(
     req: SubscriptionRequest,

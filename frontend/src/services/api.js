@@ -79,6 +79,34 @@ async function getProfile() {
   return resp.json();
 }
 
+async function resetPassword(email, newPassword) {
+  const resp = await fetchWithTimeout(`${API_BASE}/auth/reset-password?email=${encodeURIComponent(email)}&new_password=${encodeURIComponent(newPassword)}`, {
+    method: "POST",
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(err.detail || "Reset failed");
+  }
+  return resp.json();
+}
+
+async function subscribe(plan) {
+  const resp = await fetchWithTimeout(`${API_BASE}/auth/subscribe`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      plan,
+      success_url: window.location.origin + "?upgraded=1",
+      cancel_url: window.location.origin,
+    }),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(err.detail || "Subscription failed");
+  }
+  return resp.json();
+}
+
 // --- Search ---
 
 async function searchLocations(query, country = "ca") {
@@ -248,7 +276,7 @@ async function getReviews(listingId) {
 }
 
 export {
-  setToken, getToken, register, login, logout, getProfile,
+  setToken, getToken, register, login, logout, getProfile, resetPassword, subscribe,
   searchLocations, generateSVG, generatePin, batchGenerate,
   downloadSVG, downloadDXF, downloadThumbnail,
   getLibrary, deleteLibraryFile,
