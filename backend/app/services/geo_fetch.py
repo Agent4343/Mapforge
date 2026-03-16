@@ -56,10 +56,14 @@ async def _fetch_via_nominatim(osm_id: int, osm_type: str) -> MultiPolygon | Pol
         "polygon_geojson": 1,
     }
 
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.get(NOMINATIM_LOOKUP_URL, params=params, headers=NOMINATIM_HEADERS)
-        resp.raise_for_status()
-        data = resp.json()
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(NOMINATIM_LOOKUP_URL, params=params, headers=NOMINATIM_HEADERS)
+            resp.raise_for_status()
+            data = resp.json()
+    except (httpx.HTTPError, httpx.ProxyError) as e:
+        log.warning(f"Nominatim request failed for {osm_type}/{osm_id}: {e}")
+        return None
 
     if not data:
         return None
@@ -88,10 +92,14 @@ async def _fetch_via_overpass(osm_id: int, osm_type: str) -> MultiPolygon | Poly
     out skel qt;
     """
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(OVERPASS_URL, data={"data": query})
-        resp.raise_for_status()
-        data = resp.json()
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(OVERPASS_URL, data={"data": query})
+            resp.raise_for_status()
+            data = resp.json()
+    except (httpx.HTTPError, httpx.ProxyError) as e:
+        log.warning(f"Overpass request failed for {osm_type}/{osm_id}: {e}")
+        return None
 
     elements = data.get("elements", [])
     if not elements:

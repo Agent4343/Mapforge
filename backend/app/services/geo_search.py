@@ -1,8 +1,10 @@
 """Geographic search service using OpenStreetMap Nominatim API with caching."""
 
 import httpx
+from fastapi import HTTPException
 
 from app.config import settings
+from app.logging_config import log
 from app.models.schemas import SearchResult
 from app.services.cache import cache_get, cache_set, make_search_key
 
@@ -31,10 +33,17 @@ async def search_location(query: str, country: str = "ca", limit: int = 10) -> l
     if country:
         params["countrycodes"] = country
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.get(NOMINATIM_URL, params=params, headers=NOMINATIM_HEADERS)
-        resp.raise_for_status()
-        data = resp.json()
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(NOMINATIM_URL, params=params, headers=NOMINATIM_HEADERS)
+            resp.raise_for_status()
+            data = resp.json()
+    except (httpx.HTTPError, httpx.ProxyError) as e:
+        log.warning(f"Nominatim search request failed: {e}")
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to reach search service. Please try again later.",
+        )
 
     results = []
     for item in data:

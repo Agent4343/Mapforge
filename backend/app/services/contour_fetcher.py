@@ -55,10 +55,14 @@ async def fetch_contour_lines(
 
     log.info(f"Fetching {contour_type} contours for bbox: {bbox}")
 
-    async with httpx.AsyncClient(timeout=35.0) as client:
-        resp = await client.post(OVERPASS_URL, data={"data": query})
-        resp.raise_for_status()
-        data = resp.json()
+    try:
+        async with httpx.AsyncClient(timeout=35.0) as client:
+            resp = await client.post(OVERPASS_URL, data={"data": query})
+            resp.raise_for_status()
+            data = resp.json()
+    except (httpx.HTTPError, httpx.ProxyError) as e:
+        log.warning(f"Overpass contour request failed: {e}")
+        return []
 
     elements = data.get("elements", [])
     nodes = {}
