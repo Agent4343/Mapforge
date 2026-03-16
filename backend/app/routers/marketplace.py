@@ -16,6 +16,7 @@ from app.models.schemas import (
     ReviewResponse, SellerDashboardResponse, UpdateListingRequest,
 )
 from app.services.auth import get_current_user, get_optional_user
+from app.services.ai_description_generator import generate_full_listing as ai_generate_listing
 from app.services.payments import create_payment_intent
 
 router = APIRouter(prefix="/api/v1/marketplace", tags=["marketplace"])
@@ -405,6 +406,44 @@ async def my_purchases(
         )
         for purchase, listing, file in rows
     ]
+
+
+# --- AI Description Generation ---
+
+@router.post("/ai-describe")
+async def ai_describe(
+    location_name: str = Query(..., min_length=1),
+    style: str = Query("filled", pattern="^(filled|outline|engraved)$"),
+    country: str = Query("", max_length=20),
+    is_city: bool = Query(False),
+    province: str = Query("", max_length=50),
+    user: User = Depends(get_current_user),
+):
+    """Generate an AI-written Etsy listing (title + description + tags).
+
+    Requires ANTHROPIC_API_KEY to be configured. Falls back to empty
+    values if the AI service is unavailable.
+    """
+    result = await ai_generate_listing(
+        location_name=location_name,
+        style=style,
+        country=country,
+        is_city=is_city,
+        province=province,
+        has_streets=is_city,
+    )
+
+    if not any(result.values()):
+        raise HTTPException(
+            status_code=503,
+            detail="AI description service unavailable. Check ANTHROPIC_API_KEY configuration.",
+        )
+
+    return {
+        "title": result.get("title"),
+        "description": result.get("description"),
+        "tags": result.get("tags"),
+    }
 
 
 # --- Remove Listing ---

@@ -63,6 +63,9 @@ class Settings:
     MAKER_LIBRARY_LIMIT: int = 100
     PRO_BATCH_LIMIT: int = 50
 
+    # AI Description Generation (Claude API)
+    ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
+
     # Admin
     ADMIN_EMAILS: list[str] = ["mathesonashley@hotmail.com"]
 

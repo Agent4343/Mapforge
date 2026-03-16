@@ -16,12 +16,20 @@ Usage:
 """
 
 import argparse
+import asyncio
 import csv
 import json
 import sys
 from pathlib import Path
 
 import httpx
+
+# Add backend to path for AI service import
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from app.services.ai_description_generator import (
+    generate_full_listing as ai_generate_full_listing,
+    get_session_stats,
+)
 
 # Style display names for listings
 STYLE_NAMES = {
@@ -303,8 +311,37 @@ def generate_price_cents(name: str, style: str) -> int:
     return 999  # $9.99
 
 
+async def ai_listing_payload(name: str, style: str, file_id: str) -> dict:
+    """Build a listing payload using AI-generated content with template fallback."""
+    meta = LOCATION_META.get(name, {})
+    country = meta.get("country", "")
+    nickname = meta.get("nickname", "")
+    capital = meta.get("capital", "")
+    province = meta.get("province", "")
+    is_city = meta.get("type") == "city"
+
+    ai_result = await ai_generate_full_listing(
+        location_name=name,
+        style=style,
+        country=country,
+        nickname=nickname,
+        capital=capital,
+        province=province,
+        is_city=is_city,
+        has_streets=is_city,
+    )
+
+    return {
+        "file_id": file_id,
+        "title": ai_result.get("title") or generate_title(name, style),
+        "description": ai_result.get("description") or generate_description(name, style),
+        "tags": ai_result.get("tags") or generate_tags(name, style),
+        "price_cents": generate_price_cents(name, style),
+    }
+
+
 def create_listing_payload(name: str, style: str, file_id: str) -> dict:
-    """Build a marketplace listing API request."""
+    """Build a marketplace listing API request (template-based)."""
     return {
         "file_id": file_id,
         "title": generate_title(name, style),
@@ -337,17 +374,37 @@ def preview_templates(country: str):
             print()
 
 
-def export_csv(manifest_path: str, output_path: str):
+def export_csv(manifest_path: str, output_path: str, use_ai: bool = False):
     """Export listings as CSV for manual Etsy upload."""
     with open(manifest_path) as f:
         manifest = json.load(f)
 
+    items = manifest.get("succeeded", [])
+
+    if use_ai:
+        rows = asyncio.run(_export_csv_ai(items))
+    else:
+        rows = _export_csv_template(items)
+
+    with open(output_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=rows[0].keys() if rows else [])
+        writer.writeheader()
+        writer.writerows(rows)
+
+    print(f"Exported {len(rows)} listings to {output_path}")
+
+    if use_ai:
+        stats = get_session_stats()
+        print(f"AI stats: {stats['calls']} API calls, ~${stats['estimated_cost_usd']:.4f} total cost")
+
+
+def _export_csv_template(items: list) -> list:
+    """Generate CSV rows using templates."""
     rows = []
-    for item in manifest.get("succeeded", []):
+    for item in items:
         name = item["name"]
         style = item["style"]
         file_id = item["file_id"]
-
         rows.append({
             "file_id": file_id,
             "name": name,
@@ -361,20 +418,54 @@ def export_csv(manifest_path: str, output_path: str):
             "dxf_available": item.get("dxf_available", False),
             "thumbnail_available": item.get("thumbnail_available", False),
         })
-
-    with open(output_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=rows[0].keys() if rows else [])
-        writer.writeheader()
-        writer.writerows(rows)
-
-    print(f"Exported {len(rows)} listings to {output_path}")
+    return rows
 
 
-def create_marketplace_listings(base_url: str, token: str, manifest_path: str):
+async def _export_csv_ai(items: list) -> list:
+    """Generate CSV rows using AI descriptions."""
+    rows = []
+    total = len(items)
+    for i, item in enumerate(items, 1):
+        name = item["name"]
+        style = item["style"]
+        file_id = item["file_id"]
+
+        print(f"  [{i}/{total}] Generating AI listing for {name} ({style})...", flush=True)
+        payload = await ai_listing_payload(name, style, file_id)
+
+        rows.append({
+            "file_id": file_id,
+            "name": name,
+            "style": style,
+            "title": payload["title"],
+            "description": payload["description"],
+            "tags": payload["tags"],
+            "price": f"{payload['price_cents']/100:.2f}",
+            "node_count": item.get("node_count", ""),
+            "dimensions_mm": f"{item.get('dimensions_mm', [0,0])[0]:.0f}x{item.get('dimensions_mm', [0,0])[1]:.0f}",
+            "dxf_available": item.get("dxf_available", False),
+            "thumbnail_available": item.get("thumbnail_available", False),
+        })
+
+        # Rate limit: ~1 request/second to stay well within API limits
+        await asyncio.sleep(1.0)
+
+    return rows
+
+
+def create_marketplace_listings(base_url: str, token: str, manifest_path: str, use_ai: bool = False):
     """Create marketplace listings from a generation manifest."""
     with open(manifest_path) as f:
         manifest = json.load(f)
 
+    if use_ai:
+        asyncio.run(_create_listings_ai(base_url, token, manifest))
+    else:
+        _create_listings_template(base_url, token, manifest)
+
+
+def _create_listings_template(base_url: str, token: str, manifest: dict):
+    """Create listings using template descriptions."""
     headers = {"Authorization": f"Bearer {token}"}
     succeeded = 0
     failed = 0
@@ -412,6 +503,49 @@ def create_marketplace_listings(base_url: str, token: str, manifest_path: str):
     print(f"\nListings created: {succeeded}, Failed: {failed}")
 
 
+async def _create_listings_ai(base_url: str, token: str, manifest: dict):
+    """Create listings using AI-generated descriptions."""
+    headers = {"Authorization": f"Bearer {token}"}
+    succeeded = 0
+    failed = 0
+    items = manifest.get("succeeded", [])
+    total = len(items)
+
+    async with httpx.AsyncClient() as client:
+        for i, item in enumerate(items, 1):
+            name = item["name"]
+            style = item["style"]
+            file_id = item["file_id"]
+
+            print(f"[{i}/{total}] AI listing for {name} ({style})...", end=" ", flush=True)
+
+            payload = await ai_listing_payload(name, style, file_id)
+
+            try:
+                resp = await client.post(
+                    f"{base_url}/api/v1/marketplace/listings",
+                    json=payload,
+                    headers=headers,
+                    timeout=30,
+                )
+                if resp.status_code in (200, 201):
+                    listing_id = resp.json().get("id", "?")
+                    print(f"OK — listing {listing_id}")
+                    succeeded += 1
+                else:
+                    print(f"FAILED ({resp.status_code}): {resp.text[:200]}")
+                    failed += 1
+            except Exception as e:
+                print(f"ERROR: {e}")
+                failed += 1
+
+            await asyncio.sleep(1.0)  # Rate limit AI calls
+
+    stats = get_session_stats()
+    print(f"\nListings created: {succeeded}, Failed: {failed}")
+    print(f"AI stats: {stats['calls']} API calls, ~${stats['estimated_cost_usd']:.4f} total cost")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Etsy listing templates for MapForge province/state maps"
@@ -423,23 +557,64 @@ def main():
     parser.add_argument("--base-url", help="MapForge API base URL")
     parser.add_argument("--token", help="JWT auth token")
     parser.add_argument("--create-listings", action="store_true", help="Create marketplace listings from manifest")
+    parser.add_argument(
+        "--ai", action="store_true",
+        help="Use Claude AI to generate unique descriptions (requires ANTHROPIC_API_KEY env var)"
+    )
 
     args = parser.parse_args()
 
+    if args.ai:
+        import os
+        if not os.getenv("ANTHROPIC_API_KEY"):
+            print("Error: ANTHROPIC_API_KEY environment variable required for --ai mode")
+            print("  export ANTHROPIC_API_KEY=sk-ant-...")
+            sys.exit(1)
+        print("AI mode enabled — generating unique descriptions via Claude API")
+
     if args.preview:
-        preview_templates(args.country)
+        if args.ai:
+            asyncio.run(_preview_ai(args.country))
+        else:
+            preview_templates(args.country)
     elif args.export_csv:
         if not args.manifest:
             print("Error: --manifest required for CSV export")
             sys.exit(1)
-        export_csv(args.manifest, args.export_csv)
+        export_csv(args.manifest, args.export_csv, use_ai=args.ai)
     elif args.create_listings:
         if not all([args.base_url, args.token, args.manifest]):
             print("Error: --base-url, --token, and --manifest required")
             sys.exit(1)
-        create_marketplace_listings(args.base_url, args.token, args.manifest)
+        create_marketplace_listings(args.base_url, args.token, args.manifest, use_ai=args.ai)
     else:
         parser.print_help()
+
+
+async def _preview_ai(country: str):
+    """Preview AI-generated listings for a few sample locations."""
+    samples = []
+    if country in ("ca", "all"):
+        samples.extend(["Ontario", "Toronto", "British Columbia"])
+    if country in ("us", "all"):
+        samples.extend(["Texas", "California", "New York"])
+
+    for name in samples:
+        meta = LOCATION_META.get(name, {})
+        style = "filled"
+        print(f"\n{'='*70}")
+        print(f"AI-GENERATED LISTING: {name}")
+        print(f"{'='*70}")
+
+        payload = await ai_listing_payload(name, style, "preview-id")
+        print(f"TITLE: {payload['title']}")
+        print(f"PRICE: ${payload['price_cents']/100:.2f}")
+        print(f"TAGS:  {payload['tags']}")
+        print(f"\n{payload['description']}")
+        print()
+
+    stats = get_session_stats()
+    print(f"\nAI stats: {stats['calls']} API calls, ~${stats['estimated_cost_usd']:.4f} total cost")
 
 
 if __name__ == "__main__":

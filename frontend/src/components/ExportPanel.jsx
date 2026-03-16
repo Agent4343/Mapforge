@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { createListing } from "../services/api.js";
+import { createListing, aiDescribe } from "../services/api.js";
 
 export default function ExportPanel({
   result,
@@ -20,6 +20,7 @@ export default function ExportPanel({
   const [listError, setListError] = useState(null);
   const [listSuccess, setListSuccess] = useState(false);
   const [listing, setListing] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
 
   async function handleList() {
     if (!result) return;
@@ -46,6 +47,28 @@ export default function ExportPanel({
       setListError(err.message);
     } finally {
       setListing(false);
+    }
+  }
+
+  async function handleAiDescribe() {
+    if (!result) return;
+    setAiLoading(true);
+    setListError(null);
+    try {
+      const ai = await aiDescribe(
+        result.location_name,
+        result.style || "filled",
+        result.country || "",
+        result.product_type === "city",
+        result.province || "",
+      );
+      if (ai.title) setListTitle(ai.title);
+      if (ai.description) setListDesc(ai.description);
+      if (ai.tags) setListTags(ai.tags);
+    } catch (err) {
+      setListError("AI: " + err.message);
+    } finally {
+      setAiLoading(false);
     }
   }
 
@@ -115,6 +138,14 @@ export default function ExportPanel({
 
           {showListForm && (
             <div className="list-form">
+              <button
+                className="btn btn-secondary btn-full"
+                onClick={handleAiDescribe}
+                disabled={aiLoading}
+                style={{ marginBottom: 8, background: "var(--accent-hover, #5a3d2b)", color: "#fff" }}
+              >
+                {aiLoading ? "AI Writing..." : "AI Write Listing"}
+              </button>
               <div className="control-group">
                 <label>Title</label>
                 <input type="text" value={listTitle} onChange={(e) => setListTitle(e.target.value)} maxLength={255} />
@@ -132,7 +163,14 @@ export default function ExportPanel({
               </div>
               <div className="control-group">
                 <label>Description</label>
-                <input type="text" value={listDesc} onChange={(e) => setListDesc(e.target.value)} placeholder="Describe the design, wood recommendations..." maxLength={2000} />
+                <textarea
+                  value={listDesc}
+                  onChange={(e) => setListDesc(e.target.value)}
+                  placeholder="Describe the design, wood recommendations..."
+                  maxLength={2000}
+                  rows={6}
+                  style={{ width: "100%", resize: "vertical", fontFamily: "inherit", fontSize: "12px" }}
+                />
               </div>
               <div className="control-group">
                 <label>Tags (comma-separated)</label>

@@ -336,6 +336,24 @@ async function getReviews(listingId) {
   return resp.json();
 }
 
+async function aiDescribe(locationName, style, country = "", isCity = false, province = "") {
+  const params = new URLSearchParams({
+    location_name: locationName,
+    style,
+    country,
+    is_city: isCity,
+    province,
+  });
+  const resp = await fetchWithTimeout(`${API_BASE}/marketplace/ai-describe?${params}`, {
+    method: "POST",
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "AI description generation failed"));
+  }
+  return resp.json();
+}
+
 export {
   setToken, getToken, register, login, logout, getProfile, requestPasswordReset, resetPassword, subscribe,
   searchLocations, generateSVG, generatePin, batchGenerate,
@@ -344,4 +362,5 @@ export {
   browseMarketplace, createListing, purchaseListing,
   getMyPurchases, updateListing, removeListing,
   getSellerDashboard, submitReview, getReviews,
+  aiDescribe,
 };
