@@ -20,6 +20,21 @@ function getToken() {
   return authToken;
 }
 
+function extractErrorMessage(detail, fallback) {
+  if (!detail) return fallback;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((d) => {
+        const loc = d.loc ? d.loc.join(" > ") : "";
+        const msg = d.msg || String(d);
+        return loc ? `${loc}: ${msg}` : msg;
+      })
+      .join("; ");
+  }
+  return String(detail);
+}
+
 async function fetchWithTimeout(url, options = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -47,7 +62,7 @@ async function register(email, username, password) {
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-    throw new Error(err.detail || "Registration failed");
+    throw new Error(extractErrorMessage(err.detail, "Registration failed"));
   }
   const data = await resp.json();
   setToken(data.access_token);
@@ -62,7 +77,7 @@ async function login(email, password) {
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-    throw new Error(err.detail || "Login failed");
+    throw new Error(extractErrorMessage(err.detail, "Login failed"));
   }
   const data = await resp.json();
   setToken(data.access_token);
@@ -85,7 +100,7 @@ async function requestPasswordReset(email) {
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-    throw new Error(err.detail || "Reset request failed");
+    throw new Error(extractErrorMessage(err.detail, "Reset request failed"));
   }
   return resp.json();
 }
@@ -96,7 +111,7 @@ async function resetPassword(token, newPassword) {
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-    throw new Error(err.detail || "Reset failed");
+    throw new Error(extractErrorMessage(err.detail, "Reset failed"));
   }
   return resp.json();
 }
@@ -113,7 +128,7 @@ async function subscribe(plan) {
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-    throw new Error(err.detail || "Subscription failed");
+    throw new Error(extractErrorMessage(err.detail, "Subscription failed"));
   }
   return resp.json();
 }
@@ -138,7 +153,7 @@ async function generateSVG(params) {
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-    throw new Error(err.detail || "Generation failed");
+    throw new Error(extractErrorMessage(err.detail, "Generation failed"));
   }
   return resp.json();
 }
@@ -151,7 +166,7 @@ async function generatePin(params) {
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-    throw new Error(err.detail || "Pin generation failed");
+    throw new Error(extractErrorMessage(err.detail, "Pin generation failed"));
   }
   return resp.json();
 }
@@ -164,7 +179,7 @@ async function batchGenerate(items) {
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-    throw new Error(err.detail || "Batch generation failed");
+    throw new Error(extractErrorMessage(err.detail, "Batch generation failed"));
   }
   return resp.json();
 }
@@ -206,7 +221,7 @@ async function deleteLibraryFile(fileId) {
   const resp = await fetchWithTimeout(`${API_BASE}/library/${fileId}`, { method: "DELETE" });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-    throw new Error(err.detail || "Delete failed");
+    throw new Error(extractErrorMessage(err.detail, "Delete failed"));
   }
 }
 
@@ -238,7 +253,7 @@ async function createListing(fileId, title, priceCents, description, tags) {
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-    throw new Error(err.detail || "Listing failed");
+    throw new Error(extractErrorMessage(err.detail, "Listing failed"));
   }
   return resp.json();
 }
@@ -251,7 +266,7 @@ async function purchaseListing(listingId) {
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-    throw new Error(err.detail || "Purchase failed");
+    throw new Error(extractErrorMessage(err.detail, "Purchase failed"));
   }
   return resp.json();
 }
@@ -270,7 +285,7 @@ async function updateListing(listingId, updates) {
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-    throw new Error(err.detail || "Update failed");
+    throw new Error(extractErrorMessage(err.detail, "Update failed"));
   }
   return resp.json();
 }
@@ -281,7 +296,7 @@ async function removeListing(listingId) {
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-    throw new Error(err.detail || "Remove failed");
+    throw new Error(extractErrorMessage(err.detail, "Remove failed"));
   }
 }
 
@@ -304,7 +319,7 @@ async function submitReview(listingId, rating, comment, cncCompatible) {
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-    throw new Error(err.detail || "Review failed");
+    throw new Error(extractErrorMessage(err.detail, "Review failed"));
   }
   return resp.json();
 }
