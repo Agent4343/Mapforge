@@ -20,6 +20,7 @@ def generate_dxf(
     font_size_mm: float = 14.0,
     center_latlon: tuple[float, float] | None = None,
     streets_data: dict | None = None,
+    pin_location: tuple[float, float] | None = None,
 ) -> bytes:
     """Generate a CNC-ready DXF file from processed geometry.
 
@@ -176,6 +177,33 @@ def generate_dxf(
                 (mid_x, dxf_mid_y),
                 align=TextEntityAlignment.MIDDLE_CENTER,
             )
+
+    # Pin marker for name_sign / location marking
+    if pin_location:
+        px, py_svg = pin_location
+        py = board_h - py_svg  # flip Y for DXF
+        r = font_size_mm * 0.35
+        doc.layers.add("PIN_MARKER", color=1)  # red
+
+        # Circle
+        msp.add_circle(
+            center=(px, py),
+            radius=r,
+            dxfattribs={"layer": "PIN_MARKER"},
+        )
+        # Diamond pointer below
+        h = font_size_mm * 1.2
+        msp.add_lwpolyline(
+            [
+                (px, py - r),
+                (px - r * 0.6, py - r - h * 0.35),
+                (px, py - r - h),
+                (px + r * 0.6, py - r - h * 0.35),
+                (px, py - r),
+            ],
+            close=True,
+            dxfattribs={"layer": "PIN_MARKER"},
+        )
 
     # Write to bytes — ezdxf writes text to a StringIO, then encode
     stream = io.StringIO()

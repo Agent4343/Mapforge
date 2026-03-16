@@ -26,6 +26,7 @@ def generate_svg(
     streets_data: dict | None = None,
     contour_data: list[dict] | None = None,
     water_data: dict | None = None,
+    pin_location: tuple[float, float] | None = None,
 ) -> dict:
     """Generate a CNC-ready SVG string from processed geometry.
 
@@ -100,6 +101,12 @@ def generate_svg(
     if streets_data:
         _render_streets(lines, streets_data, processed)
         lines.append("")
+
+    # Layer: pin_marker (for name_sign / location pin)
+    if pin_location:
+        _render_pin_marker(lines, pin_location, board_w, board_h, font_size_mm)
+        lines.append("")
+        layer_count += 1
 
     # Layer: text_primary
     text_y = board_h - font_size_mm * 2.5
@@ -387,6 +394,55 @@ def _render_street_labels(
             f' transform="rotate({round(angle_deg, 1)},{round(mid_x, 2)},{round(mid_y, 2)})">'
             f'{_escape_xml(name.upper())}</text>'
         )
+
+    lines.append("  </g>")
+
+
+def _render_pin_marker(
+    lines: list[str],
+    pin_mm: tuple[float, float],
+    board_w: float,
+    board_h: float,
+    font_size_mm: float,
+):
+    """Render a CNC-friendly location pin marker at the given board coordinates.
+
+    The pin is a simple diamond + circle shape that works well with V-carve
+    and profile-cut toolpaths.
+    """
+    px, py = pin_mm
+    # Pin dimensions scaled to font size
+    r = font_size_mm * 0.35  # circle radius
+    h = font_size_mm * 1.2   # diamond height below circle
+
+    lines.append("  <!-- Layer: pin_marker -->")
+    lines.append('  <!-- Toolpath: V-carve or profile cut, marks the target location -->')
+    lines.append('  <g id="pin_marker">')
+
+    # Diamond pointer (bottom half of a traditional map pin)
+    diamond_d = (
+        f"M{round(px, 2)},{round(py + r, 2)} "
+        f"L{round(px - r * 0.6, 2)},{round(py + r + h * 0.35, 2)} "
+        f"L{round(px, 2)},{round(py + r + h, 2)} "
+        f"L{round(px + r * 0.6, 2)},{round(py + r + h * 0.35, 2)} Z"
+    )
+    lines.append(
+        f'    <path d="{diamond_d}"'
+        f' fill="#c0392b" stroke="#1a1a1a" stroke-width="0.4"'
+        f' stroke-linejoin="round"/>'
+    )
+
+    # Circle (top of pin)
+    lines.append(
+        f'    <circle cx="{round(px, 2)}" cy="{round(py, 2)}" r="{round(r, 2)}"'
+        f' fill="#e74c3c" stroke="#1a1a1a" stroke-width="0.4"/>'
+    )
+
+    # Inner dot
+    lines.append(
+        f'    <circle cx="{round(px, 2)}" cy="{round(py, 2)}" r="{round(r * 0.35, 2)}"'
+        f' fill="#ffffff" stroke="none"/>'
+    )
 
     lines.append("  </g>")
 

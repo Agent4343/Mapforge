@@ -8,8 +8,9 @@ import LibraryView from "./components/LibraryView.jsx";
 import MarketplaceView from "./components/MarketplaceView.jsx";
 import SellerDashboard from "./components/SellerDashboard.jsx";
 import BatchPanel from "./components/BatchPanel.jsx";
+import MapPreview from "./components/MapPreview.jsx";
 import {
-  generateSVG, downloadSVG, downloadDXF, downloadThumbnail,
+  generateSVG, generatePin, downloadSVG, downloadDXF, downloadThumbnail,
   getProfile, logout, getToken,
 } from "./services/api.js";
 
@@ -53,6 +54,7 @@ export default function App() {
   const [qualityWarning, setQualityWarning] = useState(null);
   const [country, setCountry] = useState("ca");
   const [panelCollapsed, setPanelCollapsed] = useState(false);
+  const [pinCoords, setPinCoords] = useState(null); // {lat, lon} for name_sign pin drop
 
   // Undo/redo state
   const [configHistory, setConfigHistory] = useState([DEFAULT_CONFIG]);
@@ -144,7 +146,9 @@ export default function App() {
   }
 
   const handleGenerate = useCallback(async () => {
-    if (!selectedResult) return;
+    // Pin-drop mode: use coordinates instead of OSM search result
+    const isPinMode = config.productType === "name_sign" && pinCoords;
+    if (!selectedResult && !isPinMode) return;
 
     setGenerating(true);
     setError(null);
@@ -152,32 +156,51 @@ export default function App() {
     setResult(null);
 
     try {
-      const params = {
-        osm_id: selectedResult.osm_id,
-        osm_type: selectedResult.osm_type,
-        product_type: config.productType,
-        board_size: config.boardSize,
-        style: config.style,
-        export_format: config.exportFormat,
-        text: config.text,
-        show_coordinates: config.showCoordinates,
-        font_size_mm: config.fontSize,
-        simplification: "auto",
-        include_islands: config.includeIslands,
-        min_island_area_m2: 5000,
-        include_streets: config.includeStreets,
-        include_contours: config.includeContours,
-        contour_type: config.contourType,
-        num_depth_bands: config.numDepthBands,
-      };
+      let data;
 
-      // Custom board dimensions
-      if (config.boardSize === "custom") {
-        params.board_width_inches = config.customWidth || 16;
-        params.board_height_inches = config.customHeight || 20;
+      if (isPinMode) {
+        const pinParams = {
+          lat: pinCoords.lat,
+          lon: pinCoords.lon,
+          label: config.text || "My Place",
+          board_size: config.boardSize,
+          style: config.style,
+          export_format: config.exportFormat,
+          show_coordinates: config.showCoordinates,
+          font_size_mm: config.fontSize,
+          include_streets: config.includeStreets,
+        };
+        if (config.boardSize === "custom") {
+          pinParams.board_width_inches = config.customWidth || 16;
+          pinParams.board_height_inches = config.customHeight || 20;
+        }
+        data = await generatePin(pinParams);
+      } else {
+        const params = {
+          osm_id: selectedResult.osm_id,
+          osm_type: selectedResult.osm_type,
+          product_type: config.productType,
+          board_size: config.boardSize,
+          style: config.style,
+          export_format: config.exportFormat,
+          text: config.text,
+          show_coordinates: config.showCoordinates,
+          font_size_mm: config.fontSize,
+          simplification: "auto",
+          include_islands: config.includeIslands,
+          min_island_area_m2: 5000,
+          include_streets: config.includeStreets,
+          include_contours: config.includeContours,
+          contour_type: config.contourType,
+          num_depth_bands: config.numDepthBands,
+        };
+        if (config.boardSize === "custom") {
+          params.board_width_inches = config.customWidth || 16;
+          params.board_height_inches = config.customHeight || 20;
+        }
+        data = await generateSVG(params);
       }
 
-      const data = await generateSVG(params);
       setSvgContent(data.svg);
       setResult(data);
 
@@ -194,7 +217,7 @@ export default function App() {
     } finally {
       setGenerating(false);
     }
-  }, [selectedResult, config]);
+  }, [selectedResult, config, pinCoords]);
 
   const handleDownload = useCallback(async () => {
     if (!result) return;
@@ -296,6 +319,64 @@ export default function App() {
 
         <div className={`panel-left${panelCollapsed ? " collapsed" : ""}`}>
           <SearchPanel onSelect={handleSelect} selectedResult={selectedResult} country={country} />
+
+          {/* Pin Drop for Name Sign — mark a home or special location */}
+          {config.productType === "name_sign" && (
+            <div className="pin-drop-section" style={{
+              background: "var(--bg-secondary, #1e1e2e)",
+              border: "1px solid var(--border, #333)",
+              borderRadius: "6px",
+              padding: "12px",
+              marginTop: "8px",
+            }}>
+              <h3 style={{ margin: "0 0 8px", fontSize: "13px", color: "var(--text-secondary, #aaa)" }}>
+                Drop a Pin — Mark Your Location
+              </h3>
+              <p style={{ margin: "0 0 8px", fontSize: "11px", color: "var(--text-muted, #888)" }}>
+                Enter coordinates for a home, cabin, or special place. The map will generate a board centered on this spot with a pin marker.
+              </p>
+              <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: "11px", color: "var(--text-secondary, #aaa)" }}>Latitude</label>
+                  <input
+                    type="number"
+                    step="0.0001"
+                    placeholder="45.4215"
+                    className="search-input"
+                    style={{ fontSize: "12px", padding: "6px 8px" }}
+                    value={pinCoords?.lat ?? ""}
+                    onChange={(e) => {
+                      const lat = parseFloat(e.target.value);
+                      setPinCoords((prev) => ({ lon: prev?.lon || 0, lat: isNaN(lat) ? 0 : lat }));
+                    }}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: "11px", color: "var(--text-secondary, #aaa)" }}>Longitude</label>
+                  <input
+                    type="number"
+                    step="0.0001"
+                    placeholder="-75.6972"
+                    className="search-input"
+                    style={{ fontSize: "12px", padding: "6px 8px" }}
+                    value={pinCoords?.lon ?? ""}
+                    onChange={(e) => {
+                      const lon = parseFloat(e.target.value);
+                      setPinCoords((prev) => ({ lat: prev?.lat || 0, lon: isNaN(lon) ? 0 : lon }));
+                    }}
+                  />
+                </div>
+              </div>
+              {pinCoords && pinCoords.lat !== 0 && (
+                <MapPreview
+                  lat={pinCoords.lat}
+                  lon={pinCoords.lon}
+                  name={config.text || "Pin Location"}
+                />
+              )}
+            </div>
+          )}
+
           <hr className="section-divider" />
 
           {/* Undo/Redo bar */}
@@ -343,7 +424,7 @@ export default function App() {
             onDownload={handleDownload}
             onDownloadDXF={handleDownloadDXF}
             onDownloadThumbnail={handleDownloadThumbnail}
-            canGenerate={!!selectedResult}
+            canGenerate={!!selectedResult || (config.productType === "name_sign" && !!pinCoords)}
             generating={generating}
             user={user}
           />

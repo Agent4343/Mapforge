@@ -130,6 +130,22 @@ class GenerateRequest(BaseModel):
         return v
 
 
+class PinGenerateRequest(BaseModel):
+    """Generate a name sign / location marker from coordinates."""
+    lat: float = Field(..., ge=-90, le=90)
+    lon: float = Field(..., ge=-180, le=180)
+    label: str = Field("My Place", min_length=1, max_length=200)
+    board_size: BoardSize = BoardSize.medium
+    board_width_inches: Optional[float] = Field(None, gt=1, le=60)
+    board_height_inches: Optional[float] = Field(None, gt=1, le=60)
+    style: CutStyle = CutStyle.outline
+    export_format: ExportFormat = ExportFormat.svg
+    show_coordinates: bool = True
+    font_size_mm: float = Field(14.0, ge=4, le=40)
+    radius_m: float = Field(500.0, ge=100, le=5000)
+    include_streets: bool = True
+
+
 class GenerateResponse(BaseModel):
     svg: Optional[str] = None
     dxf_available: bool = False

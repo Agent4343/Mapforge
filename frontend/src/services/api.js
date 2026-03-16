@@ -104,6 +104,19 @@ async function generateSVG(params) {
   return resp.json();
 }
 
+async function generatePin(params) {
+  const resp = await fetchWithTimeout(`${API_BASE}/generate/pin`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(err.detail || "Pin generation failed");
+  }
+  return resp.json();
+}
+
 async function batchGenerate(items) {
   const resp = await fetchWithTimeout(`${API_BASE}/generate/batch`, {
     method: "POST",
@@ -236,7 +249,7 @@ async function getReviews(listingId) {
 
 export {
   setToken, getToken, register, login, logout, getProfile,
-  searchLocations, generateSVG, batchGenerate,
+  searchLocations, generateSVG, generatePin, batchGenerate,
   downloadSVG, downloadDXF, downloadThumbnail,
   getLibrary, deleteLibraryFile,
   browseMarketplace, createListing, purchaseListing,

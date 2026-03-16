@@ -13,10 +13,10 @@ from app.models.db_models import GeneratedFile, User
 from app.models.schemas import (
     BatchGenerateRequest, BatchGenerateResponse,
     ExportFormat, GenerateRequest, GenerateResponse,
-    PreviewResponse, BOARD_DIMENSIONS_INCHES,
+    PinGenerateRequest, PreviewResponse, BOARD_DIMENSIONS_INCHES,
 )
 from app.services.auth import get_current_user, get_optional_user
-from app.services.geo_fetch import fetch_geometry
+from app.services.geo_fetch import fetch_area_around_point, fetch_geometry
 from app.services.geometry_processor import process_geometry
 from app.services.svg_generator import generate_svg
 from app.services.dxf_generator import generate_dxf
@@ -254,6 +254,165 @@ async def generate(
         await _maybe_reset_monthly_counter(user, db)
     _check_tier_limits(user, req)
     return await _do_generate(req, user, db)
+
+
+@router.post("/generate/pin", response_model=GenerateResponse)
+async def generate_pin(
+    req: PinGenerateRequest,
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate a CNC-ready SVG/DXF centered on a specific coordinate (home, cabin, etc.)."""
+    if user:
+        await _maybe_reset_monthly_counter(user, db)
+
+    # Resolve board dimensions
+    if req.board_width_inches and req.board_height_inches:
+        w_in, h_in = req.board_width_inches, req.board_height_inches
+    elif req.board_size.value in BOARD_DIMENSIONS_INCHES:
+        w_in, h_in = BOARD_DIMENSIONS_INCHES[req.board_size.value]
+    else:
+        w_in, h_in = 16, 20
+
+    # Create area polygon around the pin point
+    from app.models.schemas import ProductType
+    geom = await fetch_area_around_point(req.lat, req.lon, radius_m=req.radius_m)
+
+    try:
+        processed = process_geometry(
+            geom=geom,
+            product_type=ProductType.name_sign,
+            board_width_inches=w_in,
+            board_height_inches=h_in,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Geometry processing failed: {e}")
+
+    # The pin should be at the center of the board area
+    # Transform the pin lat/lon to board mm coordinates
+    from app.services.geometry_processor import transform_wgs84_to_board
+    transform = processed.get("transform")
+    if transform:
+        pin_board = transform_wgs84_to_board([(req.lon, req.lat)], transform)
+        pin_mm = pin_board[0] if pin_board else None
+    else:
+        board_w, board_h = processed["board_mm"]
+        pin_mm = (board_w / 2, board_h / 2)
+
+    # Fetch streets for context
+    streets_data = None
+    if req.include_streets:
+        try:
+            bounds = geom.bounds
+            streets_data = await fetch_streets(
+                bbox=(bounds[1], bounds[0], bounds[3], bounds[2]),
+                include_minor=True,
+            )
+        except Exception as e:
+            log.warning(f"Street fetch failed (non-fatal): {e}")
+
+    # Fetch water features for context
+    water_data = None
+    try:
+        bounds = geom.bounds
+        water_data = await fetch_water_features(
+            bbox=(bounds[1], bounds[0], bounds[3], bounds[2]),
+        )
+    except Exception as e:
+        log.warning(f"Water feature fetch failed (non-fatal): {e}")
+
+    # Generate SVG with pin marker
+    location_name = req.label
+    result = generate_svg(
+        processed=processed,
+        location_name=location_name,
+        style=req.style,
+        show_coordinates=req.show_coordinates,
+        font_size_mm=req.font_size_mm,
+        center_latlon=(req.lat, req.lon),
+        streets_data=streets_data,
+        water_data=water_data,
+        pin_location=pin_mm,
+    )
+
+    # Store SVG
+    board_w, board_h = processed["board_mm"]
+    svg_key = f"svg/pin_{req.lat:.4f}_{req.lon:.4f}_{req.style.value}_{int(board_w)}x{int(board_h)}.svg"
+    await store_file(svg_key, result["svg"].encode("utf-8"))
+
+    # Generate DXF
+    dxf_key = None
+    if req.export_format == ExportFormat.dxf or (user and user.tier in ("maker", "pro", "admin")):
+        try:
+            dxf_bytes = generate_dxf(
+                processed=processed,
+                location_name=location_name,
+                show_coordinates=req.show_coordinates,
+                font_size_mm=req.font_size_mm,
+                center_latlon=(req.lat, req.lon),
+                streets_data=streets_data,
+                pin_location=pin_mm,
+            )
+            dxf_key = svg_key.replace("svg/", "dxf/").replace(".svg", ".dxf")
+            await store_file(dxf_key, dxf_bytes, content_type="application/dxf")
+        except Exception as e:
+            log.warning(f"DXF generation failed (non-fatal): {e}")
+
+    # Generate thumbnail
+    thumbnail_key = None
+    try:
+        png_bytes = generate_thumbnail(result["svg"])
+        thumbnail_key = svg_key.replace("svg/", "thumbnails/").replace(".svg", ".png")
+        await store_file(thumbnail_key, png_bytes, content_type="image/png")
+    except Exception as e:
+        log.warning(f"Thumbnail generation failed (non-fatal): {e}")
+
+    # Save to database
+    file_id = None
+    if user:
+        file_record = GeneratedFile(
+            owner_id=user.id,
+            osm_id=0,
+            osm_type="pin",
+            product_type="name_sign",
+            location_name=location_name,
+            display_text=req.label,
+            board_size=req.board_size.value,
+            board_width_mm=board_w,
+            board_height_mm=board_h,
+            style=req.style.value,
+            show_coordinates=req.show_coordinates,
+            font_size_mm=req.font_size_mm,
+            node_count=result["node_count"],
+            path_count=result["path_count"],
+            layer_count=result["layer_count"],
+            svg_storage_key=svg_key,
+            dxf_storage_key=dxf_key,
+            thumbnail_key=thumbnail_key,
+            lat=req.lat,
+            lon=req.lon,
+        )
+        db.add(file_record)
+        user.generation_count_this_month += 1
+        await db.commit()
+        await db.refresh(file_record)
+        file_id = file_record.id
+    else:
+        import hashlib
+        key = f"pin:{req.lat:.4f}:{req.lon:.4f}:{req.style.value}"
+        file_id = hashlib.sha256(key.encode()).hexdigest()[:16]
+
+    return GenerateResponse(
+        svg=result["svg"] if req.export_format == ExportFormat.svg else None,
+        dxf_available=dxf_key is not None,
+        thumbnail_available=thumbnail_key is not None,
+        file_id=file_id,
+        location_name=location_name,
+        dimensions_mm=(board_w, board_h),
+        node_count=result["node_count"],
+        path_count=result["path_count"],
+        layer_count=result["layer_count"],
+    )
 
 
 @router.post("/generate/batch", response_model=BatchGenerateResponse)

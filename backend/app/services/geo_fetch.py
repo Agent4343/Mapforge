@@ -224,6 +224,38 @@ def _merge_way_segments(segments: list[list[tuple]]) -> list[list[tuple]]:
     return merged
 
 
+async def fetch_area_around_point(
+    lat: float,
+    lon: float,
+    radius_m: float = 500.0,
+) -> Polygon:
+    """Create a circular-ish polygon area around a lat/lon point.
+
+    Used for name_sign / pin-drop generation where the user picks
+    a specific location (home, cabin, special place) rather than
+    an OSM feature.
+
+    Returns a Shapely Polygon in WGS84 (lon, lat) coordinates.
+    """
+    import math
+
+    # Approximate degrees per meter at this latitude
+    lat_rad = math.radians(lat)
+    deg_per_m_lat = 1.0 / 111320.0
+    deg_per_m_lon = 1.0 / (111320.0 * math.cos(lat_rad))
+
+    # Build a 32-sided polygon approximating a circle
+    coords = []
+    for i in range(32):
+        angle = 2 * math.pi * i / 32
+        dlat = radius_m * math.sin(angle) * deg_per_m_lat
+        dlon = radius_m * math.cos(angle) * deg_per_m_lon
+        coords.append((lon + dlon, lat + dlat))
+    coords.append(coords[0])  # close the ring
+
+    return Polygon(coords)
+
+
 def _to_polygon(geom) -> MultiPolygon | Polygon | None:
     """Ensure geometry is a Polygon or MultiPolygon."""
     if isinstance(geom, (Polygon, MultiPolygon)):
