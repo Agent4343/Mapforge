@@ -3,7 +3,7 @@ export default function CustomizePanel({ config, onChange, user }) {
     onChange({ ...config, [key]: value });
   }
 
-  const isPro = user?.tier === "pro";
+  const isPro = user?.tier === "pro" || user?.tier === "admin";
 
   return (
     <div className="customize-section">
@@ -86,6 +86,7 @@ export default function CustomizePanel({ config, onChange, user }) {
             <option value="lake">Lake</option>
             <option value="province">Province</option>
             <option value="city">City</option>
+            <option value="community">Community</option>
             <option value="park">Park</option>
             <option value="name_sign">Name Sign</option>
           </select>
@@ -141,7 +142,7 @@ export default function CustomizePanel({ config, onChange, user }) {
         </label>
       </div>
 
-      {config.productType === "city" && (
+      {(config.productType === "city" || config.productType === "community") && (
         <div className="toggle-row">
           <label>Include Streets</label>
           <label className="toggle-switch">
