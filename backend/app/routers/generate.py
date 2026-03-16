@@ -179,7 +179,11 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     # Store SVG
     board_w, board_h = processed["board_mm"]
     svg_key = f"svg/{req.osm_type}_{req.osm_id}_{req.style.value}_{int(board_w)}x{int(board_h)}.svg"
-    await store_file(svg_key, result["svg"].encode("utf-8"))
+    try:
+        await store_file(svg_key, result["svg"].encode("utf-8"))
+    except Exception as e:
+        log.error(f"Failed to store SVG: {e}")
+        raise HTTPException(status_code=502, detail="Failed to save generated file. Please try again.")
 
     # Generate DXF if requested or for persistence
     dxf_key = None
@@ -250,9 +254,14 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         )
         db.add(file_record)
         user.generation_count_this_month += 1
-        await db.commit()
-        await db.refresh(file_record)
-        file_id = file_record.id
+        try:
+            await db.commit()
+            await db.refresh(file_record)
+            file_id = file_record.id
+        except Exception as e:
+            await db.rollback()
+            log.error(f"Database error saving generated file: {e}")
+            raise HTTPException(status_code=502, detail="Failed to save to library. Please try again.")
         log.info(f"Generated file {file_id}: {location_name} ({result['node_count']} nodes)")
     else:
         # Anonymous user — return SVG without persisting
@@ -373,7 +382,11 @@ async def generate_pin(
     # Store SVG
     board_w, board_h = processed["board_mm"]
     svg_key = f"svg/pin_{req.lat:.4f}_{req.lon:.4f}_{req.style.value}_{int(board_w)}x{int(board_h)}.svg"
-    await store_file(svg_key, result["svg"].encode("utf-8"))
+    try:
+        await store_file(svg_key, result["svg"].encode("utf-8"))
+    except Exception as e:
+        log.error(f"Failed to store pin SVG: {e}")
+        raise HTTPException(status_code=502, detail="Failed to save generated file. Please try again.")
 
     # Generate DXF
     dxf_key = None
@@ -439,9 +452,14 @@ async def generate_pin(
         )
         db.add(file_record)
         user.generation_count_this_month += 1
-        await db.commit()
-        await db.refresh(file_record)
-        file_id = file_record.id
+        try:
+            await db.commit()
+            await db.refresh(file_record)
+            file_id = file_record.id
+        except Exception as e:
+            await db.rollback()
+            log.error(f"Database error saving pin file: {e}")
+            raise HTTPException(status_code=502, detail="Failed to save to library. Please try again.")
     else:
         import hashlib
         key = f"pin:{req.lat:.4f}:{req.lon:.4f}:{req.style.value}"
