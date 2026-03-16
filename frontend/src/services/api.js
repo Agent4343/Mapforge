@@ -37,7 +37,9 @@ function extractErrorMessage(detail, fallback) {
 
 async function fetchWithTimeout(url, options = {}) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const timeoutMs = options.timeout || TIMEOUT_MS;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  delete options.timeout;
 
   const headers = { ...options.headers };
   if (authToken) {
@@ -155,6 +157,7 @@ async function generateSVG(params) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
+    timeout: 120000,
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
@@ -168,6 +171,7 @@ async function generatePin(params) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
+    timeout: 120000,
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
@@ -181,6 +185,7 @@ async function batchGenerate(items) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ items }),
+    timeout: 300000,
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));

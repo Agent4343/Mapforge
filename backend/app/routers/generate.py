@@ -103,7 +103,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             include_islands=req.include_islands,
             min_island_area_m2=req.min_island_area_m2,
         )
-    except ValueError as e:
+    except (ValueError, Exception) as e:
+        log.error(f"Geometry processing error for {req.osm_type}/{req.osm_id}: {type(e).__name__}: {e}")
         raise HTTPException(status_code=422, detail=f"Geometry processing failed: {e}")
 
     # Fetch streets — enabled for city/community maps, available for all types
