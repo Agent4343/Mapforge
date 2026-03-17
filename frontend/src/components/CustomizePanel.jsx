@@ -5,6 +5,15 @@ const COLOR_THEMES = [
   { value: "midnight", label: "Midnight Blue", bg: "#0f1923", road: "#c9d6df", land: "#1b3a4b" },
   { value: "sage", label: "Sage Green", bg: "#f5f7f2", road: "#4a5e44", land: "#7d9b76" },
   { value: "minimal", label: "Minimal B&W", bg: "#ffffff", road: "#222222", land: "#e0e0e0" },
+  { value: "navy_gold", label: "Navy & Gold", bg: "#0a1628", road: "#d4a843", land: "#1a2d52" },
+  { value: "blush", label: "Blush Pink", bg: "#fef0f0", road: "#c27c7c", land: "#e8b4b4" },
+  { value: "ocean", label: "Ocean Blue", bg: "#e8f4f8", road: "#1a5276", land: "#5dade2" },
+  { value: "charcoal", label: "Charcoal", bg: "#2d2d2d", road: "#e0d5c1", land: "#4a4a4a" },
+  { value: "terracotta", label: "Terracotta", bg: "#faf0e6", road: "#8b4513", land: "#cd7f50" },
+  { value: "lavender", label: "Lavender", bg: "#f3f0ff", road: "#5b4a8a", land: "#b8a9d4" },
+  { value: "forest", label: "Forest", bg: "#0d1f0d", road: "#c4b896", land: "#1a4a1a" },
+  { value: "sunset", label: "Sunset", bg: "#fff5eb", road: "#c0392b", land: "#e67e22" },
+  { value: "arctic", label: "Arctic", bg: "#f0f8ff", road: "#2c3e50", land: "#85c1e9" },
 ];
 
 const SUBTITLE_PRESETS = [
