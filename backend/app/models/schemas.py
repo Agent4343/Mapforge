@@ -34,6 +34,12 @@ class BoardSize(str, Enum):
     xl = "xl"                # 24x32"
     max = "max"              # 32x48"
     custom = "custom"
+    # Print poster sizes
+    print_8x10 = "print_8x10"
+    print_11x14 = "print_11x14"
+    print_16x20 = "print_16x20"
+    print_18x24 = "print_18x24"
+    print_24x36 = "print_24x36"
 
 
 class UserTier(str, Enum):
@@ -49,6 +55,12 @@ BOARD_DIMENSIONS_INCHES = {
     "large": (20, 24),
     "xl": (24, 32),
     "max": (32, 48),
+    # Print poster sizes
+    "print_8x10": (8, 10),
+    "print_11x14": (11, 14),
+    "print_16x20": (16, 20),
+    "print_18x24": (18, 24),
+    "print_24x36": (24, 36),
 }
 
 
@@ -139,6 +151,7 @@ class GenerateRequest(BaseModel):
     contour_type: str = "elevation"  # elevation or depth
     num_depth_bands: int = Field(5, ge=2, le=10)
     markers: list[MapMarker] = Field(default_factory=list, max_length=10)
+    color_theme: str = "classic"  # classic, modern_dark, rose_gold, midnight, sage, minimal
 
     @field_validator("text")
     @classmethod
@@ -162,6 +175,7 @@ class PinGenerateRequest(BaseModel):
     font_size_mm: float = Field(14.0, ge=4, le=40)
     radius_m: float = Field(500.0, ge=100, le=5000)
     include_streets: bool = True
+    color_theme: str = "classic"
 
 
 class GenerateResponse(BaseModel):

@@ -26,7 +26,7 @@ from app.services.street_fetcher import fetch_streets
 from app.services.water_fetcher import fetch_water_features
 from app.services.contour_fetcher import fetch_contour_lines, generate_depth_bands
 from app.services.file_storage import store_file, retrieve_file
-from app.services.thumbnail_generator import generate_thumbnail, generate_print_image
+from app.services.thumbnail_generator import generate_thumbnail, generate_print_image, COLOR_THEMES
 
 router = APIRouter(prefix="/api/v1", tags=["generate"])
 limiter = Limiter(key_func=get_remote_address)
@@ -215,7 +215,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     # Generate high-res print PNG with proper land/water colors for wall art
     print_png_key = None
     try:
-        print_bytes = generate_print_image(result["svg"])
+        print_bytes = generate_print_image(result["svg"], color_theme=req.color_theme)
         print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
         await store_file(print_png_key, print_bytes, content_type="image/png")
     except Exception as e:
@@ -419,7 +419,7 @@ async def generate_pin(
     # Generate high-res print PNG
     print_png_key = None
     try:
-        print_bytes = generate_print_image(result["svg"])
+        print_bytes = generate_print_image(result["svg"], color_theme=req.color_theme)
         print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
         await store_file(print_png_key, print_bytes, content_type="image/png")
     except Exception as e:
@@ -616,6 +616,18 @@ async def download_thumbnail(
             "Content-Disposition": f'attachment; filename="{filename}"',
         },
     )
+
+
+@router.get("/themes")
+async def list_themes():
+    """List available color themes for print maps."""
+    return {
+        key: {
+            "label": theme["label"],
+            "background": theme["background"],
+        }
+        for key, theme in COLOR_THEMES.items()
+    }
 
 
 def _extract_province(location_name: str) -> str | None:

@@ -11,6 +11,7 @@ export default function ExportPanel({
   canGenerate,
   generating,
   user,
+  outputMode,
 }) {
   const [showListForm, setShowListForm] = useState(false);
   const [listTitle, setListTitle] = useState("");
@@ -21,6 +22,8 @@ export default function ExportPanel({
   const [listSuccess, setListSuccess] = useState(false);
   const [listing, setListing] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
+
+  const isPrint = outputMode === "print";
 
   async function handleList() {
     if (!result) return;
@@ -76,7 +79,7 @@ export default function ExportPanel({
 
   return (
     <div className="export-section">
-      <h2>Export</h2>
+      <h2>{isPrint ? "Generate & Download" : "Export"}</h2>
 
       <button
         className="btn btn-primary btn-full generate-btn"
@@ -87,6 +90,8 @@ export default function ExportPanel({
           <span className="generate-btn-content">
             <span className="spinner-inline" /> Generating...
           </span>
+        ) : isPrint ? (
+          "Generate Map"
         ) : (
           "Generate SVG"
         )}
@@ -121,23 +126,43 @@ export default function ExportPanel({
           {/* Download Buttons */}
           <div className="export-download-section">
             <div className="export-buttons">
-              <button className="btn btn-secondary" onClick={onDownload}>
-                SVG
-              </button>
-              {result.dxf_available && (
-                <button className="btn btn-secondary" onClick={onDownloadDXF}>
-                  DXF
-                </button>
-              )}
-              {result.thumbnail_available && (
-                <button className="btn btn-secondary" onClick={onDownloadThumbnail}>
-                  Mockup PNG
-                </button>
-              )}
-              {result.print_png_available && (
-                <button className="btn btn-secondary" onClick={onDownloadPrintPNG}>
-                  Print 300DPI
-                </button>
+              {isPrint ? (
+                <>
+                  {result.print_png_available && (
+                    <button className="btn btn-primary" onClick={onDownloadPrintPNG}>
+                      Download Print PNG (300 DPI)
+                    </button>
+                  )}
+                  {result.thumbnail_available && (
+                    <button className="btn btn-secondary" onClick={onDownloadThumbnail}>
+                      Etsy Mockup PNG
+                    </button>
+                  )}
+                  <button className="btn btn-secondary" onClick={onDownload}>
+                    SVG Source
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button className="btn btn-secondary" onClick={onDownload}>
+                    SVG
+                  </button>
+                  {result.dxf_available && (
+                    <button className="btn btn-secondary" onClick={onDownloadDXF}>
+                      DXF
+                    </button>
+                  )}
+                  {result.thumbnail_available && (
+                    <button className="btn btn-secondary" onClick={onDownloadThumbnail}>
+                      Mockup PNG
+                    </button>
+                  )}
+                  {result.print_png_available && (
+                    <button className="btn btn-secondary" onClick={onDownloadPrintPNG}>
+                      Print 300DPI
+                    </button>
+                  )}
+                </>
               )}
             </div>
           </div>

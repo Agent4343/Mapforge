@@ -24,16 +24,18 @@ const DEFAULT_CONFIG = {
   boardSize: "medium",
   customWidth: 16,
   customHeight: 20,
-  style: "outline",
+  style: "filled",
   exportFormat: "svg",
-  productType: "lake",
+  productType: "city",
   fontSize: 14,
   showCoordinates: true,
   includeIslands: true,
-  includeStreets: false,
+  includeStreets: true,
   includeContours: false,
   contourType: "depth",
   numDepthBands: 5,
+  outputMode: "print",
+  colorTheme: "classic",
 };
 
 function loadSavedConfig() {
@@ -203,11 +205,12 @@ export default function App() {
           lon: pinCoords.lon,
           label: config.text || "My Place",
           board_size: config.boardSize,
-          style: config.style,
-          export_format: config.exportFormat,
+          style: config.outputMode === "print" ? "filled" : config.style,
+          export_format: config.outputMode === "print" ? "svg" : config.exportFormat,
           show_coordinates: config.showCoordinates,
           font_size_mm: config.fontSize,
           include_streets: config.includeStreets,
+          color_theme: config.colorTheme || "classic",
         };
         if (config.boardSize === "custom") {
           pinParams.board_width_inches = config.customWidth || 16;
@@ -230,8 +233,8 @@ export default function App() {
           osm_type: selectedResult.osm_type,
           product_type: config.productType,
           board_size: config.boardSize,
-          style: config.style,
-          export_format: config.exportFormat,
+          style: config.outputMode === "print" ? "filled" : config.style,
+          export_format: config.outputMode === "print" ? "svg" : config.exportFormat,
           text: config.text,
           show_coordinates: config.showCoordinates,
           font_size_mm: config.fontSize,
@@ -243,6 +246,7 @@ export default function App() {
           contour_type: config.contourType,
           num_depth_bands: config.numDepthBands,
           markers: validMarkers,
+          color_theme: config.colorTheme || "classic",
         };
         if (config.boardSize === "custom") {
           params.board_width_inches = config.customWidth || 16;
@@ -348,8 +352,12 @@ export default function App() {
       <header className="header">
         <div className="header-brand">
           <div>
-            <h1>Map<span>Forge</span> CNC</h1>
-            <div className="subtitle">Geographic SVG Generator for CNC Routing</div>
+            <h1>Map<span>Forge</span></h1>
+            <div className="subtitle">
+              {config.outputMode === "print"
+                ? "Custom Street Map Prints for Etsy & Wall Art"
+                : "Geographic SVG Generator for CNC Routing"}
+            </div>
           </div>
         </div>
         <nav className="header-nav">
@@ -511,10 +519,17 @@ export default function App() {
             canGenerate={!!selectedResult || (config.productType === "name_sign" && !!pinCoords)}
             generating={generating}
             user={user}
+            outputMode={config.outputMode}
           />
         </div>
         <div className="panel-right">
-          <SVGPreview svgContent={svgContent} loading={generating} error={error} />
+          <SVGPreview
+            svgContent={svgContent}
+            loading={generating}
+            error={error}
+            outputMode={config.outputMode}
+            colorTheme={config.colorTheme}
+          />
         </div>
       </div>
 
