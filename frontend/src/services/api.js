@@ -364,6 +364,17 @@ async function aiDescribe(locationName, style, country = "", isCity = false, pro
   return resp.json();
 }
 
+async function getAdminStats() {
+  const resp = await fetchWithTimeout(`${API_BASE}/admin/stats`, {
+    headers: { Authorization: `Bearer ${authToken}` },
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Failed to load admin stats"));
+  }
+  return resp.json();
+}
+
 export {
   setToken, getToken, register, login, logout, getProfile, requestPasswordReset, resetPassword, subscribe,
   searchLocations, generateSVG, generatePin, batchGenerate,
@@ -372,5 +383,5 @@ export {
   browseMarketplace, createListing, purchaseListing,
   getMyPurchases, updateListing, removeListing,
   getSellerDashboard, submitReview, getReviews,
-  aiDescribe,
+  aiDescribe, getAdminStats,
 };

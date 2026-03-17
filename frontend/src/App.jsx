@@ -88,7 +88,7 @@ export default function App() {
   // Load user profile if token exists
   useEffect(() => {
     if (getToken()) {
-      getProfile().then((p) => { if (p) setUser(p); });
+      getProfile().then((p) => { if (p) setUser(p); }).catch(() => {});
     }
   }, []);
 

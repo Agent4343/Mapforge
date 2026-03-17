@@ -26,7 +26,9 @@ export default function PurchasesView({ onBack }) {
       const a = document.createElement("a");
       a.href = url;
       a.download = `mapforge-${fileId}.${format}`;
+      document.body.appendChild(a);
       a.click();
+      a.remove();
       URL.revokeObjectURL(url);
     } catch {
       setError("Download failed. Please try again.");

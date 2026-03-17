@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { getAdminStats } from "../services/api.js";
 
 export default function AdminDashboard({ onBack }) {
   const [stats, setStats] = useState(null);
@@ -8,12 +9,7 @@ export default function AdminDashboard({ onBack }) {
   useEffect(() => {
     async function loadStats() {
       try {
-        const token = localStorage.getItem("mapforge_token");
-        const resp = await fetch("/api/v1/admin/stats", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!resp.ok) throw new Error("Failed to load admin stats");
-        setStats(await resp.json());
+        setStats(await getAdminStats());
       } catch (err) {
         setError(err.message);
       } finally {

@@ -188,7 +188,7 @@ export default function MarketplaceView({ user, onBack }) {
                     </button>
                   )}
                   {purchasedIds.has(l.file_id) ? (
-                    <span style={{ fontSize: "11px", color: "var(--green)", fontWeight: 600, padding: "6px 10px" }}>Owned</span>
+                    <span style={{ fontSize: "11px", color: "var(--success)", fontWeight: 600, padding: "6px 10px" }}>Owned</span>
                   ) : (
                     <button
                       className="btn btn-primary"

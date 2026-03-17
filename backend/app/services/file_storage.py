@@ -1,6 +1,7 @@
 """File storage service — local filesystem or S3-compatible."""
 
 import os
+import re
 from pathlib import Path
 
 import httpx
@@ -8,9 +9,20 @@ import httpx
 from app.config import settings
 from app.logging_config import log
 
+# Allowed characters in storage keys — prevents path traversal
+_SAFE_KEY_RE = re.compile(r"^[a-zA-Z0-9_/.\-]+$")
+
+
+def _validate_key(key: str) -> str:
+    """Validate storage key to prevent path traversal attacks."""
+    if not key or ".." in key or key.startswith("/") or not _SAFE_KEY_RE.match(key):
+        raise ValueError(f"Invalid storage key: {key!r}")
+    return key
+
 
 async def store_file(key: str, content: bytes, content_type: str = "image/svg+xml") -> str:
     """Store a file and return its storage key."""
+    _validate_key(key)
     if settings.STORAGE_BACKEND == "s3":
         return await _store_s3(key, content, content_type)
     return _store_local(key, content)
@@ -18,6 +30,7 @@ async def store_file(key: str, content: bytes, content_type: str = "image/svg+xm
 
 async def retrieve_file(key: str) -> bytes | None:
     """Retrieve file content by key."""
+    _validate_key(key)
     if settings.STORAGE_BACKEND == "s3":
         return await _retrieve_s3(key)
     return _retrieve_local(key)
@@ -25,6 +38,7 @@ async def retrieve_file(key: str) -> bytes | None:
 
 async def delete_file(key: str) -> bool:
     """Delete a file by key."""
+    _validate_key(key)
     if settings.STORAGE_BACKEND == "s3":
         return await _delete_s3(key)
     return _delete_local(key)

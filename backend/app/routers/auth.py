@@ -2,7 +2,9 @@
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +25,7 @@ from app.services.payments import (
 from app.logging_config import log
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
+limiter = Limiter(key_func=get_remote_address)
 
 
 @router.post("/register", response_model=AuthResponse, status_code=201)
@@ -107,7 +110,9 @@ async def get_profile(user: User = Depends(get_current_user)):
 
 
 @router.post("/request-reset")
+@limiter.limit("5/minute")
 async def request_password_reset(
+    request: Request,
     email: str,
     db: AsyncSession = Depends(get_db),
 ):

@@ -184,7 +184,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         await store_file(svg_key, result["svg"].encode("utf-8"))
     except Exception as e:
         log.error(f"Failed to store SVG: {e}")
-        raise HTTPException(status_code=502, detail="Failed to save generated file. Please try again.")
+        raise HTTPException(status_code=500, detail="Failed to save generated file. Please try again.")
 
     # Generate DXF if requested or for persistence
     dxf_key = None
@@ -262,7 +262,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     except Exception as e:
         await db.rollback()
         log.error(f"Database error saving generated file: {e}")
-        raise HTTPException(status_code=502, detail="Failed to save to library. Please try again.")
+        raise HTTPException(status_code=500, detail="Failed to save to library. Please try again.")
     log.info(f"Generated file {file_id}: {location_name} ({result['node_count']} nodes)")
 
     return GenerateResponse(
@@ -381,7 +381,7 @@ async def generate_pin(
         await store_file(svg_key, result["svg"].encode("utf-8"))
     except Exception as e:
         log.error(f"Failed to store pin SVG: {e}")
-        raise HTTPException(status_code=502, detail="Failed to save generated file. Please try again.")
+        raise HTTPException(status_code=500, detail="Failed to save generated file. Please try again.")
 
     # Generate DXF
     dxf_key = None
@@ -454,7 +454,7 @@ async def generate_pin(
     except Exception as e:
         await db.rollback()
         log.error(f"Database error saving pin file: {e}")
-        raise HTTPException(status_code=502, detail="Failed to save to library. Please try again.")
+        raise HTTPException(status_code=500, detail="Failed to save to library. Please try again.")
 
     return GenerateResponse(
         svg=result["svg"] if req.export_format == ExportFormat.svg else None,
@@ -640,8 +640,10 @@ def _extract_province(location_name: str) -> str | None:
         "South Dakota", "Tennessee", "Texas", "Utah", "Vermont",
         "Virginia", "Washington", "West Virginia", "Wisconsin", "Wyoming",
     }
+    regions_lower = {r.lower(): r for r in regions}
     parts = [p.strip() for p in location_name.split(",")]
     for part in parts:
-        if part in regions:
-            return part
+        match = regions_lower.get(part.lower())
+        if match:
+            return match
     return None
