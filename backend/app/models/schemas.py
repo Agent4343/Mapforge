@@ -131,6 +131,20 @@ class MapMarker(BaseModel):
     icon: MarkerIcon = MarkerIcon.pin
 
 
+class FontFamily(str, Enum):
+    sans = "sans"         # Arial/Helvetica — clean modern
+    serif = "serif"       # Georgia/Times — classic elegant
+    script = "script"     # Brush Script — romantic/wedding
+    mono = "mono"         # Courier — technical/minimal
+
+
+class BorderStyle(str, Enum):
+    none = "none"
+    thin = "thin"         # Simple thin line
+    double = "double"     # Double line frame
+    ornate = "ornate"     # Decorative corner frame
+
+
 class GenerateRequest(BaseModel):
     osm_id: int
     osm_type: str = "relation"
@@ -141,8 +155,11 @@ class GenerateRequest(BaseModel):
     style: CutStyle = CutStyle.outline
     export_format: ExportFormat = ExportFormat.svg
     text: str = ""
+    subtitle: str = ""  # "Where We Met" / "Est. 2024" / custom tagline
     show_coordinates: bool = True
     font_size_mm: float = Field(14.0, ge=4, le=40)
+    font_family: FontFamily = FontFamily.sans
+    border_style: BorderStyle = BorderStyle.none
     simplification: str = "auto"
     include_islands: bool = True
     min_island_area_m2: float = Field(5000.0, ge=0)
@@ -152,6 +169,8 @@ class GenerateRequest(BaseModel):
     num_depth_bands: int = Field(5, ge=2, le=10)
     markers: list[MapMarker] = Field(default_factory=list, max_length=10)
     color_theme: str = "classic"  # classic, modern_dark, rose_gold, midnight, sage, minimal
+    heart_lat: Optional[float] = Field(None, ge=-90, le=90)
+    heart_lon: Optional[float] = Field(None, ge=-180, le=180)
 
     @field_validator("text")
     @classmethod
@@ -166,6 +185,7 @@ class PinGenerateRequest(BaseModel):
     lat: float = Field(..., ge=-90, le=90)
     lon: float = Field(..., ge=-180, le=180)
     label: str = Field("My Place", min_length=1, max_length=200)
+    subtitle: str = ""
     board_size: BoardSize = BoardSize.medium
     board_width_inches: Optional[float] = Field(None, gt=1, le=60)
     board_height_inches: Optional[float] = Field(None, gt=1, le=60)
@@ -173,6 +193,8 @@ class PinGenerateRequest(BaseModel):
     export_format: ExportFormat = ExportFormat.svg
     show_coordinates: bool = True
     font_size_mm: float = Field(14.0, ge=4, le=40)
+    font_family: FontFamily = FontFamily.sans
+    border_style: BorderStyle = BorderStyle.none
     radius_m: float = Field(500.0, ge=100, le=5000)
     include_streets: bool = True
     color_theme: str = "classic"

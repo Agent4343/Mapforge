@@ -21,13 +21,16 @@ import {
 
 const DEFAULT_CONFIG = {
   text: "",
-  boardSize: "medium",
+  subtitle: "",
+  boardSize: "print_16x20",
   customWidth: 16,
   customHeight: 20,
   style: "filled",
   exportFormat: "svg",
   productType: "city",
   fontSize: 14,
+  fontFamily: "sans",
+  borderStyle: "none",
   showCoordinates: true,
   includeIslands: true,
   includeStreets: true,
@@ -36,6 +39,8 @@ const DEFAULT_CONFIG = {
   numDepthBands: 5,
   outputMode: "print",
   colorTheme: "classic",
+  heartLat: null,
+  heartLon: null,
 };
 
 function loadSavedConfig() {
@@ -204,11 +209,14 @@ export default function App() {
           lat: pinCoords.lat,
           lon: pinCoords.lon,
           label: config.text || "My Place",
+          subtitle: config.subtitle || "",
           board_size: config.boardSize,
           style: config.outputMode === "print" ? "filled" : config.style,
           export_format: config.outputMode === "print" ? "svg" : config.exportFormat,
           show_coordinates: config.showCoordinates,
           font_size_mm: config.fontSize,
+          font_family: config.fontFamily || "sans",
+          border_style: config.borderStyle || "none",
           include_streets: config.includeStreets,
           color_theme: config.colorTheme || "classic",
         };
@@ -236,8 +244,11 @@ export default function App() {
           style: config.outputMode === "print" ? "filled" : config.style,
           export_format: config.outputMode === "print" ? "svg" : config.exportFormat,
           text: config.text,
+          subtitle: config.subtitle || "",
           show_coordinates: config.showCoordinates,
           font_size_mm: config.fontSize,
+          font_family: config.fontFamily || "sans",
+          border_style: config.borderStyle || "none",
           simplification: "auto",
           include_islands: config.includeIslands,
           min_island_area_m2: 5000,
@@ -247,6 +258,8 @@ export default function App() {
           num_depth_bands: config.numDepthBands,
           markers: validMarkers,
           color_theme: config.colorTheme || "classic",
+          heart_lat: config.heartLat || undefined,
+          heart_lon: config.heartLon || undefined,
         };
         if (config.boardSize === "custom") {
           params.board_width_inches = config.customWidth || 16;

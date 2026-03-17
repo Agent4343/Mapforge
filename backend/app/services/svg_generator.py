@@ -16,6 +16,14 @@ from app.models.schemas import CutStyle
 from app.services.geometry_processor import transform_wgs84_to_board
 
 
+FONT_FAMILIES = {
+    "sans": "Arial, Helvetica, sans-serif",
+    "serif": "Georgia, 'Times New Roman', Times, serif",
+    "script": "'Brush Script MT', 'Segoe Script', cursive",
+    "mono": "'Courier New', Courier, monospace",
+}
+
+
 def generate_svg(
     processed: dict,
     location_name: str,
@@ -28,6 +36,10 @@ def generate_svg(
     water_data: dict | None = None,
     pin_location: tuple[float, float] | None = None,
     markers: list[dict] | None = None,
+    subtitle: str = "",
+    font_family: str = "sans",
+    border_style: str = "none",
+    heart_location: tuple[float, float] | None = None,
 ) -> dict:
     """Generate a CNC-ready SVG string from processed geometry.
 
@@ -109,6 +121,13 @@ def generate_svg(
         lines.append("")
         layer_count += 1
 
+    # Layer: heart_marker (special location — "where we met", etc.)
+    if heart_location:
+        _render_heart_marker(lines, heart_location, board_w, board_h, font_size_mm)
+        lines.append("")
+        layer_count += 1
+        path_count += 1
+
     # Layer: custom_markers (Home, Cottage, etc. placed on province/state maps)
     if markers:
         _render_custom_markers(lines, markers, board_w, board_h, font_size_mm)
@@ -116,22 +135,48 @@ def generate_svg(
         layer_count += 1
         path_count += len(markers)
 
+    # Resolve font family
+    ff = FONT_FAMILIES.get(font_family, FONT_FAMILIES["sans"])
+
     # Layer: text_primary
-    text_y = board_h - font_size_mm * 2.5
+    # Calculate text area — shift up if subtitle present
+    extra_lines = 0
+    if subtitle:
+        extra_lines += 1
+    if show_coordinates and latlon:
+        extra_lines += 1
+    text_y = board_h - font_size_mm * (2.5 + extra_lines * 0.6)
+
     lines.append("  <!-- Layer: text_primary -->")
     lines.append('  <!-- Toolpath: V-carve, 60 deg V-bit, flat depth 0.05" -->')
     lines.append('  <g id="text_primary">')
     lines.append(
         f'    <text x="{board_w / 2}" y="{round(text_y, 2)}"'
-        f' text-anchor="middle" font-family="Arial, Helvetica, sans-serif"'
+        f' text-anchor="middle" font-family="{ff}"'
         f' font-size="{font_size_mm}" font-weight="bold"'
         f' fill="#1a1a1a">{_escape_xml(location_name.upper())}</text>'
     )
     lines.append("  </g>")
 
+    # Layer: text_subtitle (custom tagline — "Where We Met", "Est. 2020", etc.)
+    next_y = text_y + font_size_mm * 1.1
+    if subtitle:
+        lines.append("")
+        lines.append("  <!-- Layer: text_subtitle -->")
+        lines.append('  <g id="text_subtitle">')
+        sub_size = round(font_size_mm * 0.5, 2)
+        lines.append(
+            f'    <text x="{board_w / 2}" y="{round(next_y, 2)}"'
+            f' text-anchor="middle" font-family="{ff}"'
+            f' font-size="{sub_size}" font-style="italic"'
+            f' fill="#666666">{_escape_xml(subtitle)}</text>'
+        )
+        lines.append("  </g>")
+        next_y += font_size_mm * 0.7
+        layer_count += 1
+
     # Layer: text_coordinates
     if show_coordinates and latlon:
-        coord_y = text_y + font_size_mm * 1.2
         lat, lon = latlon
         lat_dir = "N" if lat >= 0 else "S"
         lon_dir = "W" if lon < 0 else "E"
@@ -142,12 +187,19 @@ def generate_svg(
         lines.append('  <!-- Toolpath: V-carve, 60 deg V-bit, flat depth 0.03" -->')
         lines.append('  <g id="text_coordinates">')
         lines.append(
-            f'    <text x="{board_w / 2}" y="{round(coord_y, 2)}"'
-            f' text-anchor="middle" font-family="Arial, Helvetica, sans-serif"'
+            f'    <text x="{board_w / 2}" y="{round(next_y, 2)}"'
+            f' text-anchor="middle" font-family="{ff}"'
             f' font-size="{round(font_size_mm * 0.45, 2)}" fill="#666666">'
             f"{coord_text}</text>"
         )
         lines.append("  </g>")
+
+    # Layer: border_frame
+    if border_style != "none":
+        _render_border(lines, board_w, board_h, border_style)
+        lines.append("")
+        layer_count += 1
+        path_count += 1 if border_style == "thin" else 2
 
     lines.append("")
     lines.append("</svg>")
@@ -638,6 +690,109 @@ def _render_diamond_icon(lines: list[str], cx: float, cy: float, r: float):
         f' fill="#9b59b6" stroke="#1a1a1a" stroke-width="0.35"'
         f' stroke-linejoin="round"/>'
     )
+
+
+def _render_heart_marker(
+    lines: list[str],
+    heart_mm: tuple[float, float],
+    board_w: float,
+    board_h: float,
+    font_size_mm: float,
+):
+    """Render a heart icon at a specific board location (for romantic/gift maps)."""
+    hx, hy = heart_mm
+    # Skip if outside board
+    if hx < 0 or hx > board_w or hy < 0 or hy > board_h:
+        return
+
+    r = font_size_mm * 0.4  # heart size
+    lines.append("  <!-- Layer: heart_marker -->")
+    lines.append('  <g id="heart_marker">')
+
+    # Heart shape (same as heart icon but larger and filled red)
+    s = r * 1.5
+    pts = [
+        (hx, hy + s * 0.9),
+        (hx - s * 1.0, hy - s * 0.1),
+        (hx - s * 0.8, hy - s * 0.7),
+        (hx - s * 0.3, hy - s * 0.9),
+        (hx, hy - s * 0.5),
+        (hx + s * 0.3, hy - s * 0.9),
+        (hx + s * 0.8, hy - s * 0.7),
+        (hx + s * 1.0, hy - s * 0.1),
+    ]
+    d = f"M{round(pts[0][0], 2)},{round(pts[0][1], 2)}"
+    for px, py in pts[1:]:
+        d += f" L{round(px, 2)},{round(py, 2)}"
+    d += " Z"
+    lines.append(
+        f'    <path d="{d}"'
+        f' fill="#e74c3c" stroke="#c0392b" stroke-width="0.5"'
+        f' stroke-linejoin="round"/>'
+    )
+
+    lines.append("  </g>")
+
+
+def _render_border(lines: list[str], board_w: float, board_h: float, style: str):
+    """Render a decorative border frame around the map."""
+    lines.append("  <!-- Layer: border_frame -->")
+    lines.append('  <g id="border_frame">')
+
+    if style == "thin":
+        margin = 3.0
+        lines.append(
+            f'    <rect x="{margin}" y="{margin}"'
+            f' width="{round(board_w - margin * 2, 2)}"'
+            f' height="{round(board_h - margin * 2, 2)}"'
+            f' fill="none" stroke="#1a1a1a" stroke-width="0.4"/>'
+        )
+
+    elif style == "double":
+        m1 = 2.5
+        m2 = 4.5
+        lines.append(
+            f'    <rect x="{m1}" y="{m1}"'
+            f' width="{round(board_w - m1 * 2, 2)}"'
+            f' height="{round(board_h - m1 * 2, 2)}"'
+            f' fill="none" stroke="#1a1a1a" stroke-width="0.3"/>'
+        )
+        lines.append(
+            f'    <rect x="{m2}" y="{m2}"'
+            f' width="{round(board_w - m2 * 2, 2)}"'
+            f' height="{round(board_h - m2 * 2, 2)}"'
+            f' fill="none" stroke="#1a1a1a" stroke-width="0.6"/>'
+        )
+
+    elif style == "ornate":
+        m = 4.0
+        c = 8.0  # corner ornament size
+        # Main frame
+        lines.append(
+            f'    <rect x="{m}" y="{m}"'
+            f' width="{round(board_w - m * 2, 2)}"'
+            f' height="{round(board_h - m * 2, 2)}"'
+            f' fill="none" stroke="#1a1a1a" stroke-width="0.5"/>'
+        )
+        # Corner ornaments (L-shaped brackets at each corner)
+        for cx, cy, dx, dy in [
+            (m, m, 1, 1),
+            (board_w - m, m, -1, 1),
+            (m, board_h - m, 1, -1),
+            (board_w - m, board_h - m, -1, -1),
+        ]:
+            d = (
+                f"M{round(cx + dx * c, 2)},{round(cy, 2)} "
+                f"L{round(cx, 2)},{round(cy, 2)} "
+                f"L{round(cx, 2)},{round(cy + dy * c, 2)}"
+            )
+            lines.append(
+                f'    <path d="{d}"'
+                f' fill="none" stroke="#1a1a1a" stroke-width="0.8"'
+                f' stroke-linecap="round"/>'
+            )
+
+    lines.append("  </g>")
 
 
 def _coords_to_path(coords: list[tuple]) -> str:

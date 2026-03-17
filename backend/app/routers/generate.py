@@ -163,6 +163,15 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                         "icon": m.icon.value,
                     })
 
+    # Transform heart location from lat/lon to board mm
+    heart_mm = None
+    if req.heart_lat is not None and req.heart_lon is not None:
+        transform = processed.get("transform")
+        if transform:
+            heart_coords = transform_wgs84_to_board([(req.heart_lon, req.heart_lat)], transform)
+            if heart_coords:
+                heart_mm = heart_coords[0]
+
     # Generate SVG
     location_name = req.text or f"Location {req.osm_id}"
     result = generate_svg(
@@ -175,6 +184,10 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         contour_data=contour_data,
         water_data=water_data,
         markers=board_markers,
+        subtitle=req.subtitle,
+        font_family=req.font_family.value,
+        border_style=req.border_style.value,
+        heart_location=heart_mm,
     )
 
     # Store SVG
@@ -372,6 +385,9 @@ async def generate_pin(
         streets_data=streets_data,
         water_data=water_data,
         pin_location=pin_mm,
+        subtitle=req.subtitle,
+        font_family=req.font_family.value,
+        border_style=req.border_style.value,
     )
 
     # Store SVG

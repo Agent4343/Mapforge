@@ -1987,6 +1987,39 @@ body {
 }
 
 /* Print Preview Badge */
+/* Subtitle Preset Chips */
+.preset-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.preset-chip {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.12s ease;
+  white-space: nowrap;
+}
+
+.preset-chip:hover {
+  border-color: var(--text-secondary);
+  color: var(--text-primary);
+}
+
+.preset-chip.active {
+  border-color: var(--crimson);
+  background: rgba(192, 57, 43, 0.15);
+  color: var(--crimson);
+}
+
+/* Print Preview Badge */
 .preview-toolbar-badge {
   font-size: 10px;
   font-family: var(--font-mono);

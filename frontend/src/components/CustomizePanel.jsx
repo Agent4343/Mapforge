@@ -7,6 +7,15 @@ const COLOR_THEMES = [
   { value: "minimal", label: "Minimal B&W", bg: "#ffffff", road: "#222222", land: "#e0e0e0" },
 ];
 
+const SUBTITLE_PRESETS = [
+  "Where We Met",
+  "Where It All Began",
+  "Our First Home",
+  "Home Is Where The Heart Is",
+  "Est. 2024",
+  "Forever & Always",
+];
+
 export default function CustomizePanel({ config, onChange, user }) {
   function update(key, value) {
     onChange({ ...config, [key]: value });
@@ -52,6 +61,31 @@ export default function CustomizePanel({ config, onChange, user }) {
           <span className="input-count">{config.text.length}/200</span>
         </div>
       </div>
+
+      {/* Subtitle / Tagline — Print mode */}
+      {isPrint && (
+        <div className="control-group">
+          <label>Subtitle / Tagline</label>
+          <input
+            type="text"
+            value={config.subtitle || ""}
+            onChange={(e) => update("subtitle", e.target.value)}
+            placeholder="Where We Met, Est. 2024, etc."
+            maxLength={100}
+          />
+          <div className="preset-chips">
+            {SUBTITLE_PRESETS.map((preset) => (
+              <button
+                key={preset}
+                className={`preset-chip${config.subtitle === preset ? " active" : ""}`}
+                onClick={() => update("subtitle", config.subtitle === preset ? "" : preset)}
+              >
+                {preset}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Size Settings Group */}
       <div className="customize-group">
@@ -148,6 +182,71 @@ export default function CustomizePanel({ config, onChange, user }) {
                 <span className="theme-swatch-label">{theme.label}</span>
               </button>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Typography & Frame — Print mode */}
+      {isPrint && (
+        <div className="customize-group">
+          <div className="customize-group-label">Typography & Frame</div>
+          <div className="control-row">
+            <div className="control-group">
+              <label>Font Style</label>
+              <select
+                value={config.fontFamily || "sans"}
+                onChange={(e) => update("fontFamily", e.target.value)}
+              >
+                <option value="sans">Clean Sans</option>
+                <option value="serif">Classic Serif</option>
+                <option value="script">Script / Romantic</option>
+                <option value="mono">Technical Mono</option>
+              </select>
+            </div>
+            <div className="control-group">
+              <label>Border Frame</label>
+              <select
+                value={config.borderStyle || "none"}
+                onChange={(e) => update("borderStyle", e.target.value)}
+              >
+                <option value="none">None</option>
+                <option value="thin">Thin Line</option>
+                <option value="double">Double Frame</option>
+                <option value="ornate">Ornate Corners</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Heart Marker — Print mode, for gift/romantic maps */}
+      {isPrint && (config.productType === "city" || config.productType === "community") && (
+        <div className="customize-group">
+          <div className="customize-group-label">Heart Marker</div>
+          <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: "0 0 8px" }}>
+            Drop a heart on a special location — perfect for &quot;where we met&quot; gifts.
+          </p>
+          <div className="control-row">
+            <div className="control-group">
+              <label>Latitude</label>
+              <input
+                type="number"
+                step="0.0001"
+                placeholder="45.4215"
+                value={config.heartLat ?? ""}
+                onChange={(e) => update("heartLat", e.target.value ? parseFloat(e.target.value) : null)}
+              />
+            </div>
+            <div className="control-group">
+              <label>Longitude</label>
+              <input
+                type="number"
+                step="0.0001"
+                placeholder="-75.6972"
+                value={config.heartLon ?? ""}
+                onChange={(e) => update("heartLon", e.target.value ? parseFloat(e.target.value) : null)}
+              />
+            </div>
           </div>
         </div>
       )}
