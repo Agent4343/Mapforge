@@ -45,7 +45,7 @@ class GeneratedFile(Base):
     __tablename__ = "generated_files"
 
     id = Column(String(16), primary_key=True, default=_uuid)
-    owner_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    owner_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
     osm_id = Column(Integer, nullable=False, index=True)
     osm_type = Column(String(20), nullable=False)
     product_type = Column(String(20), nullable=False)

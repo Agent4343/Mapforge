@@ -275,13 +275,19 @@ export default function App() {
 
   const handleDownload = useCallback(async () => {
     if (!result) return;
+    // If SVG is in memory, download directly without server round-trip
+    if (svgContent) {
+      const blob = new Blob([svgContent], { type: "image/svg+xml" });
+      _triggerDownload(blob, config.text, "svg");
+      return;
+    }
     try {
       const blob = await downloadSVG(result.file_id);
       _triggerDownload(blob, config.text, "svg");
     } catch (err) {
       setError(err.message);
     }
-  }, [result, config.text]);
+  }, [result, config.text, svgContent]);
 
   const handleDownloadDXF = useCallback(async () => {
     if (!result) return;
