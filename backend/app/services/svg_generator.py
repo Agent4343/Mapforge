@@ -40,6 +40,7 @@ def generate_svg(
     font_family: str = "sans",
     border_style: str = "none",
     heart_location: tuple[float, float] | None = None,
+    output_mode: str = "cnc",
 ) -> dict:
     """Generate a CNC-ready SVG string from processed geometry.
 
@@ -112,7 +113,7 @@ def generate_svg(
 
     # Layer: detail_lines (streets)
     if streets_data:
-        _render_streets(lines, streets_data, processed)
+        _render_streets(lines, streets_data, processed, output_mode=output_mode)
         lines.append("")
 
     # Layer: pin_marker (for name_sign / location pin)
@@ -334,9 +335,13 @@ def _render_contour_bands(lines: list[str], contour_data: list[dict], processed:
     lines.append("  </g>")
 
 
-def _render_streets(lines: list[str], streets_data: dict, processed: dict):
+def _render_streets(lines: list[str], streets_data: dict, processed: dict, output_mode: str = "cnc"):
     """Render city street network with lines and name labels."""
     transform = processed.get("transform")
+    is_print = output_mode == "print"
+
+    # Print mode: scale up road widths for visible poster output
+    width_scale = 3.0 if is_print else 1.0
 
     lines.append("  <!-- Layer: detail_lines (streets) -->")
     lines.append('  <!-- Toolpath: Engrave, 1/8" ball nose, 0.03"-0.05" -->')
@@ -346,28 +351,32 @@ def _render_streets(lines: list[str], streets_data: dict, processed: dict):
     label_candidates = []
 
     # Major roads first (wider strokes)
+    major_color = "#222222" if is_print else "#333333"
     for coords, road_class, width, name in streets_data.get("major_roads", []):
         if len(coords) < 2:
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
+        sw = round(width * width_scale, 2)
         lines.append(
             f'    <path d="{path_d}"'
-            f' fill="none" stroke="#333333" stroke-width="{width}"'
+            f' fill="none" stroke="{major_color}" stroke-width="{sw}"'
             f' stroke-linecap="round" stroke-linejoin="round"/>'
         )
         if name:
             label_candidates.append((board_coords, name, "major"))
 
     # Minor roads (thinner)
+    minor_color = "#444444" if is_print else "#555555"
     for coords, road_class, width, name in streets_data.get("minor_roads", []):
         if len(coords) < 2:
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
+        sw = round(width * width_scale, 2)
         lines.append(
             f'    <path d="{path_d}"'
-            f' fill="none" stroke="#555555" stroke-width="{width}"'
+            f' fill="none" stroke="{minor_color}" stroke-width="{sw}"'
             f' stroke-linecap="round" stroke-linejoin="round"/>'
         )
         if name:
@@ -377,7 +386,7 @@ def _render_streets(lines: list[str], streets_data: dict, processed: dict):
     lines.append("")
 
     # Layer: street_labels
-    _render_street_labels(lines, label_candidates, board_w, board_h)
+    _render_street_labels(lines, label_candidates, board_w, board_h, output_mode=output_mode)
 
 
 def _render_street_labels(
@@ -385,19 +394,36 @@ def _render_street_labels(
     label_candidates: list[tuple],
     board_w: float,
     board_h: float,
+    output_mode: str = "cnc",
 ):
     """Render street name labels along road paths.
 
     Places labels at the midpoint of each road segment, rotated to follow
     the road direction. Deduplicates by name and filters labels that would
     overlap or fall outside the board.
+
+    In print mode, labels are significantly larger and bolder for poster output.
     """
+    is_print = output_mode == "print"
+
     lines.append("  <!-- Layer: street_labels -->")
     lines.append('  <!-- Toolpath: V-carve, 60 deg V-bit, flat depth 0.02" -->')
     lines.append('  <g id="street_labels">')
 
     # Font sizes by road class (mm)
-    font_sizes = {"major": 2.5, "minor": 1.8}
+    # Print mode: much larger for readable poster output
+    if is_print:
+        font_sizes = {"major": 6.0, "minor": 4.0}
+        min_spacing = 12.0
+        label_fill = "#1a1a1a"
+        label_weight = ' font-weight="bold"'
+        margin = 8.0
+    else:
+        font_sizes = {"major": 2.5, "minor": 1.8}
+        min_spacing = 8.0
+        label_fill = "#444444"
+        label_weight = ""
+        margin = 5.0
 
     # Deduplicate: pick the longest segment for each street name
     best_segments: dict[str, tuple] = {}
@@ -408,8 +434,7 @@ def _render_street_labels(
             best_segments[name] = (seg_len, coords, road_type)
 
     # Place labels, track positions to avoid overlap
-    placed: list[tuple[float, float, float]] = []  # (x, y, text_width_approx)
-    min_spacing = 8.0  # mm between label centers
+    placed: list[tuple[float, float, float]] = []
 
     for name, (seg_len, coords, road_type) in best_segments.items():
         font_size = font_sizes[road_type]
@@ -423,7 +448,6 @@ def _render_street_labels(
         mid_x, mid_y, angle_deg = _path_midpoint_and_angle(coords)
 
         # Skip labels outside the board bounds (with margin)
-        margin = 5.0
         if mid_x < margin or mid_x > board_w - margin:
             continue
         if mid_y < margin or mid_y > board_h - margin:
@@ -447,10 +471,20 @@ def _render_street_labels(
         elif angle_deg < -90:
             angle_deg += 180
 
+        # In print mode, add a white background halo for readability
+        if is_print:
+            lines.append(
+                f'    <text x="{round(mid_x, 2)}" y="{round(mid_y, 2)}"'
+                f' text-anchor="middle" font-family="Arial, Helvetica, sans-serif"'
+                f' font-size="{font_size}" fill="none" stroke="#ffffff" stroke-width="{round(font_size * 0.3, 2)}"'
+                f' transform="rotate({round(angle_deg, 1)},{round(mid_x, 2)},{round(mid_y, 2)})">'
+                f'{_escape_xml(name.upper())}</text>'
+            )
+
         lines.append(
             f'    <text x="{round(mid_x, 2)}" y="{round(mid_y, 2)}"'
             f' text-anchor="middle" font-family="Arial, Helvetica, sans-serif"'
-            f' font-size="{font_size}" fill="#444444"'
+            f' font-size="{font_size}" fill="{label_fill}"{label_weight}'
             f' transform="rotate({round(angle_deg, 1)},{round(mid_x, 2)},{round(mid_y, 2)})">'
             f'{_escape_xml(name.upper())}</text>'
         )

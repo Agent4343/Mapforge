@@ -145,6 +145,11 @@ class BorderStyle(str, Enum):
     ornate = "ornate"     # Decorative corner frame
 
 
+class OutputMode(str, Enum):
+    cnc = "cnc"
+    print = "print"
+
+
 class GenerateRequest(BaseModel):
     osm_id: int
     osm_type: str = "relation"
@@ -154,6 +159,7 @@ class GenerateRequest(BaseModel):
     board_height_inches: Optional[float] = Field(None, gt=1, le=60)
     style: CutStyle = CutStyle.outline
     export_format: ExportFormat = ExportFormat.svg
+    output_mode: str = "cnc"  # "cnc" or "print"
     text: str = ""
     subtitle: str = ""  # "Where We Met" / "Est. 2024" / custom tagline
     show_coordinates: bool = True

@@ -188,6 +188,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         font_family=req.font_family.value,
         border_style=req.border_style.value,
         heart_location=heart_mm,
+        output_mode=getattr(req, "output_mode", "cnc"),
     )
 
     # Store SVG

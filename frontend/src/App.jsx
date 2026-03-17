@@ -243,6 +243,7 @@ export default function App() {
           board_size: config.boardSize,
           style: config.outputMode === "print" ? "filled" : config.style,
           export_format: config.outputMode === "print" ? "svg" : config.exportFormat,
+          output_mode: config.outputMode || "cnc",
           text: config.text,
           subtitle: config.subtitle || "",
           show_coordinates: config.showCoordinates,
