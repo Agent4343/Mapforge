@@ -1,14 +1,20 @@
 """City street network fetcher from OpenStreetMap Overpass API.
 
 Fetches road networks within a bounding box for city street map products.
+Uses multiple Overpass endpoints with retry logic for reliability.
 """
 
+import asyncio
+
 import httpx
-from shapely.geometry import LineString, MultiLineString
 
 from app.logging_config import log
 
-OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+OVERPASS_ENDPOINTS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+]
 
 # Road classification → SVG stroke width (mm) and layer priority
 ROAD_CLASSES = {
@@ -25,6 +31,43 @@ ROAD_CLASSES = {
     "residential": {"width": 0.3, "priority": 6, "layer": "minor"},
     "unclassified": {"width": 0.3, "priority": 7, "layer": "minor"},
 }
+
+
+async def _fetch_overpass_with_retry(query: str) -> dict | None:
+    """Try each Overpass endpoint, retrying once per endpoint on failure."""
+    for endpoint in OVERPASS_ENDPOINTS:
+        for attempt in range(2):
+            try:
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    resp = await client.post(endpoint, data={"data": query})
+                    resp.raise_for_status()
+                    data = resp.json()
+
+                # Check for Overpass errors
+                if "remark" in data:
+                    log.warning(f"Overpass remark from {endpoint}: {data['remark']}")
+                    # Remark usually means timeout/quota — try next endpoint
+                    break
+
+                if data.get("elements") is None:
+                    log.warning(f"Overpass returned no elements from {endpoint}")
+                    break
+
+                elements = data.get("elements", [])
+                if len(elements) == 0:
+                    log.warning(f"Overpass returned 0 elements from {endpoint}")
+                    break
+
+                log.info(f"Overpass success from {endpoint}: {len(elements)} elements")
+                return data
+
+            except Exception as e:
+                log.warning(f"Overpass request to {endpoint} failed (attempt {attempt+1}): {e}")
+                if attempt == 0:
+                    await asyncio.sleep(2)
+
+    log.error("All Overpass endpoints failed for street fetch")
+    return None
 
 
 async def fetch_streets(
@@ -57,20 +100,8 @@ async def fetch_streets(
 
     log.info(f"Fetching streets for bbox: {bbox}")
 
-    try:
-        async with httpx.AsyncClient(timeout=50.0) as client:
-            resp = await client.post(OVERPASS_URL, data={"data": query})
-            resp.raise_for_status()
-            data = resp.json()
-    except Exception as e:
-        log.warning(f"Overpass street request failed: {e}")
-        return {"major_roads": [], "minor_roads": []}
-
-    # Detect Overpass API errors (timeout, quota, etc.)
-    if "remark" in data:
-        log.warning(f"Overpass API remark: {data['remark']}")
-    if data.get("elements") is None:
-        log.warning("Overpass returned no elements for streets")
+    data = await _fetch_overpass_with_retry(query)
+    if data is None:
         return {"major_roads": [], "minor_roads": []}
 
     elements = data.get("elements", [])

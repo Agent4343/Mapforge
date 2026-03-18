@@ -1,5 +1,6 @@
 """SVG/DXF generation API router — with persistence, auth, and all product types."""
 
+import asyncio
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -143,65 +144,66 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         log.error(f"Geometry processing error for {req.osm_type}/{req.osm_id}: {type(e).__name__}: {e}")
         raise HTTPException(status_code=422, detail=f"Geometry processing failed: {e}")
 
-    # Fetch streets — enabled for city/community maps, available for all types
+    # Fetch streets and water concurrently for faster generation
     streets_data = None
-    street_types = ("city", "community", "park")
-    auto_streets = req.product_type.value in street_types
-    if req.include_streets or auto_streets:
-        try:
-            bounds = geom.bounds  # minx, miny, maxx, maxy
-            bbox = (bounds[1], bounds[0], bounds[3], bounds[2])
-            cache_key = _bbox_cache_key("streets", bbox)
-            if cache_key in _overpass_cache:
-                streets_data = _overpass_cache[cache_key]
-                log.info("Using cached street data")
-            else:
-                streets_data = await fetch_streets(
-                    bbox=bbox,
-                    include_minor=req.product_type.value in street_types,
-                )
-                # Only cache results that actually contain streets
-                has_streets = (
-                    streets_data
-                    and (streets_data.get("major_roads") or streets_data.get("minor_roads"))
-                )
-                if has_streets:
-                    _cache_overpass(cache_key, streets_data)
-                else:
-                    log.warning("Street fetch returned empty results — not caching")
-                    warnings.append("Street data unavailable — the Overpass API may be busy. Try regenerating in a minute.")
-                    streets_data = None
-        except Exception as e:
-            log.warning(f"Street fetch failed (non-fatal): {e}")
-            warnings.append("Street data unavailable — map generated without streets.")
-
-    # Fetch water features for community/city/park maps
     water_data = None
+    street_types = ("city", "community", "park")
     water_types = ("community", "city", "park")
-    if req.product_type.value in water_types:
-        try:
-            bounds = geom.bounds
-            bbox = (bounds[1], bounds[0], bounds[3], bounds[2])
-            cache_key = _bbox_cache_key("water", bbox)
-            if cache_key in _overpass_cache:
-                water_data = _overpass_cache[cache_key]
-                log.info("Using cached water data")
-            else:
-                water_data = await fetch_water_features(bbox=bbox)
-                # Only cache results that actually contain water features
-                has_water = (
-                    water_data
-                    and (water_data.get("water_polygons") or water_data.get("waterways"))
-                )
-                if has_water:
-                    _cache_overpass(cache_key, water_data)
-                else:
-                    log.warning("Water fetch returned empty results — not caching")
-                    warnings.append("Water feature data unavailable — the Overpass API may be busy. Try regenerating in a minute.")
-                    water_data = None
-        except Exception as e:
-            log.warning(f"Water feature fetch failed (non-fatal): {e}")
-            warnings.append("Water feature data unavailable — map generated without water features.")
+    auto_streets = req.product_type.value in street_types
+    need_streets = req.include_streets or auto_streets
+    need_water = req.product_type.value in water_types
+
+    bounds = geom.bounds  # minx, miny, maxx, maxy
+    bbox = (bounds[1], bounds[0], bounds[3], bounds[2])
+
+    async def _get_streets():
+        cache_key = _bbox_cache_key("streets", bbox)
+        if cache_key in _overpass_cache:
+            log.info("Using cached street data")
+            return _overpass_cache[cache_key]
+        result = await fetch_streets(
+            bbox=bbox,
+            include_minor=req.product_type.value in street_types,
+        )
+        has_data = result and (result.get("major_roads") or result.get("minor_roads"))
+        if has_data:
+            _cache_overpass(cache_key, result)
+            return result
+        return None
+
+    async def _get_water():
+        cache_key = _bbox_cache_key("water", bbox)
+        if cache_key in _overpass_cache:
+            log.info("Using cached water data")
+            return _overpass_cache[cache_key]
+        result = await fetch_water_features(bbox=bbox)
+        has_data = result and (result.get("water_polygons") or result.get("waterways"))
+        if has_data:
+            _cache_overpass(cache_key, result)
+            return result
+        return None
+
+    tasks = []
+    if need_streets:
+        tasks.append(("streets", _get_streets()))
+    if need_water:
+        tasks.append(("water", _get_water()))
+
+    if tasks:
+        results = await asyncio.gather(
+            *(t[1] for t in tasks), return_exceptions=True
+        )
+        for (label, _), result in zip(tasks, results):
+            if isinstance(result, Exception):
+                log.warning(f"{label.title()} fetch failed (non-fatal): {result}")
+                warnings.append(f"{label.title()} data unavailable — map generated without {label}.")
+            elif result is None:
+                log.warning(f"{label.title()} fetch returned empty results — not caching")
+                warnings.append(f"{label.title()} data unavailable — the Overpass API may be busy. Try regenerating in a minute.")
+            elif label == "streets":
+                streets_data = result
+            elif label == "water":
+                water_data = result
 
     # Fetch contours for premium products
     contour_data = None

@@ -2,12 +2,55 @@
 
 Fetches lakes, rivers, coastlines, and other water bodies within a bounding box
 for rendering on community, city, and park maps.
+Uses multiple Overpass endpoints with retry logic for reliability.
 """
 
+import asyncio
+
 import httpx
+
 from app.logging_config import log
 
-OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+OVERPASS_ENDPOINTS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+]
+
+
+async def _fetch_overpass_with_retry(query: str) -> dict | None:
+    """Try each Overpass endpoint, retrying once per endpoint on failure."""
+    for endpoint in OVERPASS_ENDPOINTS:
+        for attempt in range(2):
+            try:
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    resp = await client.post(endpoint, data={"data": query})
+                    resp.raise_for_status()
+                    data = resp.json()
+
+                if "remark" in data:
+                    log.warning(f"Overpass remark from {endpoint}: {data['remark']}")
+                    break
+
+                if data.get("elements") is None:
+                    log.warning(f"Overpass returned no elements from {endpoint}")
+                    break
+
+                elements = data.get("elements", [])
+                if len(elements) == 0:
+                    log.warning(f"Overpass returned 0 elements from {endpoint}")
+                    break
+
+                log.info(f"Overpass success from {endpoint}: {len(elements)} elements")
+                return data
+
+            except Exception as e:
+                log.warning(f"Overpass request to {endpoint} failed (attempt {attempt+1}): {e}")
+                if attempt == 0:
+                    await asyncio.sleep(2)
+
+    log.error("All Overpass endpoints failed for water fetch")
+    return None
 
 
 async def fetch_water_features(
@@ -41,20 +84,8 @@ async def fetch_water_features(
 
     log.info(f"Fetching water features for bbox: {bbox}")
 
-    try:
-        async with httpx.AsyncClient(timeout=50.0) as client:
-            resp = await client.post(OVERPASS_URL, data={"data": query})
-            resp.raise_for_status()
-            data = resp.json()
-    except Exception as e:
-        log.warning(f"Overpass water request failed: {e}")
-        return {"water_polygons": [], "waterways": []}
-
-    # Detect Overpass API errors (timeout, quota, etc.)
-    if "remark" in data:
-        log.warning(f"Overpass API remark: {data['remark']}")
-    if data.get("elements") is None:
-        log.warning("Overpass returned no elements for water")
+    data = await _fetch_overpass_with_retry(query)
+    if data is None:
         return {"water_polygons": [], "waterways": []}
 
     elements = data.get("elements", [])
