@@ -48,7 +48,7 @@ class GeneratedFile(Base):
     owner_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True)
     osm_id = Column(Integer, nullable=False, index=True)
     osm_type = Column(String(20), nullable=False)
-    product_type = Column(String(20), nullable=False)
+    product_type = Column(String(20), nullable=False, index=True)
     location_name = Column(String(255), nullable=False)
     display_text = Column(String(255), nullable=False)
     board_size = Column(String(20), nullable=False)
@@ -101,7 +101,7 @@ class Purchase(Base):
     __tablename__ = "purchases"
 
     id = Column(String(16), primary_key=True, default=_uuid)
-    listing_id = Column(String(16), ForeignKey("marketplace_listings.id"), nullable=False)
+    listing_id = Column(String(16), ForeignKey("marketplace_listings.id"), nullable=False, index=True)
     buyer_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
     price_cents = Column(Integer, nullable=False)
     platform_fee_cents = Column(Integer, nullable=False)
@@ -133,7 +133,7 @@ class Review(Base):
     __tablename__ = "reviews"
 
     id = Column(String(16), primary_key=True, default=_uuid)
-    listing_id = Column(String(16), ForeignKey("marketplace_listings.id"), nullable=False)
+    listing_id = Column(String(16), ForeignKey("marketplace_listings.id"), nullable=False, index=True)
     buyer_id = Column(String(36), ForeignKey("users.id"), nullable=False)
     rating = Column(Integer, nullable=False)  # 1-5
     comment = Column(Text, nullable=True)

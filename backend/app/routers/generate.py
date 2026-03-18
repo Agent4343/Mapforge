@@ -1,8 +1,6 @@
 """SVG/DXF generation API router — with persistence, auth, and all product types."""
 
-import hashlib
 from datetime import datetime, timezone
-from functools import lru_cache
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
@@ -110,6 +108,8 @@ def _check_tier_limits(user: User | None, req: GenerateRequest):
 
 async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession) -> GenerateResponse:
     """Core generation logic shared by single and batch endpoints."""
+    warnings: list[str] = []
+
     # Resolve board dimensions
     if req.board_width_inches and req.board_height_inches:
         w_in, h_in = req.board_width_inches, req.board_height_inches
@@ -164,6 +164,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                     _cache_overpass(cache_key, streets_data)
         except Exception as e:
             log.warning(f"Street fetch failed (non-fatal): {e}")
+            warnings.append("Street data unavailable — map generated without streets.")
 
     # Fetch water features for community/city/park maps
     water_data = None
@@ -182,6 +183,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                     _cache_overpass(cache_key, water_data)
         except Exception as e:
             log.warning(f"Water feature fetch failed (non-fatal): {e}")
+            warnings.append("Water feature data unavailable — map generated without water features.")
 
     # Fetch contours for premium products
     contour_data = None
@@ -365,7 +367,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     log.info(f"Generated file {file_id}: {location_name} ({result['node_count']} nodes)")
 
     # Return the appropriate SVG based on output mode
-    is_print = getattr(req, "output_mode", "cnc") == "print"
+    is_print = req.output_mode == "print"
     display_result = print_svg_result if is_print else result
 
     return GenerateResponse(
@@ -379,6 +381,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         node_count=result["node_count"],
         path_count=result["path_count"],
         layer_count=result["layer_count"],
+        warnings=warnings,
     )
 
 
@@ -755,18 +758,12 @@ async def list_themes():
     }
 
 
-def _extract_province(location_name: str) -> str | None:
-    """Try to extract province/state from location name (comma-separated).
-
-    Handles English and French names, accented characters, and common abbreviations.
-    """
+def _build_region_aliases() -> dict[str, str]:
+    """Build the province/state alias lookup table (computed once at import)."""
     import unicodedata
+    aliases: dict[str, str] = {}
 
-    # Map of all recognized names (including French) → canonical English name
-    _region_aliases: dict[str, str] = {}
-
-    # Canadian provinces and territories (English + French)
-    _ca_provinces = {
+    ca_provinces = {
         "Ontario": ["Ontario"],
         "Quebec": ["Quebec", "Québec"],
         "British Columbia": ["British Columbia", "Colombie-Britannique"],
@@ -781,15 +778,13 @@ def _extract_province(location_name: str) -> str | None:
         "Yukon": ["Yukon"],
         "Nunavut": ["Nunavut"],
     }
-    for canonical, aliases in _ca_provinces.items():
-        for alias in aliases:
-            _region_aliases[alias.lower()] = canonical
-            # Also store accent-stripped version
-            stripped = unicodedata.normalize("NFD", alias)
+    for canonical, names in ca_provinces.items():
+        for name in names:
+            aliases[name.lower()] = canonical
+            stripped = unicodedata.normalize("NFD", name)
             stripped = "".join(c for c in stripped if unicodedata.category(c) != "Mn")
-            _region_aliases[stripped.lower()] = canonical
+            aliases[stripped.lower()] = canonical
 
-    # US states
     us_states = [
         "Alabama", "Alaska", "Arizona", "Arkansas", "California",
         "Colorado", "Connecticut", "Delaware", "Florida", "Georgia",
@@ -803,18 +798,26 @@ def _extract_province(location_name: str) -> str | None:
         "Virginia", "Washington", "West Virginia", "Wisconsin", "Wyoming",
     ]
     for state in us_states:
-        _region_aliases[state.lower()] = state
+        aliases[state.lower()] = state
 
-    parts = [p.strip() for p in location_name.split(",")]
-    for part in parts:
-        normalized = part.lower().strip()
-        match = _region_aliases.get(normalized)
+    return aliases
+
+
+_REGION_ALIASES = _build_region_aliases()
+
+
+def _extract_province(location_name: str) -> str | None:
+    """Try to extract province/state from location name (comma-separated)."""
+    import unicodedata
+
+    for part in location_name.split(","):
+        normalized = part.strip().lower()
+        match = _REGION_ALIASES.get(normalized)
         if match:
             return match
-        # Try accent-stripped version of the input
         stripped = unicodedata.normalize("NFD", normalized)
         stripped = "".join(c for c in stripped if unicodedata.category(c) != "Mn")
-        match = _region_aliases.get(stripped)
+        match = _REGION_ALIASES.get(stripped)
         if match:
             return match
     return None

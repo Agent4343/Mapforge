@@ -203,6 +203,7 @@ class PinGenerateRequest(BaseModel):
     border_style: BorderStyle = BorderStyle.none
     radius_m: float = Field(500.0, ge=100, le=5000)
     include_streets: bool = True
+    output_mode: str = "cnc"  # "cnc" or "print"
     color_theme: str = "classic"
 
 
@@ -217,6 +218,7 @@ class GenerateResponse(BaseModel):
     node_count: int
     path_count: int
     layer_count: int
+    warnings: list[str] = Field(default_factory=list)
 
 
 class PreviewResponse(BaseModel):

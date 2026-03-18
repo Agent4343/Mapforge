@@ -90,10 +90,12 @@ export default function App() {
   const [historyIndex, setHistoryIndex] = useState(0);
   const skipHistory = useRef(false);
 
-  // Load user profile if token exists
+  // Load user profile if token exists; clear stale tokens on failure
   useEffect(() => {
     if (getToken()) {
-      getProfile().then((p) => { if (p) setUser(p); }).catch(() => {});
+      getProfile()
+        .then((p) => { if (p) setUser(p); else { logout(); } })
+        .catch(() => { logout(); });
     }
   }, []);
 
@@ -218,6 +220,7 @@ export default function App() {
           font_family: config.fontFamily || "sans",
           border_style: config.borderStyle || "none",
           include_streets: config.includeStreets,
+          output_mode: config.outputMode || "cnc",
           color_theme: config.colorTheme || "classic",
         };
         if (config.boardSize === "custom") {
@@ -272,14 +275,14 @@ export default function App() {
       setSvgContent(data.svg);
       setResult(data);
 
-      // Geometry quality check post-generation
+      // Quality/generation warnings
+      const allWarnings = [...(data.warnings || [])];
       if (data.node_count < 20) {
-        setQualityWarning("Low detail: This location has very few data points. The SVG may appear rough or oversimplified.");
+        allWarnings.push("Low detail: This location has very few data points. The SVG may appear rough or oversimplified.");
       } else if (data.node_count > 50000) {
-        setQualityWarning("High complexity: This file has many nodes and may be slow to process on some CNC controllers. Consider reducing detail.");
-      } else {
-        setQualityWarning(null);
+        allWarnings.push("High complexity: This file has many nodes and may be slow to process on some CNC controllers. Consider reducing detail.");
       }
+      setQualityWarning(allWarnings.length > 0 ? allWarnings.join(" ") : null);
     } catch (err) {
       setError(err.message);
     } finally {

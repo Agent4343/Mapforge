@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { searchLocations } from "../services/api.js";
 import MapPreview from "./MapPreview.jsx";
 
@@ -37,6 +37,9 @@ export default function SearchPanel({ onSelect, selectedResult, country }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const timerRef = useRef(null);
+
+  // Cleanup timer on unmount
+  useEffect(() => () => clearTimeout(timerRef.current), []);
 
   function handleInput(e) {
     const val = e.target.value;
@@ -79,6 +82,7 @@ export default function SearchPanel({ onSelect, selectedResult, country }) {
           placeholder="Search location..."
           value={query}
           onChange={handleInput}
+          maxLength={200}
         />
         {query && (
           <button

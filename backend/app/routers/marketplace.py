@@ -247,14 +247,16 @@ async def create_review(
     )
     db.add(review)
 
-    # Update listing rating
+    # Update listing rating atomically to avoid race conditions
     listing_result = await db.execute(
         select(MarketplaceListing).where(MarketplaceListing.id == req.listing_id)
     )
-    listing = listing_result.scalar_one()
+    listing = listing_result.scalar_one_or_none()
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found.")
     total_rating = listing.average_rating * listing.rating_count + req.rating
     listing.rating_count += 1
-    listing.average_rating = total_rating / listing.rating_count
+    listing.average_rating = round(total_rating / listing.rating_count, 2)
 
     await db.commit()
     await db.refresh(review)
