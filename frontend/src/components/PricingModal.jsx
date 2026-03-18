@@ -4,13 +4,13 @@ const PLANS = [
     price: "$0",
     period: "forever",
     features: [
-      "3 generations per month",
+      "3 province silhouettes/month",
       "SVG export",
-      "All location types",
       "Preview & customize",
       "PNG product mockups",
     ],
     limits: [
+      "Province maps only",
       "No DXF export",
       "No contour layers",
       "No batch generation",
@@ -21,13 +21,13 @@ const PLANS = [
   },
   {
     name: "Maker",
-    price: "$12",
+    price: "$9.99",
     period: "/month",
-    annual: "$99/year (save 31%)",
+    annual: "$79.99/year (save 33%)",
     features: [
-      "20 generations per month",
+      "Unlimited province maps",
+      "20 lake/city/park maps per month",
       "SVG + DXF export",
-      "All location types",
       "PNG product mockups",
       "Sell on marketplace (25% fee)",
       "Template library (100 files)",
@@ -43,11 +43,11 @@ const PLANS = [
   },
   {
     name: "Pro",
-    price: "$29",
+    price: "$24.99",
     period: "/month",
-    annual: "$249/year (save 28%)",
+    annual: "$199.99/year (save 33%)",
     features: [
-      "Unlimited generations",
+      "Unlimited generations (all types)",
       "SVG + DXF export",
       "Bathymetric & topo contours",
       "Batch generation (50 at once)",

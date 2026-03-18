@@ -42,9 +42,18 @@ async def _maybe_reset_monthly_counter(user: User, db: AsyncSession):
 
 
 def _check_tier_limits(user: User | None, req: GenerateRequest):
-    """Enforce subscription tier limits."""
+    """Enforce subscription tier limits per Product Bible pricing matrix.
+
+    Free: province silhouettes only, 3/month, no DXF, no contours
+    Maker: unlimited provinces + 20 lake/city/park/community per month, DXF, no contours
+    Pro: unlimited everything including contours and batch
+    """
+    is_province = req.product_type.value == "province"
+
     if user is None:
-        # Anonymous — allow basic generation so users can try the app
+        # Anonymous — only allow province silhouettes so users can try the app
+        if not is_province:
+            raise HTTPException(status_code=403, detail="Lake, city, park, and community maps require a Maker or Pro subscription. Sign up free to generate province silhouettes.")
         if req.include_contours:
             raise HTTPException(status_code=403, detail="Contour layers require a Pro subscription. Sign up free to get started.")
         if req.export_format == ExportFormat.dxf:
@@ -56,16 +65,20 @@ def _check_tier_limits(user: User | None, req: GenerateRequest):
         return  # Admin bypasses all limits
 
     if tier == "free":
+        # Free tier: province silhouettes only, capped at FREE_PROVINCE_LIMIT/month
+        if not is_province:
+            raise HTTPException(status_code=403, detail="Free tier can only generate province/state silhouettes. Upgrade to Maker for lake, city, park, and community maps.")
         if user.generation_count_this_month >= settings.FREE_PROVINCE_LIMIT:
-            raise HTTPException(status_code=403, detail=f"Free tier limit reached ({settings.FREE_PROVINCE_LIMIT} generations/month). Upgrade to Maker for more.")
+            raise HTTPException(status_code=403, detail=f"Free tier limit reached ({settings.FREE_PROVINCE_LIMIT} province maps/month). Upgrade to Maker for more.")
         if req.include_contours:
             raise HTTPException(status_code=403, detail="Bathymetric/topo layers require Pro subscription.")
         if req.export_format == ExportFormat.dxf:
             raise HTTPException(status_code=403, detail="DXF export requires Maker or Pro subscription.")
 
     elif tier == "maker":
-        if user.generation_count_this_month >= settings.MAKER_MONTHLY_LIMIT:
-            raise HTTPException(status_code=403, detail=f"Maker tier limit reached ({settings.MAKER_MONTHLY_LIMIT}/month). Upgrade to Pro for unlimited.")
+        # Maker: unlimited provinces, 20 lake/city/park/community per month
+        if not is_province and user.generation_count_this_month >= settings.MAKER_MONTHLY_LIMIT:
+            raise HTTPException(status_code=403, detail=f"Maker tier limit reached ({settings.MAKER_MONTHLY_LIMIT} non-province maps/month). Upgrade to Pro for unlimited.")
         if req.include_contours:
             raise HTTPException(status_code=403, detail="Bathymetric/topo layers require Pro subscription.")
 
@@ -268,7 +281,13 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     )
     db.add(file_record)
     if user:
-        user.generation_count_this_month += 1
+        # For Maker tier, only count non-province generations against the monthly limit
+        # (provinces are unlimited for Maker). Free and Pro count all generations.
+        is_province_gen = req.product_type.value == "province"
+        if user.tier == "maker" and is_province_gen:
+            pass  # Provinces don't count against Maker's 20/month limit
+        else:
+            user.generation_count_this_month += 1
     try:
         await db.commit()
         await db.refresh(file_record)
