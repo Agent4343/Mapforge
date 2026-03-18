@@ -44,6 +44,7 @@ def generate_svg(
     heart_location: tuple[float, float] | None = None,
     output_mode: str = "cnc",
     color_theme: str = "classic",
+    product_type: str = "lake",
 ) -> dict:
     """Generate an SVG string from processed geometry.
 
@@ -74,6 +75,7 @@ def generate_svg(
             border_style=border_style,
             heart_location=heart_location,
             color_theme=color_theme,
+            product_type=product_type,
         )
 
     return _generate_cnc_svg(
@@ -299,6 +301,7 @@ def _generate_print_svg(
     border_style: str = "none",
     heart_location: tuple[float, float] | None = None,
     color_theme: str = "classic",
+    product_type: str = "lake",
 ) -> dict:
     """Generate a poster-style print SVG with themed colors, filled regions,
     and clean typography matching premium city map wall art.
@@ -394,17 +397,38 @@ def _generate_print_svg(
     # All map content clipped to the map area
     lines.append(f'  <g clip-path="url(#map_clip)">')
 
-    # Geography fill — land area with themed color
+    # For city/community maps, the streets ARE the visual — the geography
+    # boundary should be subtle or invisible. The map_bg rectangle already
+    # provides the "land" color. The polygon is only used as a subtle boundary.
+    #
+    # For lake/province/park maps, the filled polygon IS the visual —
+    # the shape of the lake or province is the main content.
+    is_street_map = product_type in ("city", "community", "name_sign")
+
     lines.append('    <g id="geography_fill">')
-    for exterior, holes in polygons:
-        path_d = _coords_to_path(exterior)
-        for hole in holes:
-            path_d += " " + _coords_to_path(hole)
-        lines.append(
-            f'      <path d="{path_d}"'
-            f' fill="{theme["land"]}" stroke="{theme["land_stroke"]}"'
-            f' stroke-width="0.3" fill-rule="evenodd" stroke-linejoin="round"/>'
-        )
+    if is_street_map:
+        # Street maps: fill the entire map area with land color (already done
+        # by map_bg rect above), then render the boundary as a thin outline only.
+        # This ensures streets and water show through clearly.
+        for exterior, holes in polygons:
+            path_d = _coords_to_path(exterior)
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="none" stroke="{theme["land_stroke"]}"'
+                f' stroke-width="0.4" stroke-linejoin="round"'
+                f' stroke-dasharray="2,2" opacity="0.4"/>'
+            )
+    else:
+        # Lake/province/park maps: filled polygon is the main visual
+        for exterior, holes in polygons:
+            path_d = _coords_to_path(exterior)
+            for hole in holes:
+                path_d += " " + _coords_to_path(hole)
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="{theme["land"]}" stroke="{theme["land_stroke"]}"'
+                f' stroke-width="0.3" fill-rule="evenodd" stroke-linejoin="round"/>'
+            )
     lines.append("    </g>")
 
     # Water features — filled with water color

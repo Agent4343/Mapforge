@@ -202,9 +202,10 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         border_style=req.border_style.value,
         heart_location=heart_mm,
         output_mode="cnc",
+        product_type=req.product_type.value,
     )
 
-    # Generate print poster SVG (used for high-res PNG wall art)
+    # Generate print poster SVG (used for high-res PNG wall art and preview)
     print_svg_result = generate_svg(
         processed=processed,
         location_name=location_name,
@@ -221,6 +222,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         heart_location=heart_mm,
         output_mode="print",
         color_theme=req.color_theme,
+        product_type=req.product_type.value,
     )
 
     # Store SVG
@@ -321,8 +323,12 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         raise HTTPException(status_code=500, detail="Failed to save to library. Please try again.")
     log.info(f"Generated file {file_id}: {location_name} ({result['node_count']} nodes)")
 
+    # Return the appropriate SVG based on output mode
+    is_print = getattr(req, "output_mode", "cnc") == "print"
+    display_result = print_svg_result if is_print else result
+
     return GenerateResponse(
-        svg=result["svg"] if req.export_format == ExportFormat.svg else None,
+        svg=display_result["svg"] if req.export_format == ExportFormat.svg else None,
         dxf_available=dxf_key is not None,
         thumbnail_available=thumbnail_key is not None,
         print_png_available=print_png_key is not None,
