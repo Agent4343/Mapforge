@@ -733,53 +733,44 @@ def _render_print_water(lines: list[str], water_data: dict, processed: dict, the
 
 
 def _render_print_streets(lines: list[str], streets_data: dict, processed: dict, theme: dict):
-    """Render streets with themed poster colors and street name labels.
+    """Render streets with themed poster colors.
 
-    Print-mode streets are drawn thicker than CNC (4-5x base width) because
-    poster prints need clearly visible street networks as the hero visual.
+    Print-mode streets use modest width scaling over CNC base widths to
+    create a clean road hierarchy without overwhelming the map.  The old
+    5x multiplier produced highway bands ~6 mm wide which dominated the
+    poster.  New values: major 1.8x, minor 1.2x.
     """
     transform = processed.get("transform")
-    board_w, board_h = processed["board_mm"]
 
     lines.append('    <g id="streets">')
 
-    label_candidates = []
-
-    # Major roads — bold, clearly visible (hero element of city maps)
+    # Major roads — clearly visible but proportional
     for coords, road_class, width, name in streets_data.get("major_roads", []):
         if len(coords) < 2:
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
-        sw = round(max(width * 5.0, 2.0), 2)
+        sw = round(width * 1.8, 2)
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="none" stroke="{theme["street_major"]}" stroke-width="{sw}"'
             f' stroke-linecap="round" stroke-linejoin="round"/>'
         )
-        if name:
-            label_candidates.append((board_coords, name, "major"))
 
-    # Minor roads — visible grid that fills the city area
+    # Minor roads — thin grid that fills the city area
     for coords, road_class, width, name in streets_data.get("minor_roads", []):
         if len(coords) < 2:
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
-        sw = round(max(width * 3.5, 0.8), 2)
+        sw = round(width * 1.2, 2)
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="none" stroke="{theme["street_minor"]}" stroke-width="{sw}"'
             f' stroke-linecap="round" stroke-linejoin="round"/>'
         )
-        if name:
-            label_candidates.append((board_coords, name, "minor"))
 
     lines.append("    </g>")
-
-    # Street name labels — placed along roads with themed colors
-    if label_candidates:
-        _render_print_street_labels(lines, label_candidates, board_w, board_h, theme)
 
 
 def _render_print_street_labels(
