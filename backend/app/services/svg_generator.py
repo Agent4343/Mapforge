@@ -7,6 +7,8 @@ Produces SVG files conforming to the MapForge CNC output spec:
 - All paths closed (Z command)
 - Max 2 decimal places
 - CNC metadata in XML comments
+
+Also produces print-mode poster SVGs for wall art when output_mode="print".
 """
 
 import math
@@ -41,11 +43,76 @@ def generate_svg(
     border_style: str = "none",
     heart_location: tuple[float, float] | None = None,
     output_mode: str = "cnc",
+    color_theme: str = "classic",
 ) -> dict:
-    """Generate a CNC-ready SVG string from processed geometry.
+    """Generate an SVG string from processed geometry.
+
+    When output_mode="print", produces a poster-style SVG with colored fills,
+    themed typography, and white matting — matching the style of premium
+    city map wall art prints.
+
+    When output_mode="cnc" (default), produces CNC-ready SVG with toolpath
+    layers for VCarve Pro.
 
     Returns dict with: svg (str), node_count, path_count, layer_count
     """
+    if output_mode == "print":
+        return _generate_print_svg(
+            processed=processed,
+            location_name=location_name,
+            style=style,
+            show_coordinates=show_coordinates,
+            font_size_mm=font_size_mm,
+            center_latlon=center_latlon,
+            streets_data=streets_data,
+            contour_data=contour_data,
+            water_data=water_data,
+            pin_location=pin_location,
+            markers=markers,
+            subtitle=subtitle,
+            font_family=font_family,
+            border_style=border_style,
+            heart_location=heart_location,
+            color_theme=color_theme,
+        )
+
+    return _generate_cnc_svg(
+        processed=processed,
+        location_name=location_name,
+        style=style,
+        show_coordinates=show_coordinates,
+        font_size_mm=font_size_mm,
+        center_latlon=center_latlon,
+        streets_data=streets_data,
+        contour_data=contour_data,
+        water_data=water_data,
+        pin_location=pin_location,
+        markers=markers,
+        subtitle=subtitle,
+        font_family=font_family,
+        border_style=border_style,
+        heart_location=heart_location,
+    )
+
+
+def _generate_cnc_svg(
+    processed: dict,
+    location_name: str,
+    style: CutStyle,
+    show_coordinates: bool,
+    font_size_mm: float,
+    center_latlon: tuple[float, float] | None = None,
+    streets_data: dict | None = None,
+    contour_data: list[dict] | None = None,
+    water_data: dict | None = None,
+    pin_location: tuple[float, float] | None = None,
+    markers: list[dict] | None = None,
+    subtitle: str = "",
+    font_family: str = "sans",
+    border_style: str = "none",
+    heart_location: tuple[float, float] | None = None,
+) -> dict:
+    """Generate a CNC-ready SVG string with toolpath layers."""
     board_w, board_h = processed["board_mm"]
     polygons = processed["polygons"]
     latlon = center_latlon or processed.get("center_latlon", (0, 0))
@@ -113,7 +180,7 @@ def generate_svg(
 
     # Layer: detail_lines (streets)
     if streets_data:
-        _render_streets(lines, streets_data, processed, output_mode=output_mode)
+        _render_streets(lines, streets_data, processed, output_mode="cnc")
         lines.append("")
 
     # Layer: pin_marker (for name_sign / location pin)
@@ -215,6 +282,222 @@ def generate_svg(
     }
 
 
+def _generate_print_svg(
+    processed: dict,
+    location_name: str,
+    style: CutStyle,
+    show_coordinates: bool,
+    font_size_mm: float,
+    center_latlon: tuple[float, float] | None = None,
+    streets_data: dict | None = None,
+    contour_data: list[dict] | None = None,
+    water_data: dict | None = None,
+    pin_location: tuple[float, float] | None = None,
+    markers: list[dict] | None = None,
+    subtitle: str = "",
+    font_family: str = "sans",
+    border_style: str = "none",
+    heart_location: tuple[float, float] | None = None,
+    color_theme: str = "classic",
+) -> dict:
+    """Generate a poster-style print SVG with themed colors, filled regions,
+    and clean typography matching premium city map wall art.
+
+    Layout:
+    - White mat border around the entire poster
+    - Colored map area filling most of the poster
+    - Geography rendered as filled land with themed colors
+    - Streets as fine lines (dark on light themes, light on dark themes)
+    - Water features filled with water color
+    - Text area below map: City Name / Subtitle / Coordinates
+    """
+    from app.services.thumbnail_generator import get_poster_theme
+
+    theme = get_poster_theme(color_theme)
+    board_w, board_h = processed["board_mm"]
+    polygons = processed["polygons"]
+    latlon = center_latlon or processed.get("center_latlon", (0, 0))
+
+    path_count = sum(1 + len(holes) for _, holes in polygons)
+    node_count = processed["node_count"]
+    layer_count = 4  # background, map_area, geography, text
+
+    if water_data:
+        layer_count += 1
+        path_count += len(water_data.get("water_polygons", [])) + len(water_data.get("waterways", []))
+    if streets_data:
+        layer_count += 1
+        path_count += len(streets_data.get("major_roads", [])) + len(streets_data.get("minor_roads", []))
+    if contour_data:
+        layer_count += 1
+        path_count += sum(len(b.get("contours", [])) for b in contour_data)
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # Poster layout dimensions
+    mat_pct = 0.06  # 6% white mat on each side
+    mat_x = round(board_w * mat_pct, 2)
+    mat_y = round(board_h * mat_pct, 2)
+    # Extra space at bottom for text area
+    text_area_h = round(board_h * 0.15, 2)
+    map_x = mat_x
+    map_y = mat_y
+    map_w = round(board_w - 2 * mat_x, 2)
+    map_h = round(board_h - mat_y - text_area_h - mat_y, 2)
+
+    # Resolve font family
+    ff = FONT_FAMILIES.get(font_family, FONT_FAMILIES["sans"])
+
+    lines = []
+    lines.append('<?xml version="1.0" encoding="UTF-8"?>')
+    lines.append(
+        f'<svg xmlns="http://www.w3.org/2000/svg"'
+        f' width="{board_w}mm" height="{board_h}mm"'
+        f' viewBox="0 0 {board_w} {board_h}">'
+    )
+
+    # Metadata
+    lines.append(f"  <!-- MapForge Print Poster v1.0 | Theme: {color_theme} -->")
+    lines.append(f"  <!-- Location: {_escape_xml(location_name)} -->")
+    lines.append("  <!-- Geographic data: © OpenStreetMap contributors (ODbL) -->")
+    lines.append(f"  <!-- Generated: {timestamp} -->")
+    lines.append("")
+
+    # Layer: white mat background (entire poster)
+    lines.append('  <g id="poster_background">')
+    lines.append(
+        f'    <rect width="{board_w}" height="{board_h}"'
+        f' fill="{theme["mat"]}"/>'
+    )
+    lines.append("  </g>")
+    lines.append("")
+
+    # Layer: map area background
+    lines.append('  <g id="map_area">')
+    lines.append(
+        f'    <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"'
+        f' fill="{theme["map_bg"]}"/>'
+    )
+    lines.append("  </g>")
+    lines.append("")
+
+    # Clip path for map content (keeps streets/water inside the map area)
+    lines.append("  <defs>")
+    lines.append(
+        f'    <clipPath id="map_clip">'
+        f'<rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"/>'
+        f"</clipPath>"
+    )
+    lines.append("  </defs>")
+    lines.append("")
+
+    # All map content clipped to the map area
+    lines.append(f'  <g clip-path="url(#map_clip)">')
+
+    # Geography fill — land area with themed color
+    lines.append('    <g id="geography_fill">')
+    for exterior, holes in polygons:
+        path_d = _coords_to_path(exterior)
+        for hole in holes:
+            path_d += " " + _coords_to_path(hole)
+        lines.append(
+            f'      <path d="{path_d}"'
+            f' fill="{theme["land"]}" stroke="{theme["land_stroke"]}"'
+            f' stroke-width="0.3" fill-rule="evenodd" stroke-linejoin="round"/>'
+        )
+    lines.append("    </g>")
+
+    # Water features — filled with water color
+    if water_data:
+        _render_print_water(lines, water_data, processed, theme)
+
+    # Contour bands
+    if contour_data:
+        _render_contour_bands(lines, contour_data, processed)
+
+    # Streets — the hero visual for city maps
+    if streets_data:
+        _render_print_streets(lines, streets_data, processed, theme)
+
+    # Markers
+    if pin_location:
+        _render_pin_marker(lines, pin_location, board_w, board_h, font_size_mm)
+        layer_count += 1
+    if heart_location:
+        _render_heart_marker(lines, heart_location, board_w, board_h, font_size_mm)
+        layer_count += 1
+        path_count += 1
+    if markers:
+        _render_custom_markers(lines, markers, board_w, board_h, font_size_mm)
+        layer_count += 1
+        path_count += len(markers)
+
+    lines.append("  </g>")  # close map clip group
+    lines.append("")
+
+    # Text area — below the map, on the white mat
+    text_center_x = round(board_w / 2, 2)
+    text_start_y = map_y + map_h + text_area_h * 0.35
+
+    # Print-mode font sizes (larger for poster readability)
+    title_size = round(font_size_mm * 1.6, 2)
+    subtitle_size = round(font_size_mm * 0.7, 2)
+    coord_size = round(font_size_mm * 0.5, 2)
+
+    lines.append('  <g id="poster_text">')
+
+    # City name (large, bold, uppercase)
+    lines.append(
+        f'    <text x="{text_center_x}" y="{round(text_start_y, 2)}"'
+        f' text-anchor="middle" font-family="{ff}"'
+        f' font-size="{title_size}" font-weight="bold"'
+        f' letter-spacing="{round(title_size * 0.15, 2)}"'
+        f' fill="{theme["text_primary"]}">{_escape_xml(location_name.upper())}</text>'
+    )
+
+    next_y = text_start_y + title_size * 0.9
+
+    # Subtitle (state/country or custom tagline)
+    if subtitle:
+        lines.append(
+            f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
+            f' text-anchor="middle" font-family="{ff}"'
+            f' font-size="{subtitle_size}"'
+            f' letter-spacing="{round(subtitle_size * 0.2, 2)}"'
+            f' fill="{theme["text_secondary"]}">{_escape_xml(subtitle)}</text>'
+        )
+        next_y += subtitle_size * 1.3
+        layer_count += 1
+
+    # GPS coordinates
+    if show_coordinates and latlon:
+        lat, lon = latlon
+        lat_dir = "N" if lat >= 0 else "S"
+        lon_dir = "W" if lon < 0 else "E"
+        coord_text = f"{abs(lat):.6f}\u00b0 {lat_dir}  /  {abs(lon):.6f}\u00b0 {lon_dir}"
+
+        lines.append(
+            f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
+            f' text-anchor="middle" font-family="{ff}"'
+            f' font-size="{coord_size}"'
+            f' letter-spacing="{round(coord_size * 0.1, 2)}"'
+            f' fill="{theme["text_secondary"]}">{coord_text}</text>'
+        )
+
+    lines.append("  </g>")
+    lines.append("")
+    lines.append("</svg>")
+
+    svg_str = "\n".join(lines)
+
+    return {
+        "svg": svg_str,
+        "node_count": node_count,
+        "path_count": path_count,
+        "layer_count": layer_count,
+    }
+
+
 def _render_geography(lines: list[str], polygons: list, style: CutStyle):
     """Render the main geography layer based on cut style."""
     if style == CutStyle.outline:
@@ -271,6 +554,73 @@ def _render_geography(lines: list[str], polygons: list, style: CutStyle):
                     f' stroke-linejoin="round"/>'
                 )
         lines.append("  </g>")
+
+
+def _render_print_water(lines: list[str], water_data: dict, processed: dict, theme: dict):
+    """Render water features with themed poster colors."""
+    transform = processed.get("transform")
+
+    lines.append('    <g id="water_features">')
+
+    for coords, water_type, name in water_data.get("water_polygons", []):
+        if len(coords) < 3:
+            continue
+        board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
+        path_d = _coords_to_path(board_coords)
+        lines.append(
+            f'      <path d="{path_d}"'
+            f' fill="{theme["water"]}" stroke="{theme["water_stroke"]}"'
+            f' stroke-width="0.3" stroke-linejoin="round"/>'
+        )
+
+    for coords, water_type, name in water_data.get("waterways", []):
+        if len(coords) < 2:
+            continue
+        board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
+        path_d = _coords_to_open_path(board_coords)
+        width = 1.2 if water_type in ("river", "coastline") else 0.6
+        lines.append(
+            f'      <path d="{path_d}"'
+            f' fill="none" stroke="{theme["water_stroke"]}" stroke-width="{width}"'
+            f' stroke-linecap="round" stroke-linejoin="round"/>'
+        )
+
+    lines.append("    </g>")
+
+
+def _render_print_streets(lines: list[str], streets_data: dict, processed: dict, theme: dict):
+    """Render streets with themed poster colors — the hero visual for city maps."""
+    transform = processed.get("transform")
+
+    lines.append('    <g id="streets">')
+
+    # Major roads (wider, bolder)
+    for coords, road_class, width, name in streets_data.get("major_roads", []):
+        if len(coords) < 2:
+            continue
+        board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
+        path_d = _coords_to_open_path(board_coords)
+        sw = round(width * 2.5, 2)
+        lines.append(
+            f'      <path d="{path_d}"'
+            f' fill="none" stroke="{theme["street_major"]}" stroke-width="{sw}"'
+            f' stroke-linecap="round" stroke-linejoin="round"/>'
+        )
+
+    # Minor roads (thinner, lighter)
+    for coords, road_class, width, name in streets_data.get("minor_roads", []):
+        if len(coords) < 2:
+            continue
+        board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
+        path_d = _coords_to_open_path(board_coords)
+        sw = round(width * 2.0, 2)
+        lines.append(
+            f'      <path d="{path_d}"'
+            f' fill="none" stroke="{theme["street_minor"]}" stroke-width="{sw}"'
+            f' stroke-linecap="round" stroke-linejoin="round"/>'
+        )
+
+    lines.append("    </g>")
 
 
 def _render_water(lines: list[str], water_data: dict, processed: dict):

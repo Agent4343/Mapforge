@@ -185,7 +185,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             if heart_coords:
                 heart_mm = heart_coords[0]
 
-    # Generate SVG
+    # Generate CNC SVG (always — this is the primary output)
     location_name = req.text or f"Location {req.osm_id}"
     result = generate_svg(
         processed=processed,
@@ -201,7 +201,26 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         font_family=req.font_family.value,
         border_style=req.border_style.value,
         heart_location=heart_mm,
-        output_mode=getattr(req, "output_mode", "cnc"),
+        output_mode="cnc",
+    )
+
+    # Generate print poster SVG (used for high-res PNG wall art)
+    print_svg_result = generate_svg(
+        processed=processed,
+        location_name=location_name,
+        style=req.style,
+        show_coordinates=req.show_coordinates,
+        font_size_mm=req.font_size_mm,
+        streets_data=streets_data,
+        contour_data=contour_data,
+        water_data=water_data,
+        markers=board_markers,
+        subtitle=req.subtitle,
+        font_family=req.font_family.value,
+        border_style=req.border_style.value,
+        heart_location=heart_mm,
+        output_mode="print",
+        color_theme=req.color_theme,
     )
 
     # Store SVG
@@ -239,10 +258,14 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     except Exception as e:
         log.warning(f"Thumbnail generation failed (non-fatal): {e}")
 
-    # Generate high-res print PNG with proper land/water colors for wall art
+    # Generate high-res print PNG from poster SVG (themed, with proper layout)
     print_png_key = None
     try:
-        print_bytes = generate_print_image(result["svg"], color_theme=req.color_theme)
+        print_bytes = generate_print_image(
+            print_svg_result["svg"],
+            color_theme=req.color_theme,
+            skip_remap=True,  # Print SVG already has themed colors
+        )
         print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
         await store_file(print_png_key, print_bytes, content_type="image/png")
     except Exception as e:

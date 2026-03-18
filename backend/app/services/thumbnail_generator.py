@@ -32,13 +32,27 @@ PRINT_COLOR_MAP = {
     "#666666": "#6b5b47",  # coordinate text → warm dark tone
 }
 
-# Color themes for print-ready wall art maps
-# Each theme maps CNC SVG colors to print-friendly colors
+# Print poster theme colors — used directly by generate_svg in print mode.
+# Each theme has semantic colors for land, water, streets, and text
+# so the SVG generator can produce proper poster-style output.
 COLOR_THEMES = {
     "classic": {
         "label": "Classic",
         "background": "#faf8f5",
         "colors": PRINT_COLOR_MAP,
+        "poster": {
+            "mat": "#ffffff",
+            "map_bg": "#faf8f5",
+            "land": "#f0ebe0",
+            "land_stroke": "#d4c5a9",
+            "water": "#c6dff0",
+            "water_stroke": "#8bb8d4",
+            "street_major": "#555555",
+            "street_minor": "#888888",
+            "street_label": "#444444",
+            "text_primary": "#1a1a1a",
+            "text_secondary": "#666666",
+        },
     },
     "modern_dark": {
         "label": "Modern Dark",
@@ -53,6 +67,19 @@ COLOR_THEMES = {
             "#444444": "#cbd5e0",
             "#cccccc": "#2d3748",
             "#666666": "#a0aec0",
+        },
+        "poster": {
+            "mat": "#ffffff",
+            "map_bg": "#1a1a2e",
+            "land": "#1e2140",
+            "land_stroke": "#2d3060",
+            "water": "#162850",
+            "water_stroke": "#2b4a7a",
+            "street_major": "#e2e8f0",
+            "street_minor": "#a0aec0",
+            "street_label": "#cbd5e0",
+            "text_primary": "#1a1a1a",
+            "text_secondary": "#666666",
         },
     },
     "rose_gold": {
@@ -69,6 +96,19 @@ COLOR_THEMES = {
             "#cccccc": "#e8d5cf",
             "#666666": "#8b6f66",
         },
+        "poster": {
+            "mat": "#ffffff",
+            "map_bg": "#fdf2f0",
+            "land": "#f5e0db",
+            "land_stroke": "#d4a59a",
+            "water": "#c8dce8",
+            "water_stroke": "#9abdd4",
+            "street_major": "#8b6f66",
+            "street_minor": "#b8a098",
+            "street_label": "#6b5550",
+            "text_primary": "#3d2e2a",
+            "text_secondary": "#8b6f66",
+        },
     },
     "midnight": {
         "label": "Midnight Blue",
@@ -83,6 +123,19 @@ COLOR_THEMES = {
             "#444444": "#a8c4d4",
             "#cccccc": "#1b3a4b",
             "#666666": "#8fa7b8",
+        },
+        "poster": {
+            "mat": "#ffffff",
+            "map_bg": "#0f1923",
+            "land": "#142636",
+            "land_stroke": "#1b3a4b",
+            "water": "#0d1e30",
+            "water_stroke": "#1a3550",
+            "street_major": "#c9d6df",
+            "street_minor": "#8fa7b8",
+            "street_label": "#a8c4d4",
+            "text_primary": "#1a1a1a",
+            "text_secondary": "#555555",
         },
     },
     "sage": {
@@ -99,6 +152,19 @@ COLOR_THEMES = {
             "#cccccc": "#c5d3be",
             "#666666": "#5a6e54",
         },
+        "poster": {
+            "mat": "#ffffff",
+            "map_bg": "#eef2ea",
+            "land": "#dfe8d8",
+            "land_stroke": "#b8c8ac",
+            "water": "#c0d8d0",
+            "water_stroke": "#8bb8a8",
+            "street_major": "#4a5e44",
+            "street_minor": "#7d9b76",
+            "street_label": "#3d4e38",
+            "text_primary": "#2a3528",
+            "text_secondary": "#5a6e54",
+        },
     },
     "minimal": {
         "label": "Minimal B&W",
@@ -113,6 +179,19 @@ COLOR_THEMES = {
             "#444444": "#444444",
             "#cccccc": "#e8e8e8",
             "#666666": "#888888",
+        },
+        "poster": {
+            "mat": "#ffffff",
+            "map_bg": "#ffffff",
+            "land": "#ffffff",
+            "land_stroke": "#e0e0e0",
+            "water": "#f0f0f0",
+            "water_stroke": "#cccccc",
+            "street_major": "#222222",
+            "street_minor": "#666666",
+            "street_label": "#444444",
+            "text_primary": "#111111",
+            "text_secondary": "#666666",
         },
     },
     "navy_gold": {
@@ -129,6 +208,19 @@ COLOR_THEMES = {
             "#cccccc": "#1a2d52",
             "#666666": "#c9b06b",
         },
+        "poster": {
+            "mat": "#ffffff",
+            "map_bg": "#0a1628",
+            "land": "#0f1e38",
+            "land_stroke": "#1a2d52",
+            "water": "#081428",
+            "water_stroke": "#142040",
+            "street_major": "#d4a843",
+            "street_minor": "#b8943a",
+            "street_label": "#e8c95a",
+            "text_primary": "#1a1a1a",
+            "text_secondary": "#555555",
+        },
     },
     "blush": {
         "label": "Blush Pink",
@@ -143,6 +235,19 @@ COLOR_THEMES = {
             "#444444": "#8b5e5e",
             "#cccccc": "#f0d4d4",
             "#666666": "#a87070",
+        },
+        "poster": {
+            "mat": "#ffffff",
+            "map_bg": "#fef0f0",
+            "land": "#f8e0e0",
+            "land_stroke": "#e8b4b4",
+            "water": "#e8d0d8",
+            "water_stroke": "#d4a0b0",
+            "street_major": "#8b5e5e",
+            "street_minor": "#c27c7c",
+            "street_label": "#6b4545",
+            "text_primary": "#3d2828",
+            "text_secondary": "#8b5e5e",
         },
     },
     "ocean": {
@@ -159,6 +264,19 @@ COLOR_THEMES = {
             "#cccccc": "#aed6f1",
             "#666666": "#1a5276",
         },
+        "poster": {
+            "mat": "#ffffff",
+            "map_bg": "#e8f4f8",
+            "land": "#d0e8f0",
+            "land_stroke": "#90c0d8",
+            "water": "#a8d4e8",
+            "water_stroke": "#5dade2",
+            "street_major": "#1a5276",
+            "street_minor": "#2980b9",
+            "street_label": "#0e3d5c",
+            "text_primary": "#0e3d5c",
+            "text_secondary": "#1a5276",
+        },
     },
     "charcoal": {
         "label": "Charcoal",
@@ -173,6 +291,19 @@ COLOR_THEMES = {
             "#444444": "#d4c5a9",
             "#cccccc": "#4a4a4a",
             "#666666": "#c4b896",
+        },
+        "poster": {
+            "mat": "#ffffff",
+            "map_bg": "#2d2d2d",
+            "land": "#383838",
+            "land_stroke": "#4a4a4a",
+            "water": "#262626",
+            "water_stroke": "#404040",
+            "street_major": "#e0d5c1",
+            "street_minor": "#b8a88a",
+            "street_label": "#d4c5a9",
+            "text_primary": "#1a1a1a",
+            "text_secondary": "#555555",
         },
     },
     "terracotta": {
@@ -189,6 +320,19 @@ COLOR_THEMES = {
             "#cccccc": "#deb887",
             "#666666": "#8b5e3c",
         },
+        "poster": {
+            "mat": "#ffffff",
+            "map_bg": "#f5e6d6",
+            "land": "#eddcc8",
+            "land_stroke": "#d4b896",
+            "water": "#c8d8e0",
+            "water_stroke": "#90b0c0",
+            "street_major": "#8b4513",
+            "street_minor": "#a0522d",
+            "street_label": "#6b3410",
+            "text_primary": "#3d2010",
+            "text_secondary": "#8b5e3c",
+        },
     },
     "lavender": {
         "label": "Lavender",
@@ -203,6 +347,19 @@ COLOR_THEMES = {
             "#444444": "#3d2e6b",
             "#cccccc": "#d4ccf0",
             "#666666": "#6b5a9a",
+        },
+        "poster": {
+            "mat": "#ffffff",
+            "map_bg": "#f0edf8",
+            "land": "#e4dff0",
+            "land_stroke": "#c0b4d8",
+            "water": "#d0cae8",
+            "water_stroke": "#a898c8",
+            "street_major": "#5b4a8a",
+            "street_minor": "#7b6ba0",
+            "street_label": "#3d2e6b",
+            "text_primary": "#2a2040",
+            "text_secondary": "#6b5a9a",
         },
     },
     "forest": {
@@ -219,6 +376,19 @@ COLOR_THEMES = {
             "#cccccc": "#1a4a1a",
             "#666666": "#b8a882",
         },
+        "poster": {
+            "mat": "#ffffff",
+            "map_bg": "#0d1f0d",
+            "land": "#142814",
+            "land_stroke": "#1a4a1a",
+            "water": "#0a180a",
+            "water_stroke": "#1a3a1a",
+            "street_major": "#c4b896",
+            "street_minor": "#a0956b",
+            "street_label": "#d4c5a0",
+            "text_primary": "#1a1a1a",
+            "text_secondary": "#555555",
+        },
     },
     "sunset": {
         "label": "Sunset",
@@ -233,6 +403,19 @@ COLOR_THEMES = {
             "#444444": "#922b21",
             "#cccccc": "#f5cba7",
             "#666666": "#a93226",
+        },
+        "poster": {
+            "mat": "#ffffff",
+            "map_bg": "#fff5eb",
+            "land": "#f8e8d0",
+            "land_stroke": "#e8c8a0",
+            "water": "#e8d8c8",
+            "water_stroke": "#d4b898",
+            "street_major": "#c0392b",
+            "street_minor": "#d35400",
+            "street_label": "#922b21",
+            "text_primary": "#4a1a10",
+            "text_secondary": "#a93226",
         },
     },
     "arctic": {
@@ -249,6 +432,19 @@ COLOR_THEMES = {
             "#cccccc": "#aed6f1",
             "#666666": "#2c3e50",
         },
+        "poster": {
+            "mat": "#ffffff",
+            "map_bg": "#eef5fb",
+            "land": "#e0eef5",
+            "land_stroke": "#b0d0e4",
+            "water": "#c8e0f0",
+            "water_stroke": "#85c1e9",
+            "street_major": "#2c3e50",
+            "street_minor": "#34495e",
+            "street_label": "#1a252f",
+            "text_primary": "#1a252f",
+            "text_secondary": "#2c3e50",
+        },
     },
 }
 
@@ -263,6 +459,12 @@ def get_theme_background(theme_name: str) -> str:
     """Get background color for a theme."""
     theme = COLOR_THEMES.get(theme_name, COLOR_THEMES["classic"])
     return theme["background"]
+
+
+def get_poster_theme(theme_name: str) -> dict:
+    """Get poster-specific color palette for print-mode SVG generation."""
+    theme = COLOR_THEMES.get(theme_name, COLOR_THEMES["classic"])
+    return theme.get("poster", COLOR_THEMES["classic"]["poster"])
 
 
 def remap_svg_colors(svg_string: str, theme_name: str) -> str:
@@ -303,30 +505,34 @@ def generate_print_image(
     output_width: int = 4800,
     background_color: str | None = None,
     color_theme: str = "classic",
+    skip_remap: bool = False,
 ) -> bytes:
     """Render SVG to a high-resolution print-ready PNG for wall art.
 
-    Remaps CNC toolpath colors to rich, natural tones suitable for
-    professional printing at 300 DPI. Default 4800px width gives
-    300 DPI at 16" wide — standard for print shops.
+    When skip_remap=True, the SVG is assumed to already have themed colors
+    (e.g., from the print-mode SVG generator) and is rasterized directly.
+
+    When skip_remap=False (legacy), CNC toolpath colors are remapped to
+    print-friendly colors.
 
     Args:
         svg_string: The SVG content to render.
         output_width: Pixel width (4800 = 300 DPI at 16"). Use 6000 for 20".
         background_color: Background color override. If None, uses theme default.
         color_theme: Color theme name (classic, modern_dark, rose_gold, etc.).
+        skip_remap: If True, skip color remapping (SVG already themed).
 
     Returns:
         High-resolution PNG image as bytes.
     """
-    colors = get_theme_colors(color_theme)
-    bg = background_color or get_theme_background(color_theme)
-
-    # Remap CNC colors to print-friendly colors
-    print_svg = _remap_colors(svg_string, colors)
-
-    # Add background
-    print_svg = _add_background(print_svg, bg)
+    if skip_remap:
+        # Print-mode SVG already has all colors, backgrounds, and layout
+        print_svg = svg_string
+    else:
+        colors = get_theme_colors(color_theme)
+        bg = background_color or get_theme_background(color_theme)
+        print_svg = _remap_colors(svg_string, colors)
+        print_svg = _add_background(print_svg, bg)
 
     png_bytes = cairosvg.svg2png(
         bytestring=print_svg.encode("utf-8"),
