@@ -357,6 +357,10 @@ def _generate_print_svg(
     geo_w = geo_max_x - geo_min_x
     geo_h = geo_max_y - geo_min_y
 
+    poster_scale = 1.0
+    remap_offset_x = map_x
+    remap_offset_y = map_y
+
     if geo_w > 0 and geo_h > 0:
         # Scale factor to fit geometry into the map area, preserving aspect ratio
         poster_scale = min(map_w / geo_w, map_h / geo_h)
@@ -495,20 +499,41 @@ def _generate_print_svg(
     if streets_data:
         _render_print_streets(lines, streets_data, processed, theme)
 
-    # Markers
+    # Markers — remap coordinates from board space to poster map space
+    def _remap_point(x, y):
+        if geo_w > 0 and geo_h > 0:
+            return (
+                round((x - geo_min_x) * poster_scale + remap_offset_x, 2),
+                round((y - geo_min_y) * poster_scale + remap_offset_y, 2),
+            )
+        return (x, y)
+
     if pin_location:
-        _render_pin_marker(lines, pin_location, board_w, board_h, font_size_mm)
+        pin_remapped = _remap_point(*pin_location)
+        _render_pin_marker(lines, pin_remapped, board_w, board_h, font_size_mm)
         layer_count += 1
     if heart_location:
-        _render_heart_marker(lines, heart_location, board_w, board_h, font_size_mm)
+        heart_remapped = _remap_point(*heart_location)
+        _render_heart_marker(lines, heart_remapped, board_w, board_h, font_size_mm)
         layer_count += 1
         path_count += 1
     if markers:
-        _render_custom_markers(lines, markers, board_w, board_h, font_size_mm)
+        remapped_markers = [
+            {**m, "x": _remap_point(m["x"], m["y"])[0], "y": _remap_point(m["x"], m["y"])[1]}
+            for m in markers
+        ]
+        _render_custom_markers(lines, remapped_markers, board_w, board_h, font_size_mm)
         layer_count += 1
         path_count += len(markers)
 
     lines.append("  </g>")  # close map clip group
+    lines.append("")
+
+    # Subtle border frame around the map area for a premium poster look
+    lines.append(
+        f'  <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"'
+        f' fill="none" stroke="{theme["land_stroke"]}" stroke-width="0.8"/>'
+    )
     lines.append("")
 
     # Text area — below the map, on the white mat

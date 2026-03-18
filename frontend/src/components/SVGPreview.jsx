@@ -88,17 +88,28 @@ export default function SVGPreview({ svgContent, loading, error, outputMode, col
   const isPrint = outputMode === "print";
   const theme = THEME_COLOR_MAPS[colorTheme] || THEME_COLOR_MAPS.classic;
 
-  // In print mode, the backend returns a fully-themed SVG — display it as-is.
-  // Only apply client-side color remapping for CNC SVGs viewed in print preview
-  // (e.g., when switching modes without regenerating).
+  // Make SVG responsive for in-browser display. SVGs with physical mm units
+  // (width="406.4mm") render at full physical size (~1536px) which overflows
+  // the preview container. Replace with responsive attributes while keeping
+  // the viewBox for correct aspect ratio.
   const displaySvg = useMemo(() => {
     if (!svgContent) return null;
-    if (!isPrint) return svgContent;
-    // If the SVG already contains print-mode markers (white mat, themed colors),
-    // don't re-remap. The backend print SVG includes an id="mat_border" element.
-    if (svgContent.includes('id="mat_border"')) return svgContent;
+
+    let svg = svgContent;
+
+    // Make SVG responsive: replace mm dimensions with CSS-friendly values
+    // The viewBox attribute preserves aspect ratio and internal coordinates
+    svg = svg.replace(/width="[\d.]+mm"/, 'width="100%"');
+    svg = svg.replace(/height="[\d.]+mm"/, 'height="auto"');
+
+    // In print mode with a backend-generated print SVG, use as-is (already themed)
+    if (isPrint && svg.includes('id="mat_border"')) return svg;
+
+    // CNC mode — return as-is (no color remap needed)
+    if (!isPrint) return svg;
+
     // Fallback: legacy CNC SVG shown in print mode — apply client-side remap
-    return applyPrintColors(svgContent, colorTheme || "classic");
+    return applyPrintColors(svg, colorTheme || "classic");
   }, [svgContent, isPrint, colorTheme]);
 
   const handleMouseDown = useCallback(

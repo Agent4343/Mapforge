@@ -360,7 +360,8 @@ body {
 
 .preview-container svg {
   display: block;
-  max-width: 100%;
+  width: 100%;
+  height: auto;
   max-height: 80vh;
 }
 
@@ -1420,6 +1421,8 @@ body {
   }
 
   .preview-container svg {
+    width: 100%;
+    height: auto;
     max-height: 50vh;
   }
 }
