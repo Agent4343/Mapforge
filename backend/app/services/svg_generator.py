@@ -337,12 +337,12 @@ def _generate_print_svg(
 
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # Poster layout dimensions — generous white mat for premium poster feel
-    mat_pct = 0.08  # 8% white mat on each side (industry standard)
+    # Poster layout dimensions — clean white mat with maximum map coverage
+    mat_pct = 0.05  # 5% white mat on each side
     mat_x = round(board_w * mat_pct, 2)
     mat_y = round(board_h * mat_pct, 2)
     # Extra space at bottom for text area
-    text_area_h = round(board_h * 0.14, 2)
+    text_area_h = round(board_h * 0.12, 2)
     map_x = mat_x
     map_y = mat_y
     map_w = round(board_w - 2 * mat_x, 2)
@@ -940,8 +940,12 @@ def _render_streets(lines: list[str], streets_data: dict, processed: dict, outpu
     transform = processed.get("transform")
     is_print = output_mode == "print"
 
-    # Print mode: scale up road widths for visible poster output
-    width_scale = 3.0 if is_print else 1.0
+    # Print mode: modest scale-up for visible poster output.
+    # CNC base widths (0.3–1.2 mm) need a small bump for print, but 3x was
+    # way too heavy — roads became dominant black bands.  Use separate scales
+    # for major vs minor to preserve the premium road hierarchy.
+    major_width_scale = 1.8 if is_print else 1.0
+    minor_width_scale = 1.2 if is_print else 1.0
 
     lines.append("  <!-- Layer: detail_lines (streets) -->")
     lines.append('  <!-- Toolpath: Engrave, 1/8" ball nose, 0.03"-0.05" -->')
@@ -957,7 +961,7 @@ def _render_streets(lines: list[str], streets_data: dict, processed: dict, outpu
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
-        sw = round(width * width_scale, 2)
+        sw = round(width * major_width_scale, 2)
         lines.append(
             f'    <path d="{path_d}"'
             f' fill="none" stroke="{major_color}" stroke-width="{sw}"'
@@ -973,7 +977,7 @@ def _render_streets(lines: list[str], streets_data: dict, processed: dict, outpu
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
-        sw = round(width * width_scale, 2)
+        sw = round(width * minor_width_scale, 2)
         lines.append(
             f'    <path d="{path_d}"'
             f' fill="none" stroke="{minor_color}" stroke-width="{sw}"'
@@ -985,8 +989,10 @@ def _render_streets(lines: list[str], streets_data: dict, processed: dict, outpu
     lines.append("  </g>")
     lines.append("")
 
-    # Layer: street_labels
-    _render_street_labels(lines, label_candidates, board_w, board_h, output_mode=output_mode)
+    # Layer: street_labels — skip in print mode for a clean, abstract look
+    # (premium map posters omit street name labels)
+    if not is_print:
+        _render_street_labels(lines, label_candidates, board_w, board_h, output_mode=output_mode)
 
 
 def _render_street_labels(
