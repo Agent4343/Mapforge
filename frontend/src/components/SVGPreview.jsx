@@ -88,10 +88,16 @@ export default function SVGPreview({ svgContent, loading, error, outputMode, col
   const isPrint = outputMode === "print";
   const theme = THEME_COLOR_MAPS[colorTheme] || THEME_COLOR_MAPS.classic;
 
-  // Apply print colors to SVG when in print mode
+  // In print mode, the backend returns a fully-themed SVG — display it as-is.
+  // Only apply client-side color remapping for CNC SVGs viewed in print preview
+  // (e.g., when switching modes without regenerating).
   const displaySvg = useMemo(() => {
     if (!svgContent) return null;
     if (!isPrint) return svgContent;
+    // If the SVG already contains print-mode markers (white mat, themed colors),
+    // don't re-remap. The backend print SVG includes an id="mat_border" element.
+    if (svgContent.includes('id="mat_border"')) return svgContent;
+    // Fallback: legacy CNC SVG shown in print mode — apply client-side remap
     return applyPrintColors(svgContent, colorTheme || "classic");
   }, [svgContent, isPrint, colorTheme]);
 

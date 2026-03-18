@@ -1,6 +1,8 @@
 """SVG/DXF generation API router — with persistence, auth, and all product types."""
 
+import hashlib
 from datetime import datetime, timezone
+from functools import lru_cache
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
@@ -30,6 +32,27 @@ from app.services.thumbnail_generator import generate_thumbnail, generate_print_
 
 router = APIRouter(prefix="/api/v1", tags=["generate"])
 limiter = Limiter(key_func=get_remote_address)
+
+# In-memory cache for Overpass API results (streets, water) keyed by bbox.
+# Avoids hitting Overpass repeatedly for the same geographic area.
+# Bounded to 200 entries (~most recent locations). Cleared on server restart.
+_overpass_cache: dict[str, dict] = {}
+_OVERPASS_CACHE_MAX = 200
+
+
+def _bbox_cache_key(prefix: str, bbox: tuple) -> str:
+    """Create a cache key for Overpass results based on bbox."""
+    return f"{prefix}:{bbox[0]:.4f},{bbox[1]:.4f},{bbox[2]:.4f},{bbox[3]:.4f}"
+
+
+def _cache_overpass(key: str, data: dict) -> dict:
+    """Store Overpass result in memory cache with size limit."""
+    if len(_overpass_cache) >= _OVERPASS_CACHE_MAX:
+        # Evict oldest entry
+        oldest = next(iter(_overpass_cache))
+        del _overpass_cache[oldest]
+    _overpass_cache[key] = data
+    return data
 
 
 async def _maybe_reset_monthly_counter(user: User, db: AsyncSession):
@@ -127,10 +150,18 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     if req.include_streets or auto_streets:
         try:
             bounds = geom.bounds  # minx, miny, maxx, maxy
-            streets_data = await fetch_streets(
-                bbox=(bounds[1], bounds[0], bounds[3], bounds[2]),
-                include_minor=req.product_type.value in street_types,
-            )
+            bbox = (bounds[1], bounds[0], bounds[3], bounds[2])
+            cache_key = _bbox_cache_key("streets", bbox)
+            if cache_key in _overpass_cache:
+                streets_data = _overpass_cache[cache_key]
+                log.info("Using cached street data")
+            else:
+                streets_data = await fetch_streets(
+                    bbox=bbox,
+                    include_minor=req.product_type.value in street_types,
+                )
+                if streets_data:
+                    _cache_overpass(cache_key, streets_data)
         except Exception as e:
             log.warning(f"Street fetch failed (non-fatal): {e}")
 
@@ -140,9 +171,15 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     if req.product_type.value in water_types:
         try:
             bounds = geom.bounds
-            water_data = await fetch_water_features(
-                bbox=(bounds[1], bounds[0], bounds[3], bounds[2]),
-            )
+            bbox = (bounds[1], bounds[0], bounds[3], bounds[2])
+            cache_key = _bbox_cache_key("water", bbox)
+            if cache_key in _overpass_cache:
+                water_data = _overpass_cache[cache_key]
+                log.info("Using cached water data")
+            else:
+                water_data = await fetch_water_features(bbox=bbox)
+                if water_data:
+                    _cache_overpass(cache_key, water_data)
         except Exception as e:
             log.warning(f"Water feature fetch failed (non-fatal): {e}")
 
@@ -251,10 +288,14 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         except Exception as e:
             log.warning(f"DXF generation failed (non-fatal): {e}")
 
-    # Generate PNG thumbnail for Etsy product mockups
+    # Generate PNG thumbnail for Etsy product mockups — use the themed print SVG
+    # so thumbnails look like the actual product (not raw CNC toolpath colors)
     thumbnail_key = None
     try:
-        png_bytes = generate_thumbnail(result["svg"])
+        png_bytes = generate_thumbnail(
+            print_svg_result["svg"],
+            background_color=None,  # Print SVG already has mat + background
+        )
         thumbnail_key = svg_key.replace("svg/", "thumbnails/").replace(".svg", ".png")
         await store_file(thumbnail_key, png_bytes, content_type="image/png")
     except Exception as e:
@@ -422,7 +463,7 @@ async def generate_pin(
     except Exception as e:
         log.warning(f"Water feature fetch failed (non-fatal): {e}")
 
-    # Generate SVG with pin marker
+    # Generate CNC SVG with pin marker
     location_name = req.label
     result = generate_svg(
         processed=processed,
@@ -437,6 +478,27 @@ async def generate_pin(
         subtitle=req.subtitle,
         font_family=req.font_family.value,
         border_style=req.border_style.value,
+        output_mode="cnc",
+        product_type="name_sign",
+    )
+
+    # Generate print poster SVG (themed, with proper layout)
+    print_svg_result = generate_svg(
+        processed=processed,
+        location_name=location_name,
+        style=req.style,
+        show_coordinates=req.show_coordinates,
+        font_size_mm=req.font_size_mm,
+        center_latlon=(req.lat, req.lon),
+        streets_data=streets_data,
+        water_data=water_data,
+        pin_location=pin_mm,
+        subtitle=req.subtitle,
+        font_family=req.font_family.value,
+        border_style=req.border_style.value,
+        output_mode="print",
+        color_theme=req.color_theme,
+        product_type="name_sign",
     )
 
     # Store SVG
@@ -466,19 +528,23 @@ async def generate_pin(
         except Exception as e:
             log.warning(f"DXF generation failed (non-fatal): {e}")
 
-    # Generate thumbnail
+    # Generate thumbnail from the themed print SVG
     thumbnail_key = None
     try:
-        png_bytes = generate_thumbnail(result["svg"])
+        png_bytes = generate_thumbnail(print_svg_result["svg"], background_color=None)
         thumbnail_key = svg_key.replace("svg/", "thumbnails/").replace(".svg", ".png")
         await store_file(thumbnail_key, png_bytes, content_type="image/png")
     except Exception as e:
         log.warning(f"Thumbnail generation failed (non-fatal): {e}")
 
-    # Generate high-res print PNG
+    # Generate high-res print PNG from the themed print SVG
     print_png_key = None
     try:
-        print_bytes = generate_print_image(result["svg"], color_theme=req.color_theme)
+        print_bytes = generate_print_image(
+            print_svg_result["svg"],
+            color_theme=req.color_theme,
+            skip_remap=True,
+        )
         print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
         await store_file(print_png_key, print_bytes, content_type="image/png")
     except Exception as e:
@@ -521,8 +587,12 @@ async def generate_pin(
         log.error(f"Database error saving pin file: {e}")
         raise HTTPException(status_code=500, detail="Failed to save to library. Please try again.")
 
+    # Return the appropriate SVG based on output mode
+    is_print = getattr(req, "output_mode", "cnc") == "print"
+    display_result = print_svg_result if is_print else result
+
     return GenerateResponse(
-        svg=result["svg"] if req.export_format == ExportFormat.svg else None,
+        svg=display_result["svg"] if req.export_format == ExportFormat.svg else None,
         dxf_available=dxf_key is not None,
         thumbnail_available=thumbnail_key is not None,
         print_png_available=print_png_key is not None,
@@ -686,14 +756,41 @@ async def list_themes():
 
 
 def _extract_province(location_name: str) -> str | None:
-    """Try to extract province/state from location name (comma-separated)."""
-    regions = {
-        # Canadian provinces and territories
-        "Ontario", "Quebec", "British Columbia", "Alberta", "Manitoba",
-        "Saskatchewan", "Nova Scotia", "New Brunswick",
-        "Newfoundland and Labrador", "Prince Edward Island",
-        "Northwest Territories", "Yukon", "Nunavut",
-        # US states
+    """Try to extract province/state from location name (comma-separated).
+
+    Handles English and French names, accented characters, and common abbreviations.
+    """
+    import unicodedata
+
+    # Map of all recognized names (including French) → canonical English name
+    _region_aliases: dict[str, str] = {}
+
+    # Canadian provinces and territories (English + French)
+    _ca_provinces = {
+        "Ontario": ["Ontario"],
+        "Quebec": ["Quebec", "Québec"],
+        "British Columbia": ["British Columbia", "Colombie-Britannique"],
+        "Alberta": ["Alberta"],
+        "Manitoba": ["Manitoba"],
+        "Saskatchewan": ["Saskatchewan"],
+        "Nova Scotia": ["Nova Scotia", "Nouvelle-Écosse"],
+        "New Brunswick": ["New Brunswick", "Nouveau-Brunswick"],
+        "Newfoundland and Labrador": ["Newfoundland and Labrador", "Terre-Neuve-et-Labrador", "Newfoundland"],
+        "Prince Edward Island": ["Prince Edward Island", "Île-du-Prince-Édouard"],
+        "Northwest Territories": ["Northwest Territories", "Territoires du Nord-Ouest"],
+        "Yukon": ["Yukon"],
+        "Nunavut": ["Nunavut"],
+    }
+    for canonical, aliases in _ca_provinces.items():
+        for alias in aliases:
+            _region_aliases[alias.lower()] = canonical
+            # Also store accent-stripped version
+            stripped = unicodedata.normalize("NFD", alias)
+            stripped = "".join(c for c in stripped if unicodedata.category(c) != "Mn")
+            _region_aliases[stripped.lower()] = canonical
+
+    # US states
+    us_states = [
         "Alabama", "Alaska", "Arizona", "Arkansas", "California",
         "Colorado", "Connecticut", "Delaware", "Florida", "Georgia",
         "Hawaii", "Idaho", "Illinois", "Indiana", "Iowa",
@@ -704,11 +801,20 @@ def _extract_province(location_name: str) -> str | None:
         "Oklahoma", "Oregon", "Pennsylvania", "Rhode Island", "South Carolina",
         "South Dakota", "Tennessee", "Texas", "Utah", "Vermont",
         "Virginia", "Washington", "West Virginia", "Wisconsin", "Wyoming",
-    }
-    regions_lower = {r.lower(): r for r in regions}
+    ]
+    for state in us_states:
+        _region_aliases[state.lower()] = state
+
     parts = [p.strip() for p in location_name.split(",")]
     for part in parts:
-        match = regions_lower.get(part.lower())
+        normalized = part.lower().strip()
+        match = _region_aliases.get(normalized)
+        if match:
+            return match
+        # Try accent-stripped version of the input
+        stripped = unicodedata.normalize("NFD", normalized)
+        stripped = "".join(c for c in stripped if unicodedata.category(c) != "Mn")
+        match = _region_aliases.get(stripped)
         if match:
             return match
     return None

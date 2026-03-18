@@ -48,7 +48,7 @@ async def fetch_water_features(
             data = resp.json()
     except (httpx.HTTPError, httpx.ProxyError) as e:
         log.warning(f"Overpass water request failed: {e}")
-        return []
+        return {"water_polygons": [], "waterways": []}
 
     elements = data.get("elements", [])
     nodes = {}

@@ -64,7 +64,7 @@ async def fetch_streets(
             data = resp.json()
     except (httpx.HTTPError, httpx.ProxyError) as e:
         log.warning(f"Overpass street request failed: {e}")
-        return []
+        return {"major_roads": [], "minor_roads": []}
 
     elements = data.get("elements", [])
     nodes = {}

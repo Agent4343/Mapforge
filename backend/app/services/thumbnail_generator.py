@@ -479,19 +479,19 @@ def remap_svg_colors(svg_string: str, theme_name: str) -> str:
 def generate_thumbnail(
     svg_string: str,
     output_width: int = 2000,
-    background_color: str = "#f5f0e8",
+    background_color: str | None = "#f5f0e8",
 ) -> bytes:
     """Render SVG to a PNG thumbnail image for product listings.
 
     Args:
         svg_string: The SVG content to render.
         output_width: Pixel width of the output PNG (height scales proportionally).
-        background_color: CSS color for the background (warm wood tone by default).
+        background_color: CSS color for the background. None = SVG already has background.
 
     Returns:
         PNG image as bytes.
     """
-    styled_svg = _add_background(svg_string, background_color)
+    styled_svg = _add_background(svg_string, background_color) if background_color else svg_string
 
     png_bytes = cairosvg.svg2png(
         bytestring=styled_svg.encode("utf-8"),

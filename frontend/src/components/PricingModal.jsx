@@ -1,7 +1,10 @@
+import { useState } from "react";
+
 const PLANS = [
   {
     name: "Free",
-    price: "$0",
+    monthlyPrice: "$0",
+    annualPrice: "$0",
     period: "forever",
     features: [
       "3 province silhouettes/month",
@@ -21,9 +24,10 @@ const PLANS = [
   },
   {
     name: "Maker",
-    price: "$9.99",
+    monthlyPrice: "$9.99",
+    annualPrice: "$79.99",
     period: "/month",
-    annual: "$79.99/year (save 33%)",
+    annualPeriod: "/year",
     features: [
       "Unlimited province maps",
       "20 lake/city/park maps per month",
@@ -43,9 +47,10 @@ const PLANS = [
   },
   {
     name: "Pro",
-    price: "$24.99",
+    monthlyPrice: "$24.99",
+    annualPrice: "$199.99",
     period: "/month",
-    annual: "$199.99/year (save 33%)",
+    annualPeriod: "/year",
     features: [
       "Unlimited generations (all types)",
       "SVG + DXF export",
@@ -64,6 +69,8 @@ const PLANS = [
 
 export default function PricingModal({ user, onClose, onSubscribe }) {
   const currentTier = user?.tier || "free";
+  const [billingCycle, setBillingCycle] = useState("monthly");
+  const isAnnual = billingCycle === "annual";
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -72,9 +79,30 @@ export default function PricingModal({ user, onClose, onSubscribe }) {
         onClick={(e) => e.stopPropagation()}
       >
         <h2>Choose Your Plan</h2>
-        <p style={{ color: "var(--text-muted)", fontSize: "13px", marginBottom: "20px" }}>
+        <p style={{ color: "var(--text-muted)", fontSize: "13px", marginBottom: "12px" }}>
           All plans include full access to the map generator. Upgrade anytime, cancel anytime.
         </p>
+
+        {/* Billing cycle toggle */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", marginBottom: "20px" }}>
+          <span style={{ fontSize: "13px", fontWeight: billingCycle === "monthly" ? 600 : 400, color: "var(--text-primary)" }}>Monthly</span>
+          <button
+            type="button"
+            onClick={() => setBillingCycle(isAnnual ? "monthly" : "annual")}
+            style={{
+              width: "44px", height: "24px", borderRadius: "12px", border: "none", cursor: "pointer",
+              background: isAnnual ? "var(--accent)" : "var(--border)", position: "relative", transition: "background 0.2s",
+            }}
+          >
+            <span style={{
+              position: "absolute", top: "3px", width: "18px", height: "18px", borderRadius: "50%",
+              background: "#fff", transition: "left 0.2s", left: isAnnual ? "23px" : "3px",
+            }} />
+          </button>
+          <span style={{ fontSize: "13px", fontWeight: billingCycle === "annual" ? 600 : 400, color: "var(--text-primary)" }}>
+            Annual <span style={{ color: "var(--accent)", fontWeight: 600, fontSize: "11px" }}>Save 33%</span>
+          </span>
+        </div>
 
         <div className="pricing-grid">
           {PLANS.map((plan) => (
@@ -87,12 +115,9 @@ export default function PricingModal({ user, onClose, onSubscribe }) {
               {plan.popular && <div className="pricing-badge">Most Popular</div>}
               <h3>{plan.name}</h3>
               <div className="pricing-price">
-                {plan.price}
-                <span className="pricing-period">{plan.period}</span>
+                {isAnnual ? plan.annualPrice : plan.monthlyPrice}
+                <span className="pricing-period">{isAnnual ? (plan.annualPeriod || plan.period) : plan.period}</span>
               </div>
-              {plan.annual && (
-                <div className="pricing-annual">{plan.annual}</div>
-              )}
 
               <ul className="pricing-features">
                 {plan.features.map((f, i) => (
@@ -112,7 +137,7 @@ export default function PricingModal({ user, onClose, onSubscribe }) {
               ) : (
                 <button
                   className="btn btn-primary btn-full"
-                  onClick={() => onSubscribe(`${plan.tier}_monthly`)}
+                  onClick={() => onSubscribe(`${plan.tier}_${billingCycle}`)}
                 >
                   {plan.cta}
                 </button>

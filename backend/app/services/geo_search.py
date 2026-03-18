@@ -1,5 +1,8 @@
 """Geographic search service using OpenStreetMap Nominatim API with caching."""
 
+import asyncio
+import time
+
 import httpx
 from fastapi import HTTPException
 
@@ -10,6 +13,11 @@ from app.services.cache import cache_get, cache_set, make_search_key
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 NOMINATIM_HEADERS = {"User-Agent": "MapForgeCNC/1.0 (mapforge-cnc-app)"}
+
+# Nominatim usage policy: max 1 request per second.
+# Use a lock + timestamp to enforce this across concurrent requests.
+_nominatim_lock = asyncio.Lock()
+_nominatim_last_request: float = 0.0
 
 
 async def search_location(query: str, country: str = "ca", limit: int = 10) -> list[SearchResult]:
@@ -34,10 +42,17 @@ async def search_location(query: str, country: str = "ca", limit: int = 10) -> l
         params["countrycodes"] = country
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(NOMINATIM_URL, params=params, headers=NOMINATIM_HEADERS)
-            resp.raise_for_status()
-            data = resp.json()
+        # Enforce Nominatim rate limit: max 1 request per second
+        global _nominatim_last_request
+        async with _nominatim_lock:
+            elapsed = time.monotonic() - _nominatim_last_request
+            if elapsed < settings.NOMINATIM_RATE_LIMIT:
+                await asyncio.sleep(settings.NOMINATIM_RATE_LIMIT - elapsed)
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(NOMINATIM_URL, params=params, headers=NOMINATIM_HEADERS)
+                _nominatim_last_request = time.monotonic()
+                resp.raise_for_status()
+                data = resp.json()
     except (httpx.HTTPError, httpx.ProxyError) as e:
         log.warning(f"Nominatim search request failed: {e}")
         raise HTTPException(
