@@ -458,16 +458,17 @@ def _generate_print_svg(
 
     lines.append('    <g id="geography_fill">')
     if is_street_map:
-        # Street maps: fill the entire map area with land color (already done
-        # by map_bg rect above), then render the boundary as a thin outline only.
-        # This ensures streets and water show through clearly.
+        # Street maps: fill the boundary polygon with land color to create
+        # visible contrast between the city area and the white mat border.
+        # Streets and water are layered on top.
         for exterior, holes in polygons:
             path_d = _coords_to_path(exterior)
+            for hole in holes:
+                path_d += " " + _coords_to_path(hole)
             lines.append(
                 f'      <path d="{path_d}"'
-                f' fill="none" stroke="{theme["land_stroke"]}"'
-                f' stroke-width="0.4" stroke-linejoin="round"'
-                f' stroke-dasharray="2,2" opacity="0.4"/>'
+                f' fill="{theme["land"]}" stroke="{theme["land_stroke"]}"'
+                f' stroke-width="0.5" fill-rule="evenodd" stroke-linejoin="round"/>'
             )
     else:
         # Lake/province/park maps: filled polygon is the main visual
@@ -632,7 +633,11 @@ def _render_geography(lines: list[str], polygons: list, style: CutStyle):
 
 
 def _render_print_water(lines: list[str], water_data: dict, processed: dict, theme: dict):
-    """Render water features with themed poster colors."""
+    """Render water features with themed poster colors.
+
+    Water bodies are drawn with filled polygons and visible strokes to
+    create clear visual contrast against the land color.
+    """
     transform = processed.get("transform")
 
     lines.append('    <g id="water_features">')
@@ -645,7 +650,7 @@ def _render_print_water(lines: list[str], water_data: dict, processed: dict, the
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="{theme["water"]}" stroke="{theme["water_stroke"]}"'
-            f' stroke-width="0.3" stroke-linejoin="round"/>'
+            f' stroke-width="0.6" stroke-linejoin="round"/>'
         )
 
     for coords, water_type, name in water_data.get("waterways", []):
@@ -653,7 +658,7 @@ def _render_print_water(lines: list[str], water_data: dict, processed: dict, the
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
-        width = 1.2 if water_type in ("river", "coastline") else 0.6
+        width = 2.0 if water_type in ("river", "coastline") else 1.0
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="none" stroke="{theme["water_stroke"]}" stroke-width="{width}"'
@@ -664,7 +669,11 @@ def _render_print_water(lines: list[str], water_data: dict, processed: dict, the
 
 
 def _render_print_streets(lines: list[str], streets_data: dict, processed: dict, theme: dict):
-    """Render streets with themed poster colors and street name labels."""
+    """Render streets with themed poster colors and street name labels.
+
+    Print-mode streets are drawn thicker than CNC (4-5x base width) because
+    poster prints need clearly visible street networks as the hero visual.
+    """
     transform = processed.get("transform")
     board_w, board_h = processed["board_mm"]
 
@@ -672,13 +681,13 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
 
     label_candidates = []
 
-    # Major roads (wider, bolder)
+    # Major roads — bold, clearly visible (hero element of city maps)
     for coords, road_class, width, name in streets_data.get("major_roads", []):
         if len(coords) < 2:
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
-        sw = round(width * 2.5, 2)
+        sw = round(max(width * 5.0, 2.0), 2)
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="none" stroke="{theme["street_major"]}" stroke-width="{sw}"'
@@ -687,13 +696,13 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
         if name:
             label_candidates.append((board_coords, name, "major"))
 
-    # Minor roads (thinner, lighter)
+    # Minor roads — visible grid that fills the city area
     for coords, road_class, width, name in streets_data.get("minor_roads", []):
         if len(coords) < 2:
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
-        sw = round(width * 2.0, 2)
+        sw = round(max(width * 3.5, 0.8), 2)
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="none" stroke="{theme["street_minor"]}" stroke-width="{sw}"'
