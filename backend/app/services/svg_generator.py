@@ -337,12 +337,12 @@ def _generate_print_svg(
 
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # Poster layout dimensions
-    mat_pct = 0.06  # 6% white mat on each side
+    # Poster layout dimensions — generous white mat for premium poster feel
+    mat_pct = 0.08  # 8% white mat on each side (industry standard)
     mat_x = round(board_w * mat_pct, 2)
     mat_y = round(board_h * mat_pct, 2)
     # Extra space at bottom for text area
-    text_area_h = round(board_h * 0.15, 2)
+    text_area_h = round(board_h * 0.14, 2)
     map_x = mat_x
     map_y = mat_y
     map_w = round(board_w - 2 * mat_x, 2)
@@ -529,45 +529,66 @@ def _generate_print_svg(
     lines.append("  </g>")  # close map clip group
     lines.append("")
 
-    # Subtle border frame around the map area for a premium poster look
+    # Premium layered border frame around the map area
+    # Outer thin line (the mat border edge)
+    inset = 1.5  # mm inset for the inner accent line
+    lines.append('  <g id="map_frame">')
     lines.append(
-        f'  <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"'
-        f' fill="none" stroke="{theme["land_stroke"]}" stroke-width="0.8"/>'
+        f'    <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"'
+        f' fill="none" stroke="{theme["land_stroke"]}" stroke-width="0.6"/>'
+    )
+    # Inner accent line (creates premium double-frame effect)
+    lines.append(
+        f'    <rect x="{round(map_x - inset, 2)}" y="{round(map_y - inset, 2)}"'
+        f' width="{round(map_w + 2 * inset, 2)}" height="{round(map_h + 2 * inset, 2)}"'
+        f' fill="none" stroke="{theme["land_stroke"]}" stroke-width="0.25"'
+        f' opacity="0.5"/>'
+    )
+    lines.append("  </g>")
+    lines.append("")
+
+    # Thin separator line between map and text area
+    sep_y = round(map_y + map_h + text_area_h * 0.18, 2)
+    sep_margin = round(board_w * 0.25, 2)  # 25% inset from each side
+    lines.append(
+        f'  <line x1="{sep_margin}" y1="{sep_y}" x2="{round(board_w - sep_margin, 2)}" y2="{sep_y}"'
+        f' stroke="{theme["land_stroke"]}" stroke-width="0.3" opacity="0.4"/>'
     )
     lines.append("")
 
     # Text area — below the map, on the white mat
     text_center_x = round(board_w / 2, 2)
-    text_start_y = map_y + map_h + text_area_h * 0.35
+    # Vertically center text block within the text area (below separator)
+    text_start_y = round(sep_y + text_area_h * 0.32, 2)
 
     # Print-mode font sizes (larger for poster readability)
     title_size = round(font_size_mm * 1.6, 2)
-    subtitle_size = round(font_size_mm * 0.7, 2)
-    coord_size = round(font_size_mm * 0.5, 2)
+    subtitle_size = round(font_size_mm * 0.65, 2)
+    coord_size = round(font_size_mm * 0.45, 2)
 
     lines.append('  <g id="poster_text">')
 
-    # City name (large, bold, uppercase)
+    # City name (large, bold, uppercase, wide tracking)
     lines.append(
         f'    <text x="{text_center_x}" y="{round(text_start_y, 2)}"'
         f' text-anchor="middle" font-family="{ff}"'
         f' font-size="{title_size}" font-weight="bold"'
-        f' letter-spacing="{round(title_size * 0.15, 2)}"'
+        f' letter-spacing="{round(title_size * 0.2, 2)}"'
         f' fill="{theme["text_primary"]}">{_escape_xml(location_name.upper())}</text>'
     )
 
-    next_y = text_start_y + title_size * 0.9
+    next_y = text_start_y + title_size * 1.1
 
     # Subtitle (state/country or custom tagline)
     if subtitle:
         lines.append(
             f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
             f' text-anchor="middle" font-family="{ff}"'
-            f' font-size="{subtitle_size}"'
-            f' letter-spacing="{round(subtitle_size * 0.2, 2)}"'
+            f' font-size="{subtitle_size}" font-weight="300"'
+            f' letter-spacing="{round(subtitle_size * 0.25, 2)}"'
             f' fill="{theme["text_secondary"]}">{_escape_xml(subtitle)}</text>'
         )
-        next_y += subtitle_size * 1.3
+        next_y += subtitle_size * 1.6
         layer_count += 1
 
     # GPS coordinates
@@ -581,7 +602,7 @@ def _generate_print_svg(
             f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
             f' text-anchor="middle" font-family="{ff}"'
             f' font-size="{coord_size}"'
-            f' letter-spacing="{round(coord_size * 0.1, 2)}"'
+            f' letter-spacing="{round(coord_size * 0.15, 2)}"'
             f' fill="{theme["text_secondary"]}">{coord_text}</text>'
         )
 
@@ -675,7 +696,7 @@ def _render_print_water(lines: list[str], water_data: dict, processed: dict, the
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="{theme["water"]}" stroke="{theme["water_stroke"]}"'
-            f' stroke-width="0.6" stroke-linejoin="round"/>'
+            f' stroke-width="0.3" stroke-linejoin="round"/>'
         )
 
     for coords, water_type, name in water_data.get("waterways", []):
@@ -683,7 +704,7 @@ def _render_print_water(lines: list[str], water_data: dict, processed: dict, the
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
-        width = 2.0 if water_type in ("river", "coastline") else 1.0
+        width = 1.5 if water_type in ("river", "coastline") else 0.7
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="none" stroke="{theme["water_stroke"]}" stroke-width="{width}"'
