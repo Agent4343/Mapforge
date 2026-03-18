@@ -160,8 +160,17 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                     bbox=bbox,
                     include_minor=req.product_type.value in street_types,
                 )
-                if streets_data:
+                # Only cache results that actually contain streets
+                has_streets = (
+                    streets_data
+                    and (streets_data.get("major_roads") or streets_data.get("minor_roads"))
+                )
+                if has_streets:
                     _cache_overpass(cache_key, streets_data)
+                else:
+                    log.warning("Street fetch returned empty results — not caching")
+                    warnings.append("Street data unavailable — the Overpass API may be busy. Try regenerating in a minute.")
+                    streets_data = None
         except Exception as e:
             log.warning(f"Street fetch failed (non-fatal): {e}")
             warnings.append("Street data unavailable — map generated without streets.")
@@ -179,8 +188,17 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                 log.info("Using cached water data")
             else:
                 water_data = await fetch_water_features(bbox=bbox)
-                if water_data:
+                # Only cache results that actually contain water features
+                has_water = (
+                    water_data
+                    and (water_data.get("water_polygons") or water_data.get("waterways"))
+                )
+                if has_water:
                     _cache_overpass(cache_key, water_data)
+                else:
+                    log.warning("Water fetch returned empty results — not caching")
+                    warnings.append("Water feature data unavailable — the Overpass API may be busy. Try regenerating in a minute.")
+                    water_data = None
         except Exception as e:
             log.warning(f"Water feature fetch failed (non-fatal): {e}")
             warnings.append("Water feature data unavailable — map generated without water features.")

@@ -48,7 +48,7 @@ async def fetch_streets(
     )
 
     query = f"""
-    [out:json][timeout:30];
+    [out:json][timeout:45];
     way["highway"~"^({highway_filter})$"]({south},{west},{north},{east});
     out body;
     >;
@@ -58,12 +58,19 @@ async def fetch_streets(
     log.info(f"Fetching streets for bbox: {bbox}")
 
     try:
-        async with httpx.AsyncClient(timeout=35.0) as client:
+        async with httpx.AsyncClient(timeout=50.0) as client:
             resp = await client.post(OVERPASS_URL, data={"data": query})
             resp.raise_for_status()
             data = resp.json()
-    except (httpx.HTTPError, httpx.ProxyError) as e:
+    except Exception as e:
         log.warning(f"Overpass street request failed: {e}")
+        return {"major_roads": [], "minor_roads": []}
+
+    # Detect Overpass API errors (timeout, quota, etc.)
+    if "remark" in data:
+        log.warning(f"Overpass API remark: {data['remark']}")
+    if data.get("elements") is None:
+        log.warning("Overpass returned no elements for streets")
         return {"major_roads": [], "minor_roads": []}
 
     elements = data.get("elements", [])

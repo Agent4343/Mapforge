@@ -25,7 +25,7 @@ async def fetch_water_features(
     south, west, north, east = bbox
 
     query = f"""
-    [out:json][timeout:30];
+    [out:json][timeout:45];
     (
       way["natural"="water"]({south},{west},{north},{east});
       way["natural"="coastline"]({south},{west},{north},{east});
@@ -42,12 +42,19 @@ async def fetch_water_features(
     log.info(f"Fetching water features for bbox: {bbox}")
 
     try:
-        async with httpx.AsyncClient(timeout=35.0) as client:
+        async with httpx.AsyncClient(timeout=50.0) as client:
             resp = await client.post(OVERPASS_URL, data={"data": query})
             resp.raise_for_status()
             data = resp.json()
-    except (httpx.HTTPError, httpx.ProxyError) as e:
+    except Exception as e:
         log.warning(f"Overpass water request failed: {e}")
+        return {"water_polygons": [], "waterways": []}
+
+    # Detect Overpass API errors (timeout, quota, etc.)
+    if "remark" in data:
+        log.warning(f"Overpass API remark: {data['remark']}")
+    if data.get("elements") is None:
+        log.warning("Overpass returned no elements for water")
         return {"water_polygons": [], "waterways": []}
 
     elements = data.get("elements", [])
@@ -101,7 +108,7 @@ async def fetch_water_features(
 
         outer_rings = []
         for member in rel.get("members", []):
-            if member["type"] != "way" or member.get("role", "outer") != "outer":
+            if member.get("type") != "way" or member.get("role", "outer") != "outer":
                 continue
             way_id = member["ref"]
             if way_id not in ways_data:
