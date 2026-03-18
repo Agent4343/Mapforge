@@ -2,8 +2,10 @@
 
 Fetches lakes, rivers, coastlines, and other water bodies within a bounding box
 for rendering on community, city, and park maps.
-Uses multiple Overpass endpoints with retry logic for reliability.
+Races multiple Overpass endpoints concurrently for speed and reliability.
 """
+
+import asyncio
 
 import httpx
 
@@ -16,29 +18,52 @@ OVERPASS_ENDPOINTS = [
 ]
 
 
+async def _fetch_one_endpoint(endpoint: str, query: str) -> dict | None:
+    """Try a single Overpass endpoint. Returns valid data or None."""
+    try:
+        async with httpx.AsyncClient(timeout=55.0) as client:
+            resp = await client.post(endpoint, data={"data": query})
+            resp.raise_for_status()
+            data = resp.json()
+
+        if "remark" in data:
+            log.warning(f"Overpass remark from {endpoint}: {data['remark']}")
+            return None
+
+        if not data.get("elements"):
+            log.warning(f"Overpass returned no/empty elements from {endpoint}")
+            return None
+
+        log.info(f"Overpass success from {endpoint}: {len(data['elements'])} elements")
+        return data
+
+    except Exception as e:
+        log.warning(f"Overpass request to {endpoint} failed: {e}")
+        return None
+
+
 async def _fetch_overpass_with_retry(query: str) -> dict | None:
-    """Try each Overpass endpoint once. Timeouts kept short so total retry
-    time stays well under the frontend's 120s request budget."""
-    for endpoint in OVERPASS_ENDPOINTS:
-        try:
-            async with httpx.AsyncClient(timeout=25.0) as client:
-                resp = await client.post(endpoint, data={"data": query})
-                resp.raise_for_status()
-                data = resp.json()
+    """Race all Overpass endpoints concurrently — first valid response wins."""
+    tasks = {
+        asyncio.create_task(_fetch_one_endpoint(ep, query)): ep
+        for ep in OVERPASS_ENDPOINTS
+    }
+    pending = set(tasks.keys())
 
-            if "remark" in data:
-                log.warning(f"Overpass remark from {endpoint}: {data['remark']}")
-                continue
-
-            if not data.get("elements"):
-                log.warning(f"Overpass returned no/empty elements from {endpoint}")
-                continue
-
-            log.info(f"Overpass success from {endpoint}: {len(data['elements'])} elements")
-            return data
-
-        except Exception as e:
-            log.warning(f"Overpass request to {endpoint} failed: {e}")
+    try:
+        while pending:
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                result = task.result()
+                if result is not None:
+                    for t in pending:
+                        t.cancel()
+                    return result
+    except Exception as e:
+        log.error(f"Unexpected error racing Overpass endpoints: {e}")
+    finally:
+        for t in pending:
+            t.cancel()
 
     log.error("All Overpass endpoints failed for water fetch")
     return None
@@ -59,7 +84,7 @@ async def fetch_water_features(
     south, west, north, east = bbox
 
     query = f"""
-    [out:json][timeout:20];
+    [out:json][timeout:45];
     (
       way["natural"="water"]({south},{west},{north},{east});
       way["natural"="coastline"]({south},{west},{north},{east});
