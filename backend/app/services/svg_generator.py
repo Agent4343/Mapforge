@@ -348,6 +348,57 @@ def _generate_print_svg(
     map_w = round(board_w - 2 * mat_x, 2)
     map_h = round(board_h - mat_y - text_area_h - mat_y, 2)
 
+    # Remap geometry from full-board space to poster's map area.
+    # The geometry processor scaled coords to fit (0..board_w, 0..board_h)
+    # with 8% CNC margins. We need to rescale them into the poster's map
+    # rectangle (map_x..map_x+map_w, map_y..map_y+map_h).
+    bounds_mm = processed.get("bounds_mm", (0, 0, board_w, board_h))
+    geo_min_x, geo_min_y, geo_max_x, geo_max_y = bounds_mm
+    geo_w = geo_max_x - geo_min_x
+    geo_h = geo_max_y - geo_min_y
+
+    if geo_w > 0 and geo_h > 0:
+        # Scale factor to fit geometry into the map area, preserving aspect ratio
+        poster_scale = min(map_w / geo_w, map_h / geo_h)
+        # Center the remapped geometry within the map area
+        remap_offset_x = map_x + (map_w - geo_w * poster_scale) / 2
+        remap_offset_y = map_y + (map_h - geo_h * poster_scale) / 2
+
+        # Remap all polygon coordinates
+        remapped_polygons = []
+        for exterior, holes in polygons:
+            new_ext = [
+                (
+                    round((x - geo_min_x) * poster_scale + remap_offset_x, 2),
+                    round((y - geo_min_y) * poster_scale + remap_offset_y, 2),
+                )
+                for x, y in exterior
+            ]
+            new_holes = []
+            for hole in holes:
+                new_holes.append([
+                    (
+                        round((x - geo_min_x) * poster_scale + remap_offset_x, 2),
+                        round((y - geo_min_y) * poster_scale + remap_offset_y, 2),
+                    )
+                    for x, y in hole
+                ])
+            remapped_polygons.append((new_ext, new_holes))
+        polygons = remapped_polygons
+
+        # Update the transform params so streets/water also get remapped
+        # to poster-map space instead of full-board space
+        orig_transform = processed.get("transform", {})
+        if orig_transform:
+            processed = dict(processed)  # avoid mutating original
+            processed["transform"] = {
+                "min_x": orig_transform["min_x"],
+                "max_y": orig_transform["max_y"],
+                "scale": orig_transform["scale"] * poster_scale,
+                "offset_x": (orig_transform["offset_x"] - geo_min_x) * poster_scale + remap_offset_x,
+                "offset_y": (orig_transform["offset_y"] - geo_min_y) * poster_scale + remap_offset_y,
+            }
+
     # Resolve font family
     ff = FONT_FAMILIES.get(font_family, FONT_FAMILIES["sans"])
 
@@ -369,7 +420,7 @@ def _generate_print_svg(
     # Layer: white mat background (entire poster)
     lines.append('  <g id="poster_background">')
     lines.append(
-        f'    <rect width="{board_w}" height="{board_h}"'
+        f'    <rect id="mat_border" width="{board_w}" height="{board_h}"'
         f' fill="{theme["mat"]}"/>'
     )
     lines.append("  </g>")
