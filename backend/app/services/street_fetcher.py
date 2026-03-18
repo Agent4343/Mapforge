@@ -4,8 +4,6 @@ Fetches road networks within a bounding box for city street map products.
 Uses multiple Overpass endpoints with retry logic for reliability.
 """
 
-import asyncio
-
 import httpx
 
 from app.logging_config import log
@@ -34,37 +32,28 @@ ROAD_CLASSES = {
 
 
 async def _fetch_overpass_with_retry(query: str) -> dict | None:
-    """Try each Overpass endpoint, retrying once per endpoint on failure."""
+    """Try each Overpass endpoint once. Timeouts kept short so total retry
+    time stays well under the frontend's 120s request budget."""
     for endpoint in OVERPASS_ENDPOINTS:
-        for attempt in range(2):
-            try:
-                async with httpx.AsyncClient(timeout=60.0) as client:
-                    resp = await client.post(endpoint, data={"data": query})
-                    resp.raise_for_status()
-                    data = resp.json()
+        try:
+            async with httpx.AsyncClient(timeout=25.0) as client:
+                resp = await client.post(endpoint, data={"data": query})
+                resp.raise_for_status()
+                data = resp.json()
 
-                # Check for Overpass errors
-                if "remark" in data:
-                    log.warning(f"Overpass remark from {endpoint}: {data['remark']}")
-                    # Remark usually means timeout/quota — try next endpoint
-                    break
+            if "remark" in data:
+                log.warning(f"Overpass remark from {endpoint}: {data['remark']}")
+                continue  # try next endpoint
 
-                if data.get("elements") is None:
-                    log.warning(f"Overpass returned no elements from {endpoint}")
-                    break
+            if not data.get("elements"):
+                log.warning(f"Overpass returned no/empty elements from {endpoint}")
+                continue
 
-                elements = data.get("elements", [])
-                if len(elements) == 0:
-                    log.warning(f"Overpass returned 0 elements from {endpoint}")
-                    break
+            log.info(f"Overpass success from {endpoint}: {len(data['elements'])} elements")
+            return data
 
-                log.info(f"Overpass success from {endpoint}: {len(elements)} elements")
-                return data
-
-            except Exception as e:
-                log.warning(f"Overpass request to {endpoint} failed (attempt {attempt+1}): {e}")
-                if attempt == 0:
-                    await asyncio.sleep(2)
+        except Exception as e:
+            log.warning(f"Overpass request to {endpoint} failed: {e}")
 
     log.error("All Overpass endpoints failed for street fetch")
     return None
@@ -91,7 +80,7 @@ async def fetch_streets(
     )
 
     query = f"""
-    [out:json][timeout:45];
+    [out:json][timeout:20];
     way["highway"~"^({highway_filter})$"]({south},{west},{north},{east});
     out body;
     >;
