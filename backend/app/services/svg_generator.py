@@ -526,6 +526,24 @@ def _generate_print_svg(
         layer_count += 1
         path_count += len(markers)
 
+    # Subtle vignette edge fade — softens the map boundary for a premium look
+    lines.append('    <g id="vignette">')
+    vig_id = "vig_grad"
+    lines.append("      <defs>")
+    # Radial gradient: transparent center → semi-transparent map_bg edges
+    lines.append(
+        f'        <radialGradient id="{vig_id}" cx="50%" cy="50%" r="70%">'
+    )
+    lines.append(f'          <stop offset="60%" stop-color="{theme["map_bg"]}" stop-opacity="0"/>')
+    lines.append(f'          <stop offset="100%" stop-color="{theme["map_bg"]}" stop-opacity="0.3"/>')
+    lines.append(f"        </radialGradient>")
+    lines.append("      </defs>")
+    lines.append(
+        f'      <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"'
+        f' fill="url(#{vig_id})"/>'
+    )
+    lines.append("    </g>")
+
     lines.append("  </g>")  # close map clip group
     lines.append("")
 
