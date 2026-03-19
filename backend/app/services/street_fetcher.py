@@ -2,6 +2,10 @@
 
 Fetches road networks within a bounding box for city street map products.
 Races multiple Overpass endpoints concurrently for speed and reliability.
+
+Print mode uses tiered fetching: arterials, grid, and residential are
+fetched as separate concurrent queries so dense cities (Paris, NYC, London)
+always produce results even if the finest residential layer times out.
 """
 
 import asyncio
@@ -37,6 +41,12 @@ ROAD_CLASSES = {
     "unclassified": {"width": 0.4, "priority": 7, "layer": "minor"},
 }
 
+# Tier definitions for print mode — each tier is a separate query so
+# dense cities always get at least the main roads even if residential fails.
+_TIER_ARTERIALS = "motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link"
+_TIER_GRID = "tertiary|tertiary_link"
+_TIER_RESIDENTIAL = "residential|unclassified"
+
 
 async def _fetch_one_endpoint(endpoint: str, query: str, timeout: float = 25.0) -> dict | None:
     """Try a single Overpass endpoint. Returns valid data or None."""
@@ -51,7 +61,6 @@ async def _fetch_one_endpoint(endpoint: str, query: str, timeout: float = 25.0) 
             return None
 
         if not data.get("elements"):
-            log.warning(f"Overpass returned no/empty elements from {endpoint}")
             return None
 
         log.info(f"Overpass success from {endpoint}: {len(data['elements'])} elements")
@@ -62,7 +71,7 @@ async def _fetch_one_endpoint(endpoint: str, query: str, timeout: float = 25.0) 
         return None
 
 
-async def _fetch_overpass_with_retry(query: str, timeout: float = 25.0) -> dict | None:
+async def _fetch_overpass_race(query: str, timeout: float = 25.0) -> dict | None:
     """Race all Overpass endpoints concurrently — first valid response wins."""
     tasks = {
         asyncio.create_task(_fetch_one_endpoint(ep, query, timeout=timeout)): ep
@@ -76,7 +85,6 @@ async def _fetch_overpass_with_retry(query: str, timeout: float = 25.0) -> dict 
             for task in done:
                 result = task.result()
                 if result is not None:
-                    # Cancel remaining tasks — we have a winner
                     for t in pending:
                         t.cancel()
                     return result
@@ -86,71 +94,11 @@ async def _fetch_overpass_with_retry(query: str, timeout: float = 25.0) -> dict 
         for t in pending:
             t.cancel()
 
-    log.error("All Overpass endpoints failed for street fetch")
     return None
 
 
-async def fetch_streets(
-    bbox: tuple[float, float, float, float],
-    include_minor: bool = True,
-    output_mode: str = "cnc",
-) -> dict:
-    """Fetch street network within bounding box.
-
-    Args:
-        bbox: (south, west, north, east) in WGS84
-        include_minor: include residential/tertiary roads
-        output_mode: "cnc" caps streets for clean toolpaths,
-                     "print" keeps hundreds for dense poster grids
-
-    Returns:
-        dict with 'major_roads' and 'minor_roads' as lists of
-        (coords_list, road_class, width, name) tuples
-    """
-    south, west, north, east = bbox
-
-    highway_filter = "|".join(ROAD_CLASSES.keys()) if include_minor else "|".join(
-        k for k, v in ROAD_CLASSES.items() if v["layer"] == "major"
-    )
-
-    # Print mode: longer timeouts for dense city queries (Paris, NYC etc.)
-    # CNC mode: shorter timeouts since we only need a few roads
-    if output_mode == "print":
-        query_timeout = 60
-        http_timeout = 75.0
-    else:
-        query_timeout = 20
-        http_timeout = 25.0
-
-    query = f"""
-    [out:json][timeout:{query_timeout}];
-    way["highway"~"^({highway_filter})$"]({south},{west},{north},{east});
-    out body;
-    >;
-    out skel qt;
-    """
-
-    log.info(f"Fetching streets for bbox: {bbox} (mode={output_mode})")
-
-    data = await _fetch_overpass_with_retry(query, timeout=http_timeout)
-
-    # Print mode fallback: if full query failed (city too dense), retry
-    # without residential/unclassified — the main grid still looks great
-    if data is None and output_mode == "print" and include_minor:
-        grid_types = "motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link"
-        fallback_query = f"""
-        [out:json][timeout:{query_timeout}];
-        way["highway"~"^({grid_types})$"]({south},{west},{north},{east});
-        out body;
-        >;
-        out skel qt;
-        """
-        log.info("Full street query failed — retrying with main grid only (no residential)")
-        data = await _fetch_overpass_with_retry(fallback_query, timeout=http_timeout)
-
-    if data is None:
-        return {"major_roads": [], "minor_roads": []}
-
+def _parse_roads(data: dict) -> tuple[list, list]:
+    """Parse Overpass response into major/minor road lists."""
     elements = data.get("elements", [])
     nodes = {}
     ways = []
@@ -182,21 +130,113 @@ async def fetch_streets(
         else:
             minor_roads.append(entry)
 
-    # CNC mode: cap streets for clean toolpath output.
-    # "Clean beats accurate" — keep only the longest/most important roads.
-    # Print mode: keep ALL streets — the dense grid IS the visual product.
-    major_roads.sort(key=lambda r: (r[2], len(r[0])), reverse=True)  # width desc, then node count
-    minor_roads.sort(key=lambda r: len(r[0]), reverse=True)  # longest segments first
+    return major_roads, minor_roads
 
-    if output_mode == "cnc":
-        MAX_MAJOR = 6
-        MAX_MINOR = 30
-        if len(major_roads) > MAX_MAJOR:
-            major_roads = major_roads[:MAX_MAJOR]
-        if len(minor_roads) > MAX_MINOR:
-            minor_roads = minor_roads[:MAX_MINOR]
-        log.info(f"CNC mode: {len(major_roads)} major roads (cap {MAX_MAJOR}), {len(minor_roads)} minor roads (cap {MAX_MINOR})")
-    else:
-        log.info(f"Print mode: {len(major_roads)} major roads, {len(minor_roads)} minor roads (uncapped)")
 
+async def _fetch_tier(bbox: tuple, highway_filter: str, query_timeout: int, http_timeout: float, tier_name: str) -> dict | None:
+    """Fetch a single tier of streets."""
+    south, west, north, east = bbox
+    query = f"""
+    [out:json][timeout:{query_timeout}];
+    way["highway"~"^({highway_filter})$"]({south},{west},{north},{east});
+    out body;
+    >;
+    out skel qt;
+    """
+    log.info(f"Fetching {tier_name} streets for bbox: {bbox}")
+    return await _fetch_overpass_race(query, timeout=http_timeout)
+
+
+async def fetch_streets(
+    bbox: tuple[float, float, float, float],
+    include_minor: bool = True,
+    output_mode: str = "cnc",
+) -> dict:
+    """Fetch street network within bounding box.
+
+    CNC mode: single query, capped at 6 major + 30 minor.
+    Print mode: tiered concurrent queries (arterials + grid + residential)
+    so dense cities always get results even if residential times out.
+
+    Returns:
+        dict with 'major_roads' and 'minor_roads' as lists of
+        (coords_list, road_class, width, name) tuples
+    """
+    south, west, north, east = bbox
+
+    if output_mode == "print" and include_minor:
+        return await _fetch_streets_tiered(bbox)
+
+    # CNC mode or print without minor: single query
+    highway_filter = "|".join(ROAD_CLASSES.keys()) if include_minor else "|".join(
+        k for k, v in ROAD_CLASSES.items() if v["layer"] == "major"
+    )
+
+    query = f"""
+    [out:json][timeout:20];
+    way["highway"~"^({highway_filter})$"]({south},{west},{north},{east});
+    out body;
+    >;
+    out skel qt;
+    """
+
+    log.info(f"Fetching streets for bbox: {bbox} (mode={output_mode})")
+    data = await _fetch_overpass_race(query, timeout=25.0)
+
+    if data is None:
+        return {"major_roads": [], "minor_roads": []}
+
+    major_roads, minor_roads = _parse_roads(data)
+
+    # CNC: cap for clean output
+    major_roads.sort(key=lambda r: (r[2], len(r[0])), reverse=True)
+    minor_roads.sort(key=lambda r: len(r[0]), reverse=True)
+
+    MAX_MAJOR = 6
+    MAX_MINOR = 30
+    if len(major_roads) > MAX_MAJOR:
+        major_roads = major_roads[:MAX_MAJOR]
+    if len(minor_roads) > MAX_MINOR:
+        minor_roads = minor_roads[:MAX_MINOR]
+
+    log.info(f"CNC mode: {len(major_roads)} major, {len(minor_roads)} minor (capped)")
     return {"major_roads": major_roads, "minor_roads": minor_roads}
+
+
+async def _fetch_streets_tiered(bbox: tuple) -> dict:
+    """Fetch streets in 3 concurrent tiers for print mode.
+
+    Tier 1 (arterials): motorway through secondary — always fast, ~500 ways
+    Tier 2 (grid): tertiary — medium load, ~2000 ways
+    Tier 3 (residential): residential + unclassified — heavy, may timeout
+
+    All tiers run concurrently. We combine whatever succeeds. Even if
+    tier 3 fails, tiers 1+2 produce a professional-looking city map.
+    """
+    results = await asyncio.gather(
+        _fetch_tier(bbox, _TIER_ARTERIALS, query_timeout=30, http_timeout=40.0, tier_name="arterials"),
+        _fetch_tier(bbox, _TIER_GRID, query_timeout=30, http_timeout=40.0, tier_name="grid"),
+        _fetch_tier(bbox, _TIER_RESIDENTIAL, query_timeout=45, http_timeout=55.0, tier_name="residential"),
+        return_exceptions=True,
+    )
+
+    all_major = []
+    all_minor = []
+    tier_names = ["arterials", "grid", "residential"]
+
+    for i, result in enumerate(results):
+        if isinstance(result, Exception):
+            log.warning(f"Street tier '{tier_names[i]}' failed: {result}")
+            continue
+        if result is None:
+            log.warning(f"Street tier '{tier_names[i]}' returned no data")
+            continue
+        major, minor = _parse_roads(result)
+        all_major.extend(major)
+        all_minor.extend(minor)
+        log.info(f"Street tier '{tier_names[i]}': {len(major)} major, {len(minor)} minor")
+
+    total = len(all_major) + len(all_minor)
+    log.info(f"Print mode total: {len(all_major)} major, {len(all_minor)} minor ({total} streets)")
+
+    return {"major_roads": all_major, "minor_roads": all_minor}
