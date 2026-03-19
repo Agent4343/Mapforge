@@ -13,6 +13,7 @@ from app.logging_config import log
 OVERPASS_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.openstreetmap.ru/api/interpreter",
 ]
 
 # Road classification → SVG stroke width (mm) and layer priority.

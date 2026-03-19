@@ -24,7 +24,7 @@ const SUBTITLE_PRESETS = [
   "Where It All Began",
   "Our First Home",
   "Home Is Where The Heart Is",
-  "Est. 2024",
+  `Est. ${new Date().getFullYear()}`,
   "Forever & Always",
 ];
 

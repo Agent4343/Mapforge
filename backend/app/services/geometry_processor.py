@@ -166,7 +166,9 @@ def _get_tolerance(geom_m: Polygon | MultiPolygon, product_type: ProductType, si
     bounds = geom_m.bounds  # minx, miny, maxx, maxy
     extent = max(bounds[2] - bounds[0], bounds[3] - bounds[1])
 
-    if extent < 5000:       # < 5km
+    if extent < 2000:       # < 2km — very small features, preserve all detail
+        return base * 0.1
+    elif extent < 5000:     # < 5km
         return base * 0.3
     elif extent < 50000:    # < 50km
         return base * 0.7

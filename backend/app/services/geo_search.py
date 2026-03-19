@@ -104,8 +104,11 @@ def _classify_feature(item: dict) -> str:
             return "community"
         # No admin_level — use bbox size as heuristic.
         # Provinces/states span > 2° of lat/lon, cities typically < 1°.
-        if _bbox_span(item) > 2.0:
+        span = _bbox_span(item)
+        if span > 2.0:
             return "province"
+        if span < 0.15:
+            return "community"
         return "city"
     if osm_class == "leisure" and osm_type_tag == "park":
         return "park"
@@ -113,10 +116,13 @@ def _classify_feature(item: dict) -> str:
         return "park"
     if osm_class == "place":
         place_type = item.get("type", "")
-        if place_type in ("village", "hamlet", "locality", "isolated_dwelling"):
+        if place_type in ("village", "hamlet", "locality", "isolated_dwelling", "town"):
             return "community"
         if place_type in ("state", "province", "region", "country"):
             return "province"
+        # Small places (bbox < 0.15°) are communities, not cities
+        if _bbox_span(item) < 0.15:
+            return "community"
         return "city"
     return "lake"
 

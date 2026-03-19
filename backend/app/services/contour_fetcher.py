@@ -4,12 +4,58 @@ Fetches elevation contour lines from OpenStreetMap and generates depth/elevation
 bands for premium CNC products.
 """
 
+import asyncio
+
 import httpx
 from shapely.geometry import LineString
 
 from app.logging_config import log
 
-OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+OVERPASS_ENDPOINTS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.openstreetmap.ru/api/interpreter",
+]
+
+
+async def _try_endpoint(endpoint: str, query: str) -> dict | None:
+    """Try a single Overpass endpoint. Returns valid data or None."""
+    try:
+        async with httpx.AsyncClient(timeout=35.0) as client:
+            resp = await client.post(endpoint, data={"data": query})
+            resp.raise_for_status()
+            data = resp.json()
+        if "remark" in data:
+            log.warning(f"Overpass contour remark from {endpoint}: {data['remark']}")
+            return None
+        if not data.get("elements"):
+            return None
+        return data
+    except Exception as e:
+        log.warning(f"Overpass contour request to {endpoint} failed: {e}")
+        return None
+
+
+async def _fetch_overpass_race(query: str) -> dict | None:
+    """Race all Overpass endpoints — first valid response wins."""
+    tasks = {asyncio.create_task(_try_endpoint(ep, query)): ep for ep in OVERPASS_ENDPOINTS}
+    pending = set(tasks.keys())
+    try:
+        while pending:
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                result = task.result()
+                if result is not None:
+                    for t in pending:
+                        t.cancel()
+                    return result
+    except Exception as e:
+        log.error(f"Overpass contour race failed: {e}")
+    finally:
+        for t in pending:
+            t.cancel()
+    log.warning("All Overpass endpoints failed for contour fetch")
+    return None
 
 
 async def fetch_contour_lines(
@@ -55,13 +101,8 @@ async def fetch_contour_lines(
 
     log.info(f"Fetching {contour_type} contours for bbox: {bbox}")
 
-    try:
-        async with httpx.AsyncClient(timeout=35.0) as client:
-            resp = await client.post(OVERPASS_URL, data={"data": query})
-            resp.raise_for_status()
-            data = resp.json()
-    except (httpx.HTTPError, httpx.ProxyError) as e:
-        log.warning(f"Overpass contour request failed: {e}")
+    data = await _fetch_overpass_race(query)
+    if data is None:
         return []
 
     elements = data.get("elements", [])
