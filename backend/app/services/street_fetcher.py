@@ -16,20 +16,25 @@ OVERPASS_ENDPOINTS = [
     "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
 ]
 
-# Road classification → SVG stroke width (mm) and layer priority
+# Road classification → SVG stroke width (mm) and layer priority.
+# Line hierarchy is critical for premium map art:
+#   Main feature → thick (2.5–3.5)
+#   Secondary roads → medium (1.2–1.8)
+#   Minor → thin (0.4–0.8)
+# Clean beats accurate — no equal line weights.
 ROAD_CLASSES = {
-    "motorway": {"width": 1.2, "priority": 1, "layer": "major"},
-    "motorway_link": {"width": 0.8, "priority": 1, "layer": "major"},
-    "trunk": {"width": 1.0, "priority": 2, "layer": "major"},
-    "trunk_link": {"width": 0.7, "priority": 2, "layer": "major"},
-    "primary": {"width": 0.9, "priority": 3, "layer": "major"},
-    "primary_link": {"width": 0.6, "priority": 3, "layer": "major"},
-    "secondary": {"width": 0.7, "priority": 4, "layer": "major"},
-    "secondary_link": {"width": 0.5, "priority": 4, "layer": "major"},
-    "tertiary": {"width": 0.5, "priority": 5, "layer": "minor"},
-    "tertiary_link": {"width": 0.4, "priority": 5, "layer": "minor"},
-    "residential": {"width": 0.3, "priority": 6, "layer": "minor"},
-    "unclassified": {"width": 0.3, "priority": 7, "layer": "minor"},
+    "motorway": {"width": 3.5, "priority": 1, "layer": "major"},
+    "motorway_link": {"width": 2.0, "priority": 1, "layer": "major"},
+    "trunk": {"width": 3.0, "priority": 2, "layer": "major"},
+    "trunk_link": {"width": 1.8, "priority": 2, "layer": "major"},
+    "primary": {"width": 2.5, "priority": 3, "layer": "major"},
+    "primary_link": {"width": 1.5, "priority": 3, "layer": "major"},
+    "secondary": {"width": 1.8, "priority": 4, "layer": "major"},
+    "secondary_link": {"width": 1.2, "priority": 4, "layer": "major"},
+    "tertiary": {"width": 0.8, "priority": 5, "layer": "minor"},
+    "tertiary_link": {"width": 0.6, "priority": 5, "layer": "minor"},
+    "residential": {"width": 0.5, "priority": 6, "layer": "minor"},
+    "unclassified": {"width": 0.4, "priority": 7, "layer": "minor"},
 }
 
 
@@ -150,5 +155,18 @@ async def fetch_streets(
         else:
             minor_roads.append(entry)
 
-    log.info(f"Fetched {len(major_roads)} major roads, {len(minor_roads)} minor roads")
+    # Cap street count for clean, premium output.
+    # Design rule: 2-6 major roads max, target under 40 total lines.
+    # "Clean beats accurate" — keep only the longest/most important roads.
+    major_roads.sort(key=lambda r: (r[2], len(r[0])), reverse=True)  # width desc, then node count
+    minor_roads.sort(key=lambda r: len(r[0]), reverse=True)  # longest segments first
+
+    MAX_MAJOR = 6
+    MAX_MINOR = 30
+    if len(major_roads) > MAX_MAJOR:
+        major_roads = major_roads[:MAX_MAJOR]
+    if len(minor_roads) > MAX_MINOR:
+        minor_roads = minor_roads[:MAX_MINOR]
+
+    log.info(f"Fetched {len(major_roads)} major roads (capped {MAX_MAJOR}), {len(minor_roads)} minor roads (capped {MAX_MINOR})")
     return {"major_roads": major_roads, "minor_roads": minor_roads}

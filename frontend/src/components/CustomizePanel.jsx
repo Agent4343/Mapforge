@@ -14,6 +14,9 @@ const COLOR_THEMES = [
   { value: "forest", label: "Forest", bg: "#0d1f0d", road: "#c4b896", land: "#1a4a1a" },
   { value: "sunset", label: "Sunset", bg: "#fff5eb", road: "#c0392b", land: "#e67e22" },
   { value: "arctic", label: "Arctic", bg: "#f0f8ff", road: "#2c3e50", land: "#85c1e9" },
+  { value: "blueprint", label: "Blueprint", bg: "#1a2744", road: "#e8eef6", land: "#1e3050" },
+  { value: "dark", label: "Dark", bg: "#0a0a0a", road: "#d0d0d0", land: "#1a1a1a" },
+  { value: "engraving", label: "Engraving", bg: "#f8f5ef", road: "#2a2520", land: "#f0ebe0" },
 ];
 
 const SUBTITLE_PRESETS = [
@@ -203,11 +206,11 @@ export default function CustomizePanel({ config, onChange, user }) {
             <div className="control-group">
               <label>Font Style</label>
               <select
-                value={config.fontFamily || "sans"}
+                value={config.fontFamily || "serif"}
                 onChange={(e) => update("fontFamily", e.target.value)}
               >
-                <option value="sans">Clean Sans</option>
                 <option value="serif">Classic Serif</option>
+                <option value="sans">Clean Sans</option>
                 <option value="script">Script / Romantic</option>
                 <option value="mono">Technical Mono</option>
               </select>

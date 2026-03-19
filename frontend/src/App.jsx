@@ -29,7 +29,7 @@ const DEFAULT_CONFIG = {
   exportFormat: "svg",
   productType: "city",
   fontSize: 14,
-  fontFamily: "sans",
+  fontFamily: "serif",
   borderStyle: "none",
   showCoordinates: true,
   includeIslands: true,

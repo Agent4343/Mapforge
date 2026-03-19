@@ -39,7 +39,7 @@ def generate_svg(
     pin_location: tuple[float, float] | None = None,
     markers: list[dict] | None = None,
     subtitle: str = "",
-    font_family: str = "sans",
+    font_family: str = "serif",
     border_style: str = "none",
     heart_location: tuple[float, float] | None = None,
     output_mode: str = "cnc",
@@ -110,7 +110,7 @@ def _generate_cnc_svg(
     pin_location: tuple[float, float] | None = None,
     markers: list[dict] | None = None,
     subtitle: str = "",
-    font_family: str = "sans",
+    font_family: str = "serif",
     border_style: str = "none",
     heart_location: tuple[float, float] | None = None,
 ) -> dict:
@@ -224,6 +224,7 @@ def _generate_cnc_svg(
         f'    <text x="{board_w / 2}" y="{round(text_y, 2)}"'
         f' text-anchor="middle" font-family="{ff}"'
         f' font-size="{font_size_mm}" font-weight="bold"'
+        f' letter-spacing="{round(font_size_mm * 0.2, 2)}"'
         f' fill="#1a1a1a">{_escape_xml(location_name.upper())}</text>'
     )
     lines.append("  </g>")
@@ -250,7 +251,7 @@ def _generate_cnc_svg(
         lat, lon = latlon
         lat_dir = "N" if lat >= 0 else "S"
         lon_dir = "W" if lon < 0 else "E"
-        coord_text = f"{abs(lat):.4f}\u00b0{lat_dir}, {abs(lon):.4f}\u00b0{lon_dir}"
+        coord_text = f"{abs(lat):.6f}\u00b0 {lat_dir}  /  {abs(lon):.6f}\u00b0 {lon_dir}"
 
         lines.append("")
         lines.append("  <!-- Layer: text_coordinates -->")
@@ -297,7 +298,7 @@ def _generate_print_svg(
     pin_location: tuple[float, float] | None = None,
     markers: list[dict] | None = None,
     subtitle: str = "",
-    font_family: str = "sans",
+    font_family: str = "serif",
     border_style: str = "none",
     heart_location: tuple[float, float] | None = None,
     color_theme: str = "classic",
@@ -337,8 +338,8 @@ def _generate_print_svg(
 
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # Poster layout dimensions — clean white mat with maximum map coverage
-    mat_pct = 0.05  # 5% white mat on each side
+    # Poster layout dimensions — generous white mat for premium wall art feel
+    mat_pct = 0.07  # 7% white mat on each side — balanced empty space
     mat_x = round(board_w * mat_pct, 2)
     mat_y = round(board_h * mat_pct, 2)
     # Extra space at bottom for text area
@@ -735,10 +736,9 @@ def _render_print_water(lines: list[str], water_data: dict, processed: dict, the
 def _render_print_streets(lines: list[str], streets_data: dict, processed: dict, theme: dict):
     """Render streets with themed poster colors.
 
-    Print-mode streets use modest width scaling over CNC base widths to
-    create a clean road hierarchy without overwhelming the map.  The old
-    5x multiplier produced highway bands ~6 mm wide which dominated the
-    poster.  New values: major 1.8x, minor 1.2x.
+    Road widths already have premium hierarchy baked in (major 2.5-3.5mm,
+    minor 0.4-0.8mm).  Print mode scales down slightly since the wide
+    base widths provide strong visual contrast without multipliers.
     """
     transform = processed.get("transform")
 
@@ -750,20 +750,20 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
-        sw = round(width * 1.8, 2)
+        sw = round(width * 0.7, 2)
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="none" stroke="{theme["street_major"]}" stroke-width="{sw}"'
             f' stroke-linecap="round" stroke-linejoin="round"/>'
         )
 
-    # Minor roads — thin grid that fills the city area
+    # Minor roads — thin grid, very light grey background feel
     for coords, road_class, width, name in streets_data.get("minor_roads", []):
         if len(coords) < 2:
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
-        sw = round(width * 1.2, 2)
+        sw = round(width * 0.8, 2)
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="none" stroke="{theme["street_minor"]}" stroke-width="{sw}"'
@@ -931,12 +931,11 @@ def _render_streets(lines: list[str], streets_data: dict, processed: dict, outpu
     transform = processed.get("transform")
     is_print = output_mode == "print"
 
-    # Print mode: modest scale-up for visible poster output.
-    # CNC base widths (0.3–1.2 mm) need a small bump for print, but 3x was
-    # way too heavy — roads became dominant black bands.  Use separate scales
-    # for major vs minor to preserve the premium road hierarchy.
-    major_width_scale = 1.8 if is_print else 1.0
-    minor_width_scale = 1.2 if is_print else 1.0
+    # Road widths already encode the premium hierarchy (major 2.5-3.5mm,
+    # minor 0.4-0.8mm).  CNC uses them at 1:1.  Print mode scales down
+    # slightly since the wider base widths provide enough contrast already.
+    major_width_scale = 0.7 if is_print else 1.0
+    minor_width_scale = 0.8 if is_print else 1.0
 
     lines.append("  <!-- Layer: detail_lines (streets) -->")
     lines.append('  <!-- Toolpath: Engrave, 1/8" ball nose, 0.03"-0.05" -->')
@@ -1102,9 +1101,9 @@ def _render_pin_marker(
     and profile-cut toolpaths.
     """
     px, py = pin_mm
-    # Pin dimensions scaled to font size
-    r = font_size_mm * 0.35  # circle radius
-    h = font_size_mm * 1.2   # diamond height below circle
+    # Pin dimensions — small, minimal, not dominant per design rules
+    r = font_size_mm * 0.2   # circle radius (subtle)
+    h = font_size_mm * 0.7   # diamond height below circle
 
     lines.append("  <!-- Layer: pin_marker -->")
     lines.append('  <!-- Toolpath: V-carve or profile cut, marks the target location -->')
@@ -1119,19 +1118,19 @@ def _render_pin_marker(
     )
     lines.append(
         f'    <path d="{diamond_d}"'
-        f' fill="#c0392b" stroke="#1a1a1a" stroke-width="0.4"'
+        f' fill="#c0392b" stroke="#1a1a1a" stroke-width="0.25"'
         f' stroke-linejoin="round"/>'
     )
 
     # Circle (top of pin)
     lines.append(
         f'    <circle cx="{round(px, 2)}" cy="{round(py, 2)}" r="{round(r, 2)}"'
-        f' fill="#e74c3c" stroke="#1a1a1a" stroke-width="0.4"/>'
+        f' fill="#e74c3c" stroke="#1a1a1a" stroke-width="0.25"/>'
     )
 
     # Inner dot
     lines.append(
-        f'    <circle cx="{round(px, 2)}" cy="{round(py, 2)}" r="{round(r * 0.35, 2)}"'
+        f'    <circle cx="{round(px, 2)}" cy="{round(py, 2)}" r="{round(r * 0.3, 2)}"'
         f' fill="#ffffff" stroke="none"/>'
     )
 
@@ -1153,8 +1152,8 @@ def _render_custom_markers(
     lines.append('  <!-- Toolpath: V-carve, 60 deg V-bit, flat depth 0.04" -->')
     lines.append('  <g id="custom_markers">')
 
-    r = font_size_mm * 0.3  # icon radius
-    label_size = font_size_mm * 0.35  # label font size
+    r = font_size_mm * 0.18  # icon radius — small, minimal, not dominant
+    label_size = font_size_mm * 0.3   # label font size
 
     for i, m in enumerate(markers):
         mx, my = m["x"], m["y"]

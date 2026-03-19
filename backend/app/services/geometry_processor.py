@@ -82,7 +82,7 @@ def process_geometry(
     # Step 7: Scale to board dimensions (mm)
     board_w_mm = board_width_inches * INCHES_TO_MM
     board_h_mm = board_height_inches * INCHES_TO_MM
-    margin_mm = min(board_w_mm, board_h_mm) * 0.08  # 8% margin for text area
+    margin_mm = min(board_w_mm, board_h_mm) * 0.12  # 12% margin — premium composition, nothing touching edges
 
     scaled_polys, bounds_mm, _scale_params = _scale_to_board(
         oriented, board_w_mm, board_h_mm, margin_mm,

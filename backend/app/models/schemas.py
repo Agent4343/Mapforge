@@ -164,7 +164,7 @@ class GenerateRequest(BaseModel):
     subtitle: str = ""  # "Where We Met" / "Est. 2024" / custom tagline
     show_coordinates: bool = True
     font_size_mm: float = Field(14.0, ge=4, le=40)
-    font_family: FontFamily = FontFamily.sans
+    font_family: FontFamily = FontFamily.serif
     border_style: BorderStyle = BorderStyle.none
     simplification: str = "auto"
     include_islands: bool = True
@@ -207,7 +207,7 @@ class PinGenerateRequest(BaseModel):
     export_format: ExportFormat = ExportFormat.svg
     show_coordinates: bool = True
     font_size_mm: float = Field(14.0, ge=4, le=40)
-    font_family: FontFamily = FontFamily.sans
+    font_family: FontFamily = FontFamily.serif
     border_style: BorderStyle = BorderStyle.none
     radius_m: float = Field(500.0, ge=100, le=5000)
     include_streets: bool = True
