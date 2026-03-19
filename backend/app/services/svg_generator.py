@@ -700,13 +700,15 @@ def _render_geography(lines: list[str], polygons: list, style: CutStyle):
 def _render_print_water(lines: list[str], water_data: dict, processed: dict, theme: dict):
     """Render water features with themed poster colors.
 
-    Water bodies are drawn with filled polygons and visible strokes to
-    create clear visual contrast against the land color.
+    Water must be clearly distinct from streets — filled polygons for
+    lakes/ponds, prominent strokes for rivers. Rivers should be thicker
+    than any street to create proper visual hierarchy.
     """
     transform = processed.get("transform")
 
     lines.append('    <g id="water_features">')
 
+    # Water polygons (lakes, ponds) — filled with water color
     for coords, water_type, name in water_data.get("water_polygons", []):
         if len(coords) < 3:
             continue
@@ -715,15 +717,21 @@ def _render_print_water(lines: list[str], water_data: dict, processed: dict, the
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="{theme["water"]}" stroke="{theme["water_stroke"]}"'
-            f' stroke-width="0.3" stroke-linejoin="round"/>'
+            f' stroke-width="0.4" stroke-linejoin="round"/>'
         )
 
+    # Waterways (rivers, streams) — thicker than streets for clear hierarchy
     for coords, water_type, name in water_data.get("waterways", []):
         if len(coords) < 2:
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
-        width = 1.5 if water_type in ("river", "coastline") else 0.7
+        if water_type in ("river", "coastline"):
+            width = 1.8  # Thicker than any street — rivers are prominent
+        elif water_type == "canal":
+            width = 1.0
+        else:
+            width = 0.5  # streams
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="none" stroke="{theme["water_stroke"]}" stroke-width="{width}"'
@@ -734,36 +742,54 @@ def _render_print_water(lines: list[str], water_data: dict, processed: dict, the
 
 
 def _render_print_streets(lines: list[str], streets_data: dict, processed: dict, theme: dict):
-    """Render streets with themed poster colors.
+    """Render streets with themed poster colors for premium city map art.
 
-    Road widths already have premium hierarchy baked in (major 2.5-3.5mm,
-    minor 0.4-0.8mm).  Print mode scales down slightly since the wide
-    base widths provide strong visual contrast without multipliers.
+    Print posters need a dense street grid — hundreds of thin lines that
+    form the visual texture of the city. This is fundamentally different
+    from CNC mode which needs few thick lines for toolpaths.
+
+    Width hierarchy for print (all in mm on the poster):
+        motorway/trunk:  0.8-1.0mm  (prominent but not dominant)
+        primary/secondary: 0.4-0.6mm (clearly visible)
+        tertiary:        0.25mm     (fine grid)
+        residential:     0.15mm     (background texture)
     """
     transform = processed.get("transform")
 
+    # Print-specific width map — much thinner than CNC widths.
+    # The dense grid of thin lines IS the product for city map posters.
+    PRINT_WIDTHS = {
+        "motorway": 1.0, "motorway_link": 0.7,
+        "trunk": 0.9, "trunk_link": 0.6,
+        "primary": 0.6, "primary_link": 0.45,
+        "secondary": 0.45, "secondary_link": 0.35,
+        "tertiary": 0.25, "tertiary_link": 0.2,
+        "residential": 0.15,
+        "unclassified": 0.12,
+    }
+
     lines.append('    <g id="streets">')
 
-    # Major roads — clearly visible but proportional
+    # Major roads — visible hierarchy but not thick like CNC toolpaths
     for coords, road_class, width, name in streets_data.get("major_roads", []):
         if len(coords) < 2:
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
-        sw = round(width * 0.7, 2)
+        sw = PRINT_WIDTHS.get(road_class, 0.5)
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="none" stroke="{theme["street_major"]}" stroke-width="{sw}"'
             f' stroke-linecap="round" stroke-linejoin="round"/>'
         )
 
-    # Minor roads — thin grid, very light grey background feel
+    # Minor roads — fine grid creating the city texture
     for coords, road_class, width, name in streets_data.get("minor_roads", []):
         if len(coords) < 2:
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
-        sw = round(width * 0.8, 2)
+        sw = PRINT_WIDTHS.get(road_class, 0.15)
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="none" stroke="{theme["street_minor"]}" stroke-width="{sw}"'

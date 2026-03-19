@@ -38,10 +38,10 @@ ROAD_CLASSES = {
 }
 
 
-async def _fetch_one_endpoint(endpoint: str, query: str) -> dict | None:
+async def _fetch_one_endpoint(endpoint: str, query: str, timeout: float = 25.0) -> dict | None:
     """Try a single Overpass endpoint. Returns valid data or None."""
     try:
-        async with httpx.AsyncClient(timeout=25.0) as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(endpoint, data={"data": query})
             resp.raise_for_status()
             data = resp.json()
@@ -62,10 +62,10 @@ async def _fetch_one_endpoint(endpoint: str, query: str) -> dict | None:
         return None
 
 
-async def _fetch_overpass_with_retry(query: str) -> dict | None:
+async def _fetch_overpass_with_retry(query: str, timeout: float = 25.0) -> dict | None:
     """Race all Overpass endpoints concurrently — first valid response wins."""
     tasks = {
-        asyncio.create_task(_fetch_one_endpoint(ep, query)): ep
+        asyncio.create_task(_fetch_one_endpoint(ep, query, timeout=timeout)): ep
         for ep in OVERPASS_ENDPOINTS
     }
     pending = set(tasks.keys())
@@ -93,12 +93,15 @@ async def _fetch_overpass_with_retry(query: str) -> dict | None:
 async def fetch_streets(
     bbox: tuple[float, float, float, float],
     include_minor: bool = True,
+    output_mode: str = "cnc",
 ) -> dict:
     """Fetch street network within bounding box.
 
     Args:
         bbox: (south, west, north, east) in WGS84
         include_minor: include residential/tertiary roads
+        output_mode: "cnc" caps streets for clean toolpaths,
+                     "print" keeps hundreds for dense poster grids
 
     Returns:
         dict with 'major_roads' and 'minor_roads' as lists of
@@ -110,17 +113,21 @@ async def fetch_streets(
         k for k, v in ROAD_CLASSES.items() if v["layer"] == "major"
     )
 
+    # Print mode needs all streets — use longer timeout for dense cities
+    query_timeout = 30 if output_mode == "print" else 20
+
     query = f"""
-    [out:json][timeout:20];
+    [out:json][timeout:{query_timeout}];
     way["highway"~"^({highway_filter})$"]({south},{west},{north},{east});
     out body;
     >;
     out skel qt;
     """
 
-    log.info(f"Fetching streets for bbox: {bbox}")
+    http_timeout = 35.0 if output_mode == "print" else 25.0
+    log.info(f"Fetching streets for bbox: {bbox} (mode={output_mode})")
 
-    data = await _fetch_overpass_with_retry(query)
+    data = await _fetch_overpass_with_retry(query, timeout=http_timeout)
     if data is None:
         return {"major_roads": [], "minor_roads": []}
 
@@ -155,18 +162,21 @@ async def fetch_streets(
         else:
             minor_roads.append(entry)
 
-    # Cap street count for clean, premium output.
-    # Design rule: 2-6 major roads max, target under 40 total lines.
+    # CNC mode: cap streets for clean toolpath output.
     # "Clean beats accurate" — keep only the longest/most important roads.
+    # Print mode: keep ALL streets — the dense grid IS the visual product.
     major_roads.sort(key=lambda r: (r[2], len(r[0])), reverse=True)  # width desc, then node count
     minor_roads.sort(key=lambda r: len(r[0]), reverse=True)  # longest segments first
 
-    MAX_MAJOR = 6
-    MAX_MINOR = 30
-    if len(major_roads) > MAX_MAJOR:
-        major_roads = major_roads[:MAX_MAJOR]
-    if len(minor_roads) > MAX_MINOR:
-        minor_roads = minor_roads[:MAX_MINOR]
+    if output_mode == "cnc":
+        MAX_MAJOR = 6
+        MAX_MINOR = 30
+        if len(major_roads) > MAX_MAJOR:
+            major_roads = major_roads[:MAX_MAJOR]
+        if len(minor_roads) > MAX_MINOR:
+            minor_roads = minor_roads[:MAX_MINOR]
+        log.info(f"CNC mode: {len(major_roads)} major roads (cap {MAX_MAJOR}), {len(minor_roads)} minor roads (cap {MAX_MINOR})")
+    else:
+        log.info(f"Print mode: {len(major_roads)} major roads, {len(minor_roads)} minor roads (uncapped)")
 
-    log.info(f"Fetched {len(major_roads)} major roads (capped {MAX_MAJOR}), {len(minor_roads)} minor roads (capped {MAX_MINOR})")
     return {"major_roads": major_roads, "minor_roads": minor_roads}

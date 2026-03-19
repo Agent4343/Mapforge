@@ -169,14 +169,18 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         need_streets = False
         need_water = False
 
+    is_print = req.output_mode == "print"
+
     async def _get_streets():
-        cache_key = _bbox_cache_key("streets", bbox)
+        mode_suffix = "print" if is_print else "cnc"
+        cache_key = _bbox_cache_key(f"streets_{mode_suffix}", bbox)
         if cache_key in _overpass_cache:
             log.info("Using cached street data")
             return _overpass_cache[cache_key]
         result = await fetch_streets(
             bbox=bbox,
             include_minor=req.product_type.value in street_types,
+            output_mode="print" if is_print else "cnc",
         )
         has_data = result and (result.get("major_roads") or result.get("minor_roads"))
         if has_data:
@@ -410,7 +414,6 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     log.info(f"Generated file {file_id}: {location_name} ({result['node_count']} nodes)")
 
     # Return the appropriate SVG based on output mode
-    is_print = req.output_mode == "print"
     display_result = print_svg_result if is_print else result
 
     return GenerateResponse(
@@ -488,6 +491,7 @@ async def generate_pin(
         pin_mm = (board_w / 2, board_h / 2)
 
     # Fetch streets for context
+    pin_is_print = req.output_mode == "print"
     streets_data = None
     if req.include_streets:
         try:
@@ -495,6 +499,7 @@ async def generate_pin(
             streets_data = await fetch_streets(
                 bbox=(bounds[1], bounds[0], bounds[3], bounds[2]),
                 include_minor=True,
+                output_mode="print" if pin_is_print else "cnc",
             )
         except Exception as e:
             log.warning(f"Street fetch failed (non-fatal): {e}")
