@@ -160,18 +160,30 @@ def _build_geometry_from_overpass(elements: list[dict], target_id: int, target_t
     merged_outers = _merge_way_segments(outer_rings)
     merged_inners = _merge_way_segments(inner_rings)
 
+    # Close inner rings and build Shapely LinearRings for containment checks
+    closed_inners = []
+    for inner in merged_inners:
+        if len(inner) >= 4:
+            if inner[0] != inner[-1]:
+                inner.append(inner[0])
+            closed_inners.append(inner)
+
     polygons = []
     for ring in merged_outers:
         if len(ring) < 4:
             continue
         if ring[0] != ring[-1]:
             ring.append(ring[0])
+        # Assign only holes that are contained within this outer ring
+        outer_poly = Polygon(ring)
         holes = []
-        for inner in merged_inners:
-            if len(inner) >= 4:
-                if inner[0] != inner[-1]:
-                    inner.append(inner[0])
-                holes.append(inner)
+        for inner in closed_inners:
+            try:
+                inner_poly = Polygon(inner)
+                if outer_poly.contains(inner_poly) or outer_poly.intersects(inner_poly):
+                    holes.append(inner)
+            except Exception:
+                continue
         try:
             poly = Polygon(ring, holes)
             if poly.is_valid:

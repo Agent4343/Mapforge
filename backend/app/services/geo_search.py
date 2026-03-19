@@ -42,17 +42,19 @@ async def search_location(query: str, country: str = "ca", limit: int = 10) -> l
         params["countrycodes"] = country
 
     try:
-        # Enforce Nominatim rate limit: max 1 request per second
+        # Enforce Nominatim rate limit: max 1 request per second.
+        # Only hold the lock to read/update the timestamp — release before HTTP call.
         global _nominatim_last_request
         async with _nominatim_lock:
             elapsed = time.monotonic() - _nominatim_last_request
             if elapsed < settings.NOMINATIM_RATE_LIMIT:
                 await asyncio.sleep(settings.NOMINATIM_RATE_LIMIT - elapsed)
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(NOMINATIM_URL, params=params, headers=NOMINATIM_HEADERS)
-                _nominatim_last_request = time.monotonic()
-                resp.raise_for_status()
-                data = resp.json()
+            _nominatim_last_request = time.monotonic()
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(NOMINATIM_URL, params=params, headers=NOMINATIM_HEADERS)
+            resp.raise_for_status()
+            data = resp.json()
     except (httpx.HTTPError, httpx.ProxyError) as e:
         log.warning(f"Nominatim search request failed: {e}")
         raise HTTPException(
@@ -124,7 +126,7 @@ def _classify_feature(item: dict) -> str:
         if _bbox_span(item) < 0.15:
             return "community"
         return "city"
-    return "lake"
+    return "community"
 
 
 def _bbox_span(item: dict) -> float:

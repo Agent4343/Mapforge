@@ -3,7 +3,7 @@
  */
 
 const API_BASE = "/api/v1";
-const TIMEOUT_MS = 30000;
+const TIMEOUT_MS = 60000;
 
 let authToken = localStorage.getItem("mapforge_token") || null;
 
@@ -202,25 +202,37 @@ async function batchGenerate(items) {
 
 async function downloadSVG(fileId) {
   const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}?format=svg`);
-  if (!resp.ok) throw new Error("Download failed");
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "SVG download failed"));
+  }
   return resp.blob();
 }
 
 async function downloadDXF(fileId) {
   const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}?format=dxf`);
-  if (!resp.ok) throw new Error("DXF download failed");
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "DXF download failed"));
+  }
   return resp.blob();
 }
 
 async function downloadThumbnail(fileId) {
   const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}/thumbnail`);
-  if (!resp.ok) throw new Error("Thumbnail download failed");
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Thumbnail download failed"));
+  }
   return resp.blob();
 }
 
 async function downloadPrintPNG(fileId) {
   const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}?format=png`);
-  if (!resp.ok) throw new Error("Print PNG download failed");
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Print PNG download failed"));
+  }
   return resp.blob();
 }
 
