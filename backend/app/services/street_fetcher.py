@@ -113,8 +113,14 @@ async def fetch_streets(
         k for k, v in ROAD_CLASSES.items() if v["layer"] == "major"
     )
 
-    # Print mode needs all streets — use longer timeout for dense cities
-    query_timeout = 30 if output_mode == "print" else 20
+    # Print mode: longer timeouts for dense city queries (Paris, NYC etc.)
+    # CNC mode: shorter timeouts since we only need a few roads
+    if output_mode == "print":
+        query_timeout = 60
+        http_timeout = 75.0
+    else:
+        query_timeout = 20
+        http_timeout = 25.0
 
     query = f"""
     [out:json][timeout:{query_timeout}];
@@ -124,10 +130,24 @@ async def fetch_streets(
     out skel qt;
     """
 
-    http_timeout = 35.0 if output_mode == "print" else 25.0
     log.info(f"Fetching streets for bbox: {bbox} (mode={output_mode})")
 
     data = await _fetch_overpass_with_retry(query, timeout=http_timeout)
+
+    # Print mode fallback: if full query failed (city too dense), retry
+    # without residential/unclassified — the main grid still looks great
+    if data is None and output_mode == "print" and include_minor:
+        grid_types = "motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link"
+        fallback_query = f"""
+        [out:json][timeout:{query_timeout}];
+        way["highway"~"^({grid_types})$"]({south},{west},{north},{east});
+        out body;
+        >;
+        out skel qt;
+        """
+        log.info("Full street query failed — retrying with main grid only (no residential)")
+        data = await _fetch_overpass_with_retry(fallback_query, timeout=http_timeout)
+
     if data is None:
         return {"major_roads": [], "minor_roads": []}
 
