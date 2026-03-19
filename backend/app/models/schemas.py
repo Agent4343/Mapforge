@@ -159,7 +159,7 @@ class GenerateRequest(BaseModel):
     board_height_inches: Optional[float] = Field(None, gt=1, le=60)
     style: CutStyle = CutStyle.outline
     export_format: ExportFormat = ExportFormat.svg
-    output_mode: str = "cnc"  # "cnc" or "print"
+    output_mode: OutputMode = OutputMode.cnc
     text: str = ""
     subtitle: str = ""  # "Where We Met" / "Est. 2024" / custom tagline
     show_coordinates: bool = True
@@ -211,7 +211,7 @@ class PinGenerateRequest(BaseModel):
     border_style: BorderStyle = BorderStyle.none
     radius_m: float = Field(500.0, ge=100, le=5000)
     include_streets: bool = True
-    output_mode: str = "cnc"  # "cnc" or "print"
+    output_mode: OutputMode = OutputMode.cnc
     color_theme: str = "classic"
 
 

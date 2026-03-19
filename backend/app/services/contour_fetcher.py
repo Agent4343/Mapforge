@@ -7,7 +7,6 @@ bands for premium CNC products.
 import asyncio
 
 import httpx
-from shapely.geometry import LineString
 
 from app.logging_config import log
 
@@ -171,10 +170,17 @@ def generate_depth_bands(
     for i in range(num_bands):
         band_min = min_elev + i * band_range
         band_max = band_min + band_range
-        band_contours = [
-            c for c in contours
-            if band_min <= c["elevation"] < band_max
-        ]
+        # Use <= on upper bound for the last band to include max elevation
+        if i == num_bands - 1:
+            band_contours = [
+                c for c in contours
+                if band_min <= c["elevation"] <= band_max
+            ]
+        else:
+            band_contours = [
+                c for c in contours
+                if band_min <= c["elevation"] < band_max
+            ]
 
         if band_contours:
             # Pocket depth: deeper elevation = deeper cut

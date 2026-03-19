@@ -638,7 +638,7 @@ async def generate_pin(
         raise HTTPException(status_code=500, detail="Failed to save to library. Please try again.")
 
     # Return the appropriate SVG based on output mode
-    is_print = getattr(req, "output_mode", "cnc") == "print"
+    is_print = req.output_mode == "print"
     display_result = print_svg_result if is_print else result
 
     return GenerateResponse(
@@ -649,9 +649,9 @@ async def generate_pin(
         file_id=file_id,
         location_name=location_name,
         dimensions_mm=(board_w, board_h),
-        node_count=result["node_count"],
-        path_count=result["path_count"],
-        layer_count=result["layer_count"],
+        node_count=display_result["node_count"],
+        path_count=display_result["path_count"],
+        layer_count=display_result["layer_count"],
     )
 
 

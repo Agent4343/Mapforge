@@ -519,10 +519,10 @@ def _generate_print_svg(
         layer_count += 1
         path_count += 1
     if markers:
-        remapped_markers = [
-            {**m, "x": _remap_point(m["x"], m["y"])[0], "y": _remap_point(m["x"], m["y"])[1]}
-            for m in markers
-        ]
+        remapped_markers = []
+        for m in markers:
+            rx, ry = _remap_point(m["x"], m["y"])
+            remapped_markers.append({**m, "x": rx, "y": ry})
         _render_custom_markers(lines, remapped_markers, board_w, board_h, font_size_mm)
         layer_count += 1
         path_count += len(markers)
@@ -768,97 +768,6 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
             f'      <path d="{path_d}"'
             f' fill="none" stroke="{theme["street_minor"]}" stroke-width="{sw}"'
             f' stroke-linecap="round" stroke-linejoin="round"/>'
-        )
-
-    lines.append("    </g>")
-
-
-def _render_print_street_labels(
-    lines: list[str],
-    label_candidates: list[tuple],
-    board_w: float,
-    board_h: float,
-    theme: dict,
-):
-    """Render street name labels on print poster maps with themed colors.
-
-    Places labels at the midpoint of each road, rotated to follow the road
-    direction. Uses theme colors for the label text and a contrasting halo
-    for readability against the map background.
-    """
-    label_fill = theme.get("street_label", "#1a1a1a")
-    map_bg = theme.get("map_bg", "#ffffff")
-
-    lines.append('    <g id="street_labels">')
-
-    font_sizes = {"major": 5.5, "minor": 3.5}
-    min_spacing = 12.0
-    margin = 8.0
-
-    # Deduplicate: pick the longest segment for each street name
-    best_segments: dict[str, tuple] = {}
-    for coords, name, road_type in label_candidates:
-        seg_len = _path_length(coords)
-        existing = best_segments.get(name)
-        if existing is None or seg_len > existing[0]:
-            best_segments[name] = (seg_len, coords, road_type)
-
-    # Place labels, track positions to avoid overlap
-    placed: list[tuple[float, float, float]] = []
-
-    for name, (seg_len, coords, road_type) in best_segments.items():
-        font_size = font_sizes[road_type]
-        approx_text_width = len(name) * font_size * 0.55
-
-        # Skip if road segment is shorter than the label
-        if seg_len < approx_text_width * 1.2:
-            continue
-
-        mid_x, mid_y, angle_deg = _path_midpoint_and_angle(coords)
-
-        if mid_x < margin or mid_x > board_w - margin:
-            continue
-        if mid_y < margin or mid_y > board_h - margin:
-            continue
-
-        too_close = False
-        for px, py, pw in placed:
-            dist = math.hypot(mid_x - px, mid_y - py)
-            if dist < max(min_spacing, (pw + approx_text_width) / 2):
-                too_close = True
-                break
-        if too_close:
-            continue
-
-        placed.append((mid_x, mid_y, approx_text_width))
-
-        # Ensure text reads left-to-right
-        if angle_deg > 90:
-            angle_deg -= 180
-        elif angle_deg < -90:
-            angle_deg += 180
-
-        rx, ry = round(mid_x, 2), round(mid_y, 2)
-        ra = round(angle_deg, 1)
-
-        # Background halo for readability (uses map background color)
-        lines.append(
-            f'      <text x="{rx}" y="{ry}"'
-            f' text-anchor="middle" font-family="Arial, Helvetica, sans-serif"'
-            f' font-size="{font_size}" fill="none"'
-            f' stroke="{map_bg}" stroke-width="{round(font_size * 0.35, 2)}"'
-            f' transform="rotate({ra},{rx},{ry})">'
-            f'{_escape_xml(name.upper())}</text>'
-        )
-
-        # Label text
-        lines.append(
-            f'      <text x="{rx}" y="{ry}"'
-            f' text-anchor="middle" font-family="Arial, Helvetica, sans-serif"'
-            f' font-size="{font_size}" font-weight="bold"'
-            f' fill="{label_fill}"'
-            f' transform="rotate({ra},{rx},{ry})">'
-            f'{_escape_xml(name.upper())}</text>'
         )
 
     lines.append("    </g>")

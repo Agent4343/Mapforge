@@ -48,7 +48,7 @@ def generate_dxf(
     # Board outline (dashed)
     msp.add_lwpolyline(
         [(0, 0), (board_w, 0), (board_w, board_h), (0, board_h), (0, 0)],
-        dxfattribs={"layer": "BOARD_OUTLINE", "linetype": "DASHED"},
+        dxfattribs={"layer": "BOARD_OUTLINE"},
     )
 
     # Geography outlines
@@ -111,7 +111,7 @@ def generate_dxf(
         doc.layers.add("WATER_POLYGONS", color=4)   # cyan
         doc.layers.add("WATERWAYS", color=4)
 
-        for coords in water_data.get("water_polygons", []):
+        for coords, water_type, name in water_data.get("water_polygons", []):
             if len(coords) < 3:
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
@@ -122,7 +122,7 @@ def generate_dxf(
                 dxfattribs={"layer": "WATER_POLYGONS"},
             )
 
-        for coords, ww_type, width in water_data.get("waterways", []):
+        for coords, water_type, name in water_data.get("waterways", []):
             if len(coords) < 2:
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
