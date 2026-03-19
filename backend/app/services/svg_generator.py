@@ -351,7 +351,7 @@ def _generate_print_svg(
 
     # Remap geometry from full-board space to poster's map area.
     # The geometry processor scaled coords to fit (0..board_w, 0..board_h)
-    # with 8% CNC margins. We need to rescale them into the poster's map
+    # with 12% CNC margins. We need to rescale them into the poster's map
     # rectangle (map_x..map_x+map_w, map_y..map_y+map_h).
     bounds_mm = processed.get("bounds_mm", (0, 0, board_w, board_h))
     geo_min_x, geo_min_y, geo_max_x, geo_max_y = bounds_mm
@@ -684,14 +684,14 @@ def _render_geography(lines: list[str], polygons: list, style: CutStyle):
             path_d = _coords_to_path(exterior)
             lines.append(
                 f'    <path d="{path_d}"'
-                f' fill="none" stroke="#1a1a1a" stroke-width="0.35"'
+                f' fill="none" stroke="#1a1a1a" stroke-width="0.25"'
                 f' stroke-linejoin="round"/>'
             )
             for hole in holes:
                 hole_d = _coords_to_path(hole)
                 lines.append(
                     f'    <path d="{hole_d}"'
-                    f' fill="none" stroke="#1a1a1a" stroke-width="0.35"'
+                    f' fill="none" stroke="#1a1a1a" stroke-width="0.25"'
                     f' stroke-linejoin="round"/>'
                 )
         lines.append("  </g>")
@@ -1206,13 +1206,13 @@ def _render_pin_icon(lines: list[str], cx: float, cy: float, r: float):
     )
     lines.append(
         f'      <path d="{d}"'
-        f' fill="#c0392b" stroke="#1a1a1a" stroke-width="0.35"'
+        f' fill="#c0392b" stroke="#1a1a1a" stroke-width="0.25"'
         f' stroke-linejoin="round"/>'
     )
     # Circle
     lines.append(
         f'      <circle cx="{round(cx, 2)}" cy="{round(cy, 2)}" r="{round(r, 2)}"'
-        f' fill="#e74c3c" stroke="#1a1a1a" stroke-width="0.35"/>'
+        f' fill="#e74c3c" stroke="#1a1a1a" stroke-width="0.25"/>'
     )
     # Inner dot
     lines.append(
@@ -1241,7 +1241,7 @@ def _render_heart_icon(lines: list[str], cx: float, cy: float, r: float):
     d += " Z"
     lines.append(
         f'      <path d="{d}"'
-        f' fill="#e74c3c" stroke="#1a1a1a" stroke-width="0.35"'
+        f' fill="#e74c3c" stroke="#1a1a1a" stroke-width="0.25"'
         f' stroke-linejoin="round"/>'
     )
 
@@ -1265,7 +1265,7 @@ def _render_star_icon(lines: list[str], cx: float, cy: float, r: float):
     d += " Z"
     lines.append(
         f'      <path d="{d}"'
-        f' fill="#f39c12" stroke="#1a1a1a" stroke-width="0.35"'
+        f' fill="#f39c12" stroke="#1a1a1a" stroke-width="0.25"'
         f' stroke-linejoin="round"/>'
     )
 
@@ -1289,7 +1289,7 @@ def _render_home_icon(lines: list[str], cx: float, cy: float, r: float):
     d += " Z"
     lines.append(
         f'      <path d="{d}"'
-        f' fill="#3498db" stroke="#1a1a1a" stroke-width="0.35"'
+        f' fill="#3498db" stroke="#1a1a1a" stroke-width="0.25"'
         f' stroke-linejoin="miter"/>'
     )
     # Door
@@ -1317,7 +1317,7 @@ def _render_diamond_icon(lines: list[str], cx: float, cy: float, r: float):
     )
     lines.append(
         f'      <path d="{d}"'
-        f' fill="#9b59b6" stroke="#1a1a1a" stroke-width="0.35"'
+        f' fill="#9b59b6" stroke="#1a1a1a" stroke-width="0.25"'
         f' stroke-linejoin="round"/>'
     )
 

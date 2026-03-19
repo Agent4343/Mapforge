@@ -183,7 +183,7 @@ def generate_dxf(
     if pin_location:
         px, py_svg = pin_location
         py = board_h - py_svg  # flip Y for DXF
-        r = font_size_mm * 0.35
+        r = font_size_mm * 0.2
         doc.layers.add("PIN_MARKER", color=1)  # red
 
         # Circle
@@ -193,7 +193,7 @@ def generate_dxf(
             dxfattribs={"layer": "PIN_MARKER"},
         )
         # Diamond pointer below
-        h = font_size_mm * 1.2
+        h = font_size_mm * 0.7
         msp.add_lwpolyline(
             [
                 (px, py - r),
@@ -210,8 +210,8 @@ def generate_dxf(
     if markers:
         doc.layers.add("CUSTOM_MARKERS", color=1)  # red
         doc.layers.add("MARKER_LABELS", color=7)
-        r = font_size_mm * 0.3
-        label_size = font_size_mm * 0.35
+        r = font_size_mm * 0.18
+        label_size = font_size_mm * 0.3
 
         for m in markers:
             mx = m["x"]
