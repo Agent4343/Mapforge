@@ -231,13 +231,15 @@ export default function App() {
       } else {
         // Build markers list from valid entries
         const validMarkers = markers
-          .filter((m) => m.lat !== "" && m.lon !== "" && !isNaN(m.lat) && !isNaN(m.lon))
           .map((m) => ({
             lat: parseFloat(m.lat),
             lon: parseFloat(m.lon),
             label: m.label || "",
             icon: m.icon || "pin",
-          }));
+          }))
+          .filter((m) => !isNaN(m.lat) && !isNaN(m.lon)
+            && m.lat >= -90 && m.lat <= 90
+            && m.lon >= -180 && m.lon <= 180);
 
         const params = {
           osm_id: selectedResult.osm_id,
@@ -340,7 +342,8 @@ export default function App() {
     document.body.appendChild(a);
     a.click();
     a.remove();
-    URL.revokeObjectURL(url);
+    // Delay revoking to give the browser time to initiate the download
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   // Landing page for new visitors

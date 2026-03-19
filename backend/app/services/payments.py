@@ -16,11 +16,24 @@ SUBSCRIPTION_PRICES = {
 }
 
 
+def _require_stripe(operation: str = "This operation"):
+    """Raise 503 if Stripe is not configured."""
+    if not settings.STRIPE_SECRET_KEY:
+        if settings.is_production:
+            log.error(f"Stripe not configured in production — {operation} blocked")
+            raise HTTPException(
+                status_code=503,
+                detail="Payment system is not configured. Please contact support.",
+            )
+        log.warning(f"Stripe not configured — {operation} skipped (dev mode)")
+        return False
+    return True
+
+
 async def create_customer(email: str, name: str) -> str:
     """Create a Stripe customer. Returns customer ID."""
-    if not settings.STRIPE_SECRET_KEY:
-        log.warning("Stripe not configured — returning mock customer ID")
-        return f"cus_mock_{email.split('@')[0]}"
+    if not _require_stripe("customer creation"):
+        return f"cus_dev_{email.split('@')[0]}"
 
     customer = stripe.Customer.create(email=email, name=name)
     log.info(f"Created Stripe customer: {customer.id}")
@@ -34,8 +47,7 @@ async def create_checkout_session(
     cancel_url: str,
 ) -> str:
     """Create a Stripe Checkout session for subscription. Returns session URL."""
-    if not settings.STRIPE_SECRET_KEY:
-        raise HTTPException(status_code=503, detail="Payments not configured")
+    _require_stripe("checkout session")
 
     session = stripe.checkout.Session.create(
         customer=customer_id,
@@ -55,11 +67,10 @@ async def create_payment_intent(
     transfer_group: str | None = None,
 ) -> dict:
     """Create a payment intent for a marketplace purchase."""
-    if not settings.STRIPE_SECRET_KEY:
-        log.warning("Stripe not configured — returning mock payment intent")
+    if not _require_stripe("payment intent"):
         return {
-            "id": "pi_mock_" + str(amount_cents),
-            "client_secret": "mock_secret",
+            "id": "pi_dev_" + str(amount_cents),
+            "client_secret": "dev_secret",
             "status": "succeeded",
         }
 
@@ -87,7 +98,7 @@ async def create_transfer(
     transfer_group: str | None = None,
 ) -> str | None:
     """Transfer funds to a seller's connected account."""
-    if not settings.STRIPE_SECRET_KEY:
+    if not _require_stripe("transfer"):
         return None
 
     transfer = stripe.Transfer.create(
@@ -103,9 +114,8 @@ async def create_transfer(
 
 async def create_connected_account(email: str, country: str = "CA") -> str:
     """Create a Stripe Connect Express account for a seller."""
-    if not settings.STRIPE_SECRET_KEY:
-        log.warning("Stripe not configured — returning mock account ID")
-        return f"acct_mock_{email.split('@')[0]}"
+    if not _require_stripe("connected account"):
+        return f"acct_dev_{email.split('@')[0]}"
 
     account = stripe.Account.create(
         type="express",
@@ -125,8 +135,7 @@ async def create_account_onboarding_link(
     return_url: str,
 ) -> str:
     """Create an onboarding link for a seller to complete Stripe setup."""
-    if not settings.STRIPE_SECRET_KEY:
-        raise HTTPException(status_code=503, detail="Payments not configured")
+    _require_stripe("account onboarding")
 
     link = stripe.AccountLink.create(
         account=account_id,
@@ -139,7 +148,7 @@ async def create_account_onboarding_link(
 
 async def get_account_status(account_id: str) -> dict:
     """Check the status of a connected account."""
-    if not settings.STRIPE_SECRET_KEY:
+    if not _require_stripe("account status check"):
         return {"charges_enabled": False, "payouts_enabled": False, "details_submitted": False}
 
     account = stripe.Account.retrieve(account_id)
@@ -156,7 +165,7 @@ async def create_payout(
     description: str = "MapForge marketplace payout",
 ) -> str | None:
     """Create a payout to a seller's connected account bank."""
-    if not settings.STRIPE_SECRET_KEY:
+    if not _require_stripe("payout"):
         return None
 
     try:

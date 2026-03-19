@@ -182,8 +182,16 @@ class GenerateRequest(BaseModel):
     @classmethod
     def sanitize_text(cls, v: str) -> str:
         if len(v) > 200:
-            return v[:200]
-        return v
+            v = v[:200]
+        # Strip control characters that could cause issues in SVG/XML
+        return "".join(c for c in v if c.isprintable() or c in ("\n", "\t"))
+
+    @field_validator("subtitle")
+    @classmethod
+    def sanitize_subtitle(cls, v: str) -> str:
+        if len(v) > 200:
+            v = v[:200]
+        return "".join(c for c in v if c.isprintable() or c in ("\n", "\t"))
 
 
 class PinGenerateRequest(BaseModel):

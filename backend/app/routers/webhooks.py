@@ -198,7 +198,7 @@ async def _handle_marketplace_payment(db: AsyncSession, data: dict):
             log.error(f"Failed to transfer to seller {seller.username}: {e}")
 
     purchase.status = "completed"
-    listing.sale_count += 1
+    # Note: sale_count is already incremented in the purchase endpoint
     await db.commit()
 
 

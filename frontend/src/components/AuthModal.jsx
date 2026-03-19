@@ -1,8 +1,14 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { register, login, requestPasswordReset, resetPassword } from "../services/api.js";
 
 export default function AuthModal({ onAuth, onClose }) {
   const [mode, setMode] = useState("login"); // login, register, reset_request, reset_confirm
+
+  // Prevent body scroll while modal is open
+  useEffect(() => {
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = ""; };
+  }, []);
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");

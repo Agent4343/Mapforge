@@ -156,7 +156,13 @@ export default function SellerDashboard({ onBack }) {
             </div>
             <div className="control-group">
               <label>Description</label>
-              <input type="text" value={editDesc} onChange={(e) => setEditDesc(e.target.value)} maxLength={2000} />
+              <textarea
+                value={editDesc}
+                onChange={(e) => setEditDesc(e.target.value)}
+                maxLength={2000}
+                rows={4}
+                style={{ width: "100%", resize: "vertical" }}
+              />
             </div>
             <div className="export-buttons" style={{ marginTop: 12 }}>
               <button className="btn btn-primary" onClick={handleSaveEdit} disabled={saving}>

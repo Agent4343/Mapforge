@@ -26,11 +26,24 @@ async def lifespan(app: FastAPI):
     log.info("MapForge CNC starting up...")
     log.info(f"DATABASE_URL dialect: {settings.DATABASE_URL.split('://')[0]}")
     log.info(f"PORT: {os.environ.get('PORT', 'not set (defaulting to 8000)')}")
+
+    # Validate production configuration
+    issues = settings.validate_production()
+    for issue in issues:
+        if settings.is_production:
+            log.error(f"CONFIG: {issue}")
+        else:
+            log.warning(f"CONFIG: {issue}")
+
+    # Database is required — fail startup if unreachable
     try:
         await init_db()
         log.info("Database initialized")
     except Exception as e:
-        log.error(f"Database initialization failed — app will start without DB: {e}")
+        log.error(f"Database initialization failed: {e}")
+        if settings.is_production:
+            raise  # Don't start without database in production
+        log.warning("Continuing without database (development mode)")
 
     # Ensure local storage directory exists
     if settings.STORAGE_BACKEND == "local":
@@ -101,7 +114,20 @@ app.include_router(webhooks.router)
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    """Health check — verifies database connectivity."""
+    from sqlalchemy import text
+    from app.database import async_session
+
+    try:
+        async with async_session() as db:
+            await db.execute(text("SELECT 1"))
+        return {"status": "ok", "database": "connected"}
+    except Exception as e:
+        log.error(f"Health check DB failure: {e}")
+        return JSONResponse(
+            status_code=503,
+            content={"status": "degraded", "database": "disconnected"},
+        )
 
 
 @app.exception_handler(Exception)

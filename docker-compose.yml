@@ -7,6 +7,12 @@ services:
       - PYTHONUNBUFFERED=1
       - PORT=8000
       - FRONTEND_URL=http://localhost:3000
+      - STORAGE_BACKEND=local
+      - STORAGE_LOCAL_PATH=/tmp/mapforge_storage
+    env_file:
+      - ./backend/.env
+    volumes:
+      - mapforge_storage:/tmp/mapforge_storage
 
   frontend:
     build: ./frontend
@@ -17,3 +23,6 @@ services:
       - BACKEND_URL=http://backend:8000/
     depends_on:
       - backend
+
+volumes:
+  mapforge_storage:

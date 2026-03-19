@@ -168,7 +168,7 @@ export default function MarketplaceView({ user, onBack }) {
               <div className="marketplace-card-stats">
                 {l.rating_count > 0 ? (
                   <button className="link-btn" onClick={() => handleViewReviews(l.id)} style={{ fontSize: "11px" }}>
-                    {"★".repeat(Math.round(l.average_rating))}{"☆".repeat(5 - Math.round(l.average_rating))} {l.average_rating.toFixed(1)} ({l.rating_count})
+                    {"★".repeat(Math.min(5, Math.floor(l.average_rating)))}{"☆".repeat(Math.max(0, 5 - Math.floor(l.average_rating)))} {l.average_rating.toFixed(1)} ({l.rating_count})
                   </button>
                 ) : (
                   <span>No reviews yet</span>

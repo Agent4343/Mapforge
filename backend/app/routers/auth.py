@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel, Field
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy import select
@@ -109,26 +110,36 @@ async def get_profile(user: User = Depends(get_current_user)):
     )
 
 
+class PasswordResetRequest(BaseModel):
+    email: str = Field(..., min_length=5, max_length=255)
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+
 @router.post("/request-reset")
 @limiter.limit("5/minute")
 async def request_password_reset(
     request: Request,
-    email: str,
+    body: PasswordResetRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Request a password reset token. Returns the token directly (in production, email it)."""
-    import secrets
+    """Request a password reset token. In production, the token is emailed."""
+    import secrets as _secrets
     from datetime import timedelta
     from app.models.db_models import PasswordResetToken
 
-    result = await db.execute(select(User).where(User.email == email))
+    result = await db.execute(select(User).where(User.email == body.email))
     user = result.scalar_one_or_none()
 
     # Always return success to avoid email enumeration
+    response = {"message": "If an account with that email exists, a reset link has been sent."}
     if not user:
-        return {"message": "If an account with that email exists, a reset link has been sent."}
+        return response
 
-    token = secrets.token_urlsafe(48)
+    token = _secrets.token_urlsafe(48)
     reset = PasswordResetToken(
         user_id=user.id,
         token=token,
@@ -138,26 +149,26 @@ async def request_password_reset(
     await db.commit()
 
     log.info(f"Password reset requested for: {user.email}")
-    # In production: send email with reset link containing token
-    # For now: return token directly so the frontend can use it
-    return {"message": "If an account with that email exists, a reset link has been sent.", "reset_token": token}
+
+    # In production: send email with reset link containing the token
+    # In development: include token in response for testing convenience
+    if not settings.is_production:
+        response["reset_token"] = token
+
+    return response
 
 
 @router.post("/reset-password")
 async def reset_password(
-    token: str,
-    new_password: str,
+    body: PasswordResetConfirm,
     db: AsyncSession = Depends(get_db),
 ):
     """Reset password using a valid reset token."""
     from app.models.db_models import PasswordResetToken
 
-    if len(new_password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
-
     result = await db.execute(
         select(PasswordResetToken).where(
-            PasswordResetToken.token == token,
+            PasswordResetToken.token == body.token,
             PasswordResetToken.used == False,
         )
     )
@@ -174,7 +185,7 @@ async def reset_password(
     if not user:
         raise HTTPException(status_code=400, detail="Invalid reset token")
 
-    user.hashed_password = hash_password(new_password)
+    user.hashed_password = hash_password(body.new_password)
     reset.used = True
     await db.commit()
 
@@ -206,6 +217,7 @@ async def subscribe(
 
 @router.post("/seller/onboard")
 async def seller_onboard(
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -221,11 +233,14 @@ async def seller_onboard(
     else:
         account_id = user.stripe_connect_account_id
 
+    # Build dynamic base URL from the request or configured frontend URL
+    base_url = settings.FRONTEND_URL or str(request.base_url).rstrip("/")
+
     # Create onboarding link
     onboarding_url = await create_account_onboarding_link(
         account_id=account_id,
-        refresh_url="https://mapforge.app/seller/onboard",
-        return_url="https://mapforge.app/seller/dashboard",
+        refresh_url=f"{base_url}/seller/onboard",
+        return_url=f"{base_url}/seller/dashboard",
     )
 
     return {"onboarding_url": onboarding_url}

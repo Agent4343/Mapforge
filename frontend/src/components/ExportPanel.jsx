@@ -107,7 +107,7 @@ export default function ExportPanel({
           <div className="file-stats-grid">
             <div className="file-stat">
               <span className="file-stat-label">Size</span>
-              <span className="file-stat-value">{result.dimensions_mm[0]}&times;{result.dimensions_mm[1]}mm</span>
+              <span className="file-stat-value">{result.dimensions_mm?.[0] ?? "?"}&times;{result.dimensions_mm?.[1] ?? "?"}mm</span>
             </div>
             <div className="file-stat">
               <span className="file-stat-label">Nodes</span>

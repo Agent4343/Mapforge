@@ -18,12 +18,22 @@ elif settings.DATABASE_URL.startswith("postgresql+asyncpg"):
 
 log.info(f"Database dialect: {settings.DATABASE_URL.split('://')[0]}")
 
-engine = create_async_engine(
-    settings.DATABASE_URL,
-    connect_args=connect_args,
-    echo=False,
-    pool_pre_ping=True,
-)
+_engine_kwargs = {
+    "connect_args": connect_args,
+    "echo": False,
+    "pool_pre_ping": True,
+}
+
+# Configure connection pool for PostgreSQL (SQLite uses NullPool by default)
+if settings.DATABASE_URL.startswith("postgresql"):
+    _engine_kwargs.update({
+        "pool_size": 10,          # Base pool connections
+        "max_overflow": 20,       # Extra connections under load
+        "pool_timeout": 30,       # Wait time for available connection
+        "pool_recycle": 1800,     # Recycle connections after 30 minutes
+    })
+
+engine = create_async_engine(settings.DATABASE_URL, **_engine_kwargs)
 
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 

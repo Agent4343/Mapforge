@@ -5,6 +5,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.logging_config import log
 from app.models.db_models import GeneratedFile, MarketplaceListing, User
 from app.models.schemas import LibraryFileResponse, LibraryResponse
 from app.services.auth import get_current_user
@@ -103,9 +104,19 @@ async def delete_file(
         raise HTTPException(status_code=409, detail="Cannot delete a file that is listed on the marketplace. Remove the listing first.")
 
     from app.services.file_storage import delete_file as delete_stored
-    await delete_stored(file_record.svg_storage_key)
-    if file_record.dxf_storage_key:
-        await delete_stored(file_record.dxf_storage_key)
+
+    # Clean up all stored files (SVG, DXF, thumbnail, print PNG)
+    for key in (
+        file_record.svg_storage_key,
+        file_record.dxf_storage_key,
+        file_record.thumbnail_key,
+        file_record.print_png_key,
+    ):
+        if key:
+            try:
+                await delete_stored(key)
+            except Exception as e:
+                log.warning(f"Failed to delete storage key {key}: {e}")
 
     await db.delete(file_record)
     await db.commit()
