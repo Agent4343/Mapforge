@@ -21,7 +21,7 @@ OVERPASS_ENDPOINTS = [
 async def _try_endpoint(endpoint: str, query: str) -> dict | None:
     """Try a single Overpass endpoint. Returns valid data or None."""
     try:
-        async with httpx.AsyncClient(timeout=35.0) as client:
+        async with httpx.AsyncClient(timeout=25.0) as client:
             resp = await client.post(endpoint, data={"data": query})
             resp.raise_for_status()
             data = resp.json()
@@ -75,7 +75,7 @@ async def fetch_contour_lines(
 
     if contour_type == "depth":
         query = f"""
-        [out:json][timeout:30];
+        [out:json][timeout:20];
         (
             way["natural"="coastline"]({south},{west},{north},{east});
             way["bathymetry"]({south},{west},{north},{east});
@@ -88,7 +88,7 @@ async def fetch_contour_lines(
         """
     else:
         query = f"""
-        [out:json][timeout:30];
+        [out:json][timeout:20];
         (
             way["contour"="elevation"]({south},{west},{north},{east});
             way["ele"]({south},{west},{north},{east});

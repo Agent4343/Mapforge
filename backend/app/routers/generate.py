@@ -196,12 +196,28 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             return result
         return None
 
+    # Fetch all Overpass data concurrently — streets, water, contours in parallel
+    async def _get_contours():
+        try:
+            contours = await fetch_contour_lines(
+                bbox=bbox,
+                contour_type=req.contour_type,
+            )
+            if contours:
+                return generate_depth_bands(contours, num_bands=req.num_depth_bands)
+        except Exception as e:
+            log.warning(f"Contour fetch failed (non-fatal): {e}")
+        return None
+
     tasks = []
     if need_streets:
         tasks.append(("streets", _get_streets()))
     if need_water:
         tasks.append(("water", _get_water()))
+    if req.include_contours:
+        tasks.append(("contours", _get_contours()))
 
+    contour_data = None
     if tasks:
         results = await asyncio.gather(
             *(t[1] for t in tasks), return_exceptions=True
@@ -212,25 +228,14 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                 warnings.append(f"{label.title()} data unavailable — map generated without {label}.")
             elif result is None:
                 log.warning(f"{label.title()} fetch returned empty results — not caching")
-                warnings.append(f"{label.title()} data unavailable — the Overpass API may be busy. Try regenerating in a minute.")
+                if label != "contours":
+                    warnings.append(f"{label.title()} data unavailable — the Overpass API may be busy. Try regenerating in a minute.")
             elif label == "streets":
                 streets_data = result
             elif label == "water":
                 water_data = result
-
-    # Fetch contours for premium products
-    contour_data = None
-    if req.include_contours:
-        try:
-            bounds = geom.bounds
-            contours = await fetch_contour_lines(
-                bbox=(bounds[1], bounds[0], bounds[3], bounds[2]),
-                contour_type=req.contour_type,
-            )
-            if contours:
-                contour_data = generate_depth_bands(contours, num_bands=req.num_depth_bands)
-        except Exception as e:
-            log.warning(f"Contour fetch failed (non-fatal): {e}")
+            elif label == "contours":
+                contour_data = result
 
     # Transform custom markers from lat/lon to board mm coordinates
     board_markers = None

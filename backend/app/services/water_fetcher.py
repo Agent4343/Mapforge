@@ -21,7 +21,7 @@ OVERPASS_ENDPOINTS = [
 async def _fetch_one_endpoint(endpoint: str, query: str) -> dict | None:
     """Try a single Overpass endpoint. Returns valid data or None."""
     try:
-        async with httpx.AsyncClient(timeout=55.0) as client:
+        async with httpx.AsyncClient(timeout=25.0) as client:
             resp = await client.post(endpoint, data={"data": query})
             resp.raise_for_status()
             data = resp.json()
@@ -84,7 +84,7 @@ async def fetch_water_features(
     south, west, north, east = bbox
 
     query = f"""
-    [out:json][timeout:45];
+    [out:json][timeout:20];
     (
       way["natural"="water"]({south},{west},{north},{east});
       way["natural"="coastline"]({south},{west},{north},{east});
