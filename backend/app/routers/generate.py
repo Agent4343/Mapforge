@@ -156,6 +156,14 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     bounds = geom.bounds  # minx, miny, maxx, maxy
     bbox = (bounds[1], bounds[0], bounds[3], bounds[2])
 
+    # Skip Overpass for large bounding boxes (provinces, large regions).
+    # These cause timeouts and streets don't belong on province-scale maps.
+    bbox_span = max(abs(bbox[2] - bbox[0]), abs(bbox[3] - bbox[1]))
+    if bbox_span > 2.0:
+        log.info(f"Bbox span {bbox_span:.1f}° too large for street/water fetch — skipping Overpass")
+        need_streets = False
+        need_water = False
+
     async def _get_streets():
         cache_key = _bbox_cache_key("streets", bbox)
         if cache_key in _overpass_cache:

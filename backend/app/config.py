@@ -118,8 +118,8 @@ class Settings:
             issues.append("STORAGE_BACKEND=s3 but S3_BUCKET is empty")
         if not self.ADMIN_EMAILS:
             issues.append("ADMIN_EMAILS not set — no admin accounts will be created")
-        if not self.FRONTEND_URL:
-            issues.append("FRONTEND_URL not set — CORS may block frontend requests")
+        if not self.FRONTEND_URL and not os.environ.get("RAILWAY_PUBLIC_DOMAIN"):
+            issues.append("FRONTEND_URL not set — CORS may block frontend requests (ignored on Railway)")
         return issues
 
 

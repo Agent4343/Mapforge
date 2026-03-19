@@ -86,7 +86,11 @@ async def search_location(query: str, country: str = "ca", limit: int = 10) -> l
 
 
 def _classify_feature(item: dict) -> str:
-    """Classify an OSM result into a MapForge product type."""
+    """Classify an OSM result into a MapForge product type.
+
+    Uses OSM class, admin_level, place type, and bounding box size
+    as a fallback to correctly identify provinces vs cities.
+    """
     osm_class = item.get("class", "")
     osm_type_tag = item.get("type", "")
 
@@ -98,6 +102,10 @@ def _classify_feature(item: dict) -> str:
             return "province"
         if admin_level in ("8", "9", "10"):
             return "community"
+        # No admin_level — use bbox size as heuristic.
+        # Provinces/states span > 2° of lat/lon, cities typically < 1°.
+        if _bbox_span(item) > 2.0:
+            return "province"
         return "city"
     if osm_class == "leisure" and osm_type_tag == "park":
         return "park"
@@ -107,5 +115,20 @@ def _classify_feature(item: dict) -> str:
         place_type = item.get("type", "")
         if place_type in ("village", "hamlet", "locality", "isolated_dwelling"):
             return "community"
+        if place_type in ("state", "province", "region", "country"):
+            return "province"
         return "city"
     return "lake"
+
+
+def _bbox_span(item: dict) -> float:
+    """Return the max lat/lon span of a Nominatim result's bounding box."""
+    bb = item.get("boundingbox", [])
+    if len(bb) < 4:
+        return 0.0
+    try:
+        lat_span = abs(float(bb[1]) - float(bb[0]))
+        lon_span = abs(float(bb[3]) - float(bb[2]))
+        return max(lat_span, lon_span)
+    except (ValueError, IndexError):
+        return 0.0
