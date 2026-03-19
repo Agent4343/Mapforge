@@ -1426,12 +1426,16 @@ def _render_border(lines: list[str], board_w: float, board_h: float, style: str)
 
 
 def _coords_to_path(coords: list[tuple]) -> str:
-    """Convert coordinate list to SVG path d attribute (M/L/Z — closed)."""
+    """Convert coordinate list to SVG path d attribute (M/L/Z — closed).
+
+    Rounds all coordinates to 2 decimal places (0.01mm precision) to keep
+    SVG files compact and consistent for CNC/CAM import.
+    """
     if not coords:
         return ""
-    parts = [f"M{coords[0][0]},{coords[0][1]}"]
+    parts = [f"M{round(coords[0][0], 2)},{round(coords[0][1], 2)}"]
     for x, y in coords[1:-1]:
-        parts.append(f"L{x},{y}")
+        parts.append(f"L{round(x, 2)},{round(y, 2)}")
     parts.append("Z")
     return " ".join(parts)
 

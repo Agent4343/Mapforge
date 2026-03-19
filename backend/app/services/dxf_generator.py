@@ -20,6 +20,8 @@ def generate_dxf(
     font_size_mm: float = 14.0,
     center_latlon: tuple[float, float] | None = None,
     streets_data: dict | None = None,
+    water_data: dict | None = None,
+    contour_data: list[dict] | None = None,
     pin_location: tuple[float, float] | None = None,
     markers: list[dict] | None = None,
 ) -> bytes:
@@ -88,7 +90,7 @@ def generate_dxf(
         lat, lon = latlon
         lat_dir = "N" if lat >= 0 else "S"
         lon_dir = "W" if lon < 0 else "E"
-        coord_text = f"{abs(lat):.4f} {lat_dir}, {abs(lon):.4f} {lon_dir}"
+        coord_text = f"{abs(lat):.6f} {lat_dir}  /  {abs(lon):.6f} {lon_dir}"
 
         coord_y = text_y - font_size_mm * 1.2
         msp.add_text(
@@ -102,6 +104,51 @@ def generate_dxf(
             (board_w / 2, coord_y),
             align=TextEntityAlignment.BOTTOM_CENTER,
         )
+
+    # Water features (lakes, rivers, streams)
+    if water_data:
+        transform = processed.get("transform")
+        doc.layers.add("WATER_POLYGONS", color=4)   # cyan
+        doc.layers.add("WATERWAYS", color=4)
+
+        for coords in water_data.get("water_polygons", []):
+            if len(coords) < 3:
+                continue
+            board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
+            dxf_coords = [(x, board_h - y) for x, y in board_coords]
+            msp.add_lwpolyline(
+                dxf_coords,
+                close=True,
+                dxfattribs={"layer": "WATER_POLYGONS"},
+            )
+
+        for coords, ww_type, width in water_data.get("waterways", []):
+            if len(coords) < 2:
+                continue
+            board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
+            dxf_coords = [(x, board_h - y) for x, y in board_coords]
+            msp.add_lwpolyline(
+                dxf_coords,
+                close=False,
+                dxfattribs={"layer": "WATERWAYS"},
+            )
+
+    # Contour/depth bands
+    if contour_data:
+        doc.layers.add("CONTOURS", color=9)  # light blue
+        for band in contour_data:
+            for contour in band.get("contours", []):
+                coords = contour.get("coords", [])
+                if len(coords) < 2:
+                    continue
+                transform = processed.get("transform")
+                board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
+                dxf_coords = [(x, board_h - y) for x, y in board_coords]
+                msp.add_lwpolyline(
+                    dxf_coords,
+                    close=False,
+                    dxfattribs={"layer": "CONTOURS"},
+                )
 
     # Streets and street labels
     if streets_data:

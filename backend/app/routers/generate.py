@@ -15,7 +15,7 @@ from app.logging_config import log
 from app.models.db_models import GeneratedFile, User
 from app.models.schemas import (
     BatchGenerateRequest, BatchGenerateResponse,
-    ExportFormat, GenerateRequest, GenerateResponse,
+    CutStyle, ExportFormat, GenerateRequest, GenerateResponse,
     PinGenerateRequest, PreviewResponse, BOARD_DIMENSIONS_INCHES,
 )
 from app.services.auth import get_current_user, get_optional_user
@@ -110,6 +110,11 @@ def _check_tier_limits(user: User | None, req: GenerateRequest):
 async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession) -> GenerateResponse:
     """Core generation logic shared by single and batch endpoints."""
     warnings: list[str] = []
+
+    # Enforce print mode constraints — poster output always uses filled style + SVG
+    if req.output_mode == "print":
+        req.style = CutStyle.filled
+        req.export_format = ExportFormat.svg
 
     # Resolve board dimensions
     if req.board_width_inches and req.board_height_inches:
@@ -311,6 +316,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                 show_coordinates=req.show_coordinates,
                 font_size_mm=req.font_size_mm,
                 streets_data=streets_data,
+                water_data=water_data,
+                contour_data=contour_data,
                 markers=board_markers,
             )
             dxf_key = svg_key.replace("svg/", "dxf/").replace(".svg", ".dxf")
@@ -332,10 +339,13 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         log.warning(f"Thumbnail generation failed (non-fatal): {e}")
 
     # Generate high-res print PNG from poster SVG (themed, with proper layout)
+    # Scale output width to actual board size for consistent 300 DPI
+    print_dpi_width = round(w_in * 300)
     print_png_key = None
     try:
         print_bytes = generate_print_image(
             print_svg_result["svg"],
+            output_width=print_dpi_width,
             color_theme=req.color_theme,
             skip_remap=True,  # Print SVG already has themed colors
         )
@@ -406,9 +416,9 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         file_id=file_id,
         location_name=location_name,
         dimensions_mm=(board_w, board_h),
-        node_count=result["node_count"],
-        path_count=result["path_count"],
-        layer_count=result["layer_count"],
+        node_count=display_result["node_count"],
+        path_count=display_result["path_count"],
+        layer_count=display_result["layer_count"],
         warnings=warnings,
     )
 
@@ -552,6 +562,7 @@ async def generate_pin(
                 font_size_mm=req.font_size_mm,
                 center_latlon=(req.lat, req.lon),
                 streets_data=streets_data,
+                water_data=water_data,
                 pin_location=pin_mm,
             )
             dxf_key = svg_key.replace("svg/", "dxf/").replace(".svg", ".dxf")
@@ -569,10 +580,13 @@ async def generate_pin(
         log.warning(f"Thumbnail generation failed (non-fatal): {e}")
 
     # Generate high-res print PNG from the themed print SVG
+    # Scale output width to actual board size for consistent 300 DPI
+    print_dpi_width = round(w_in * 300)
     print_png_key = None
     try:
         print_bytes = generate_print_image(
             print_svg_result["svg"],
+            output_width=print_dpi_width,
             color_theme=req.color_theme,
             skip_remap=True,
         )
