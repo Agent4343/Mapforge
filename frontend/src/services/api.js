@@ -184,6 +184,40 @@ async function generatePin(params) {
   return resp.json();
 }
 
+async function generateStarMap(params) {
+  const resp = await fetchWithTimeout(`${API_BASE}/generate/starmap`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+    timeout: 120000,
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Star map generation failed"));
+  }
+  return resp.json();
+}
+
+async function createFulfillmentOrder(params) {
+  const resp = await fetchWithTimeout(`${API_BASE}/generate/fulfillment`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+    timeout: 30000,
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Fulfillment order failed"));
+  }
+  return resp.json();
+}
+
+async function getFulfillmentPrices() {
+  const resp = await fetchWithTimeout(`${API_BASE}/generate/fulfillment/prices`);
+  if (!resp.ok) throw new Error("Failed to load fulfillment prices");
+  return resp.json();
+}
+
 async function batchGenerate(items) {
   const resp = await fetchWithTimeout(`${API_BASE}/generate/batch`, {
     method: "POST",
@@ -393,7 +427,8 @@ async function getAdminStats() {
 
 export {
   setToken, getToken, register, login, logout, getProfile, requestPasswordReset, resetPassword, subscribe,
-  searchLocations, generateSVG, generatePin, batchGenerate,
+  searchLocations, generateSVG, generatePin, generateStarMap, batchGenerate,
+  createFulfillmentOrder, getFulfillmentPrices,
   downloadSVG, downloadDXF, downloadThumbnail, downloadPrintPNG,
   getLibrary, deleteLibraryFile,
   browseMarketplace, createListing, purchaseListing,

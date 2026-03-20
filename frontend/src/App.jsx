@@ -15,7 +15,7 @@ import LandingPage from "./components/LandingPage.jsx";
 import PricingModal from "./components/PricingModal.jsx";
 import PurchasesView from "./components/PurchasesView.jsx";
 import {
-  generateSVG, generatePin, downloadSVG, downloadDXF, downloadThumbnail, downloadPrintPNG,
+  generateSVG, generatePin, generateStarMap, downloadSVG, downloadDXF, downloadThumbnail, downloadPrintPNG,
   getProfile, logout, getToken, subscribe,
 } from "./services/api.js";
 
@@ -41,6 +41,21 @@ const DEFAULT_CONFIG = {
   colorTheme: "classic",
   heartLat: null,
   heartLon: null,
+  // Shape crop
+  mapShape: "rectangle",
+  // Custom colors (when colorTheme === "custom")
+  customBg: "#1a1a2e",
+  customLand: "#2d3748",
+  customWater: "#a0c0e0",
+  customRoad: "#e2e8f0",
+  customText: "#1a1a1a",
+  // Star map
+  starDate: "",
+  starTime: "22:00",
+  starLat: null,
+  starLon: null,
+  // 3D preview
+  show3D: false,
 };
 
 function loadSavedConfig() {
@@ -194,9 +209,11 @@ export default function App() {
   }
 
   const handleGenerate = useCallback(async () => {
+    // Star map mode: use date/time/coordinates
+    const isStarMap = config.productType === "star_map";
     // Pin-drop mode: use coordinates instead of OSM search result
     const isPinMode = config.productType === "name_sign" && pinCoords;
-    if (!selectedResult && !isPinMode) return;
+    if (!selectedResult && !isPinMode && !isStarMap) return;
 
     setGenerating(true);
     setError(null);
@@ -206,7 +223,29 @@ export default function App() {
     try {
       let data;
 
-      if (isPinMode) {
+      if (isStarMap) {
+        // Star map generation
+        const starParams = {
+          lat: config.starLat || 43.65,
+          lon: config.starLon || -79.38,
+          label: config.text || "The Night Sky",
+          subtitle: config.subtitle || "",
+          date: config.starDate || new Date().toISOString().split("T")[0],
+          time: config.starTime || "22:00",
+          board_size: config.boardSize,
+          show_coordinates: config.showCoordinates,
+          font_size_mm: config.fontSize,
+          font_family: config.fontFamily || "serif",
+          color_theme: config.colorTheme || "midnight",
+          output_mode: config.outputMode || "print",
+          map_shape: config.mapShape || "circle",
+        };
+        if (config.boardSize === "custom") {
+          starParams.board_width_inches = config.customWidth || 16;
+          starParams.board_height_inches = config.customHeight || 20;
+        }
+        data = await generateStarMap(starParams);
+      } else if (isPinMode) {
         const pinParams = {
           lat: pinCoords.lat,
           lon: pinCoords.lon,
@@ -222,6 +261,7 @@ export default function App() {
           include_streets: config.includeStreets,
           output_mode: config.outputMode || "cnc",
           color_theme: config.colorTheme || "classic",
+          map_shape: config.mapShape || "rectangle",
         };
         if (config.boardSize === "custom") {
           pinParams.board_width_inches = config.customWidth || 16;
@@ -266,6 +306,13 @@ export default function App() {
           color_theme: config.colorTheme || "classic",
           heart_lat: config.heartLat || undefined,
           heart_lon: config.heartLon || undefined,
+          map_shape: config.mapShape || "rectangle",
+          // Custom color fields
+          custom_bg: config.colorTheme === "custom" ? config.customBg : undefined,
+          custom_land: config.colorTheme === "custom" ? config.customLand : undefined,
+          custom_water: config.colorTheme === "custom" ? config.customWater : undefined,
+          custom_road: config.colorTheme === "custom" ? config.customRoad : undefined,
+          custom_text: config.colorTheme === "custom" ? config.customText : undefined,
         };
         if (config.boardSize === "custom") {
           params.board_width_inches = config.customWidth || 16;
@@ -538,7 +585,7 @@ export default function App() {
             onDownloadDXF={handleDownloadDXF}
             onDownloadThumbnail={handleDownloadThumbnail}
             onDownloadPrintPNG={handleDownloadPrintPNG}
-            canGenerate={!!selectedResult || (config.productType === "name_sign" && !!pinCoords)}
+            canGenerate={!!selectedResult || (config.productType === "name_sign" && !!pinCoords) || config.productType === "star_map"}
             generating={generating}
             user={user}
             outputMode={config.outputMode}
@@ -551,6 +598,7 @@ export default function App() {
             error={error}
             outputMode={config.outputMode}
             colorTheme={config.colorTheme}
+            show3D={config.show3D}
           />
         </div>
       </div>

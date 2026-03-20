@@ -533,6 +533,56 @@ COLOR_THEMES = {
 }
 
 
+def build_custom_theme(bg: str, land: str, water: str, road: str, text: str) -> dict:
+    """Build a custom theme from user-specified hex colors."""
+    # Derive secondary colors from the primary ones
+    return {
+        "label": "Custom",
+        "background": bg,
+        "colors": PRINT_COLOR_MAP,
+        "poster": {
+            "mat": "#ffffff",
+            "map_bg": bg,
+            "land": land,
+            "land_stroke": _darken(land, 0.2),
+            "water": water,
+            "water_stroke": _darken(water, 0.25),
+            "street_major": road,
+            "street_minor": _lighten(road, 0.3),
+            "street_label": road,
+            "text_primary": text,
+            "text_secondary": _lighten(text, 0.3),
+        },
+    }
+
+
+def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
+    """Convert hex color to RGB tuple."""
+    h = hex_color.lstrip("#")
+    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+
+def _rgb_to_hex(r: int, g: int, b: int) -> str:
+    """Convert RGB to hex color."""
+    return f"#{max(0,min(255,r)):02x}{max(0,min(255,g)):02x}{max(0,min(255,b)):02x}"
+
+
+def _darken(hex_color: str, factor: float) -> str:
+    """Darken a hex color by a factor (0-1)."""
+    r, g, b = _hex_to_rgb(hex_color)
+    return _rgb_to_hex(int(r * (1 - factor)), int(g * (1 - factor)), int(b * (1 - factor)))
+
+
+def _lighten(hex_color: str, factor: float) -> str:
+    """Lighten a hex color by a factor (0-1)."""
+    r, g, b = _hex_to_rgb(hex_color)
+    return _rgb_to_hex(
+        int(r + (255 - r) * factor),
+        int(g + (255 - g) * factor),
+        int(b + (255 - b) * factor),
+    )
+
+
 def get_theme_colors(theme_name: str) -> dict:
     """Get color map for a theme. Falls back to classic."""
     theme = COLOR_THEMES.get(theme_name, COLOR_THEMES["classic"])
@@ -545,8 +595,21 @@ def get_theme_background(theme_name: str) -> str:
     return theme["background"]
 
 
-def get_poster_theme(theme_name: str) -> dict:
-    """Get poster-specific color palette for print-mode SVG generation."""
+def get_poster_theme(theme_name: str, custom_colors: dict | None = None) -> dict:
+    """Get poster-specific color palette for print-mode SVG generation.
+
+    If theme_name is "custom" and custom_colors is provided, builds a
+    custom theme from the user's hex color choices.
+    """
+    if theme_name == "custom" and custom_colors:
+        custom = build_custom_theme(
+            bg=custom_colors.get("bg", "#ffffff"),
+            land=custom_colors.get("land", "#e0e0e0"),
+            water=custom_colors.get("water", "#a0c0e0"),
+            road=custom_colors.get("road", "#333333"),
+            text=custom_colors.get("text", "#1a1a1a"),
+        )
+        return custom["poster"]
     theme = COLOR_THEMES.get(theme_name, COLOR_THEMES["classic"])
     return theme.get("poster", COLOR_THEMES["classic"]["poster"])
 

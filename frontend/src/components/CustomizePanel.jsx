@@ -17,6 +17,7 @@ const COLOR_THEMES = [
   { value: "blueprint", label: "Blueprint", bg: "#1a2744", road: "#e8eef6", land: "#1e3050" },
   { value: "dark", label: "Dark", bg: "#0a0a0a", road: "#d0d0d0", land: "#1a1a1a" },
   { value: "engraving", label: "Engraving", bg: "#f8f5ef", road: "#2a2520", land: "#f0ebe0" },
+  { value: "custom", label: "Custom", bg: null, road: null, land: null },
 ];
 
 const SUBTITLE_PRESETS = [
@@ -26,6 +27,15 @@ const SUBTITLE_PRESETS = [
   "Home Is Where The Heart Is",
   `Est. ${new Date().getFullYear()}`,
   "Forever & Always",
+  "The Night We Met",
+  "Written In The Stars",
+];
+
+const SHAPE_OPTIONS = [
+  { value: "rectangle", label: "Rectangle" },
+  { value: "circle", label: "Circle" },
+  { value: "heart", label: "Heart" },
+  { value: "hexagon", label: "Hexagon" },
 ];
 
 export default function CustomizePanel({ config, onChange, user }) {
@@ -33,8 +43,13 @@ export default function CustomizePanel({ config, onChange, user }) {
     onChange({ ...config, [key]: value });
   }
 
+  function updateMulti(updates) {
+    onChange({ ...config, ...updates });
+  }
+
   const isPro = user?.tier === "pro" || user?.tier === "admin";
   const isPrint = config.outputMode === "print";
+  const isStarMap = config.productType === "star_map";
 
   return (
     <div className="customize-section">
@@ -67,7 +82,7 @@ export default function CustomizePanel({ config, onChange, user }) {
             type="text"
             value={config.text}
             onChange={(e) => update("text", e.target.value)}
-            placeholder="Location name"
+            placeholder={isStarMap ? "The Night We Met" : "Location name"}
             maxLength={200}
           />
           <span className="input-count">{config.text.length}/200</span>
@@ -82,7 +97,7 @@ export default function CustomizePanel({ config, onChange, user }) {
             type="text"
             value={config.subtitle || ""}
             onChange={(e) => update("subtitle", e.target.value)}
-            placeholder="Where We Met, Est. 2024, etc."
+            placeholder={isStarMap ? "June 15, 2024" : "Where We Met, Est. 2024, etc."}
             maxLength={100}
           />
           <div className="preset-chips">
@@ -95,6 +110,56 @@ export default function CustomizePanel({ config, onChange, user }) {
                 {preset}
               </button>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Star Map Date/Time — only for star_map product type */}
+      {isStarMap && (
+        <div className="customize-group">
+          <div className="customize-group-label">Star Map Date & Time</div>
+          <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: "0 0 8px" }}>
+            Show the night sky as it appeared at a specific moment — perfect for birthdays, anniversaries, or &quot;the night we met.&quot;
+          </p>
+          <div className="control-row">
+            <div className="control-group">
+              <label>Date</label>
+              <input
+                type="date"
+                value={config.starDate || ""}
+                onChange={(e) => update("starDate", e.target.value)}
+              />
+            </div>
+            <div className="control-group">
+              <label>Time (UTC)</label>
+              <input
+                type="time"
+                value={config.starTime || "22:00"}
+                onChange={(e) => update("starTime", e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="control-row">
+            <div className="control-group">
+              <label>Latitude</label>
+              <input
+                type="number"
+                step="0.01"
+                placeholder="43.65"
+                value={config.starLat ?? ""}
+                onChange={(e) => update("starLat", e.target.value ? parseFloat(e.target.value) : null)}
+              />
+            </div>
+            <div className="control-group">
+              <label>Longitude</label>
+              <input
+                type="number"
+                step="0.01"
+                placeholder="-79.38"
+                value={config.starLon ?? ""}
+                onChange={(e) => update("starLon", e.target.value ? parseFloat(e.target.value) : null)}
+              />
+            </div>
           </div>
         </div>
       )}
@@ -174,6 +239,31 @@ export default function CustomizePanel({ config, onChange, user }) {
         )}
       </div>
 
+      {/* Map Shape — Print mode only */}
+      {isPrint && !isStarMap && (
+        <div className="customize-group">
+          <div className="customize-group-label">Map Shape</div>
+          <div className="shape-grid">
+            {SHAPE_OPTIONS.map((shape) => (
+              <button
+                key={shape.value}
+                className={`shape-btn${config.mapShape === shape.value ? " active" : ""}`}
+                onClick={() => update("mapShape", shape.value)}
+                title={shape.label}
+              >
+                <span className="shape-icon">
+                  {shape.value === "rectangle" && "\u25AD"}
+                  {shape.value === "circle" && "\u25CB"}
+                  {shape.value === "heart" && "\u2665"}
+                  {shape.value === "hexagon" && "\u2B21"}
+                </span>
+                <span className="shape-label">{shape.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Color Theme — Print mode only */}
       {isPrint && (
         <div className="customize-group">
@@ -187,14 +277,126 @@ export default function CustomizePanel({ config, onChange, user }) {
                 title={theme.label}
               >
                 <div className="theme-swatch-preview">
-                  <div className="theme-swatch-bg" style={{ background: theme.bg }} />
-                  <div className="theme-swatch-land" style={{ background: theme.land }} />
-                  <div className="theme-swatch-road" style={{ background: theme.road }} />
+                  {theme.value === "custom" ? (
+                    <>
+                      <div className="theme-swatch-bg" style={{ background: "linear-gradient(135deg, #ff6b6b, #4ecdc4, #45b7d1)" }} />
+                      <div className="theme-swatch-land" style={{ background: "transparent" }} />
+                      <div className="theme-swatch-road" style={{ background: "transparent" }} />
+                    </>
+                  ) : (
+                    <>
+                      <div className="theme-swatch-bg" style={{ background: theme.bg }} />
+                      <div className="theme-swatch-land" style={{ background: theme.land }} />
+                      <div className="theme-swatch-road" style={{ background: theme.road }} />
+                    </>
+                  )}
                 </div>
                 <span className="theme-swatch-label">{theme.label}</span>
               </button>
             ))}
           </div>
+
+          {/* Custom Color Picker — shown when "Custom" theme is selected */}
+          {config.colorTheme === "custom" && (
+            <div className="custom-colors" style={{ marginTop: "8px" }}>
+              <div className="control-row">
+                <div className="control-group">
+                  <label>Background</label>
+                  <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                    <input
+                      type="color"
+                      value={config.customBg || "#1a1a2e"}
+                      onChange={(e) => update("customBg", e.target.value)}
+                      style={{ width: "32px", height: "28px", padding: "1px", border: "1px solid var(--border)", borderRadius: "4px", cursor: "pointer" }}
+                    />
+                    <input
+                      type="text"
+                      value={config.customBg || "#1a1a2e"}
+                      onChange={(e) => update("customBg", e.target.value)}
+                      maxLength={7}
+                      style={{ flex: 1, fontSize: "11px", fontFamily: "var(--font-mono)" }}
+                    />
+                  </div>
+                </div>
+                <div className="control-group">
+                  <label>Land</label>
+                  <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                    <input
+                      type="color"
+                      value={config.customLand || "#2d3748"}
+                      onChange={(e) => update("customLand", e.target.value)}
+                      style={{ width: "32px", height: "28px", padding: "1px", border: "1px solid var(--border)", borderRadius: "4px", cursor: "pointer" }}
+                    />
+                    <input
+                      type="text"
+                      value={config.customLand || "#2d3748"}
+                      onChange={(e) => update("customLand", e.target.value)}
+                      maxLength={7}
+                      style={{ flex: 1, fontSize: "11px", fontFamily: "var(--font-mono)" }}
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="control-row">
+                <div className="control-group">
+                  <label>Water</label>
+                  <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                    <input
+                      type="color"
+                      value={config.customWater || "#a0c0e0"}
+                      onChange={(e) => update("customWater", e.target.value)}
+                      style={{ width: "32px", height: "28px", padding: "1px", border: "1px solid var(--border)", borderRadius: "4px", cursor: "pointer" }}
+                    />
+                    <input
+                      type="text"
+                      value={config.customWater || "#a0c0e0"}
+                      onChange={(e) => update("customWater", e.target.value)}
+                      maxLength={7}
+                      style={{ flex: 1, fontSize: "11px", fontFamily: "var(--font-mono)" }}
+                    />
+                  </div>
+                </div>
+                <div className="control-group">
+                  <label>Roads</label>
+                  <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                    <input
+                      type="color"
+                      value={config.customRoad || "#e2e8f0"}
+                      onChange={(e) => update("customRoad", e.target.value)}
+                      style={{ width: "32px", height: "28px", padding: "1px", border: "1px solid var(--border)", borderRadius: "4px", cursor: "pointer" }}
+                    />
+                    <input
+                      type="text"
+                      value={config.customRoad || "#e2e8f0"}
+                      onChange={(e) => update("customRoad", e.target.value)}
+                      maxLength={7}
+                      style={{ flex: 1, fontSize: "11px", fontFamily: "var(--font-mono)" }}
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="control-row">
+                <div className="control-group">
+                  <label>Text</label>
+                  <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                    <input
+                      type="color"
+                      value={config.customText || "#1a1a1a"}
+                      onChange={(e) => update("customText", e.target.value)}
+                      style={{ width: "32px", height: "28px", padding: "1px", border: "1px solid var(--border)", borderRadius: "4px", cursor: "pointer" }}
+                    />
+                    <input
+                      type="text"
+                      value={config.customText || "#1a1a1a"}
+                      onChange={(e) => update("customText", e.target.value)}
+                      maxLength={7}
+                      style={{ flex: 1, fontSize: "11px", fontFamily: "var(--font-mono)" }}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -279,10 +481,11 @@ export default function CustomizePanel({ config, onChange, user }) {
               <option value="province">Province / State</option>
               <option value="park">Park</option>
               <option value="name_sign">Name Sign (Pin)</option>
+              <option value="star_map">Star Map</option>
             </select>
           </div>
 
-          {!isPrint && (
+          {!isPrint && !isStarMap && (
             <div className="control-group">
               <label>Format</label>
               <select
@@ -314,65 +517,82 @@ export default function CustomizePanel({ config, onChange, user }) {
       </div>
 
       {/* Feature Toggles */}
-      <div className="customize-group">
-        <div className="customize-group-label">Features</div>
+      {!isStarMap && (
+        <div className="customize-group">
+          <div className="customize-group-label">Features</div>
 
-        <div className="toggle-row">
-          <label>Show Coordinates</label>
-          <label className="toggle-switch">
-            <input
-              type="checkbox"
-              checked={config.showCoordinates}
-              onChange={(e) => update("showCoordinates", e.target.checked)}
-            />
-            <span className="toggle-slider" />
-          </label>
-        </div>
-
-        <div className="toggle-row">
-          <label>Include Islands</label>
-          <label className="toggle-switch">
-            <input
-              type="checkbox"
-              checked={config.includeIslands}
-              onChange={(e) => update("includeIslands", e.target.checked)}
-            />
-            <span className="toggle-slider" />
-          </label>
-        </div>
-
-        {(config.productType === "city" || config.productType === "community") && (
           <div className="toggle-row">
-            <label>Include Streets</label>
+            <label>Show Coordinates</label>
             <label className="toggle-switch">
               <input
                 type="checkbox"
-                checked={config.includeStreets}
-                onChange={(e) => update("includeStreets", e.target.checked)}
+                checked={config.showCoordinates}
+                onChange={(e) => update("showCoordinates", e.target.checked)}
               />
               <span className="toggle-slider" />
             </label>
           </div>
-        )}
 
-        {(config.productType === "lake" || config.productType === "park" || config.productType === "community") && (
           <div className="toggle-row">
-            <label>
-              Contours
-              {!isPro && <span className="pro-badge">Pro</span>}
-            </label>
+            <label>Include Islands</label>
             <label className="toggle-switch">
               <input
                 type="checkbox"
-                checked={config.includeContours}
-                onChange={(e) => update("includeContours", e.target.checked)}
-                disabled={!isPro}
+                checked={config.includeIslands}
+                onChange={(e) => update("includeIslands", e.target.checked)}
               />
               <span className="toggle-slider" />
             </label>
           </div>
-        )}
-      </div>
+
+          {(config.productType === "city" || config.productType === "community") && (
+            <div className="toggle-row">
+              <label>Include Streets</label>
+              <label className="toggle-switch">
+                <input
+                  type="checkbox"
+                  checked={config.includeStreets}
+                  onChange={(e) => update("includeStreets", e.target.checked)}
+                />
+                <span className="toggle-slider" />
+              </label>
+            </div>
+          )}
+
+          {(config.productType === "lake" || config.productType === "park" || config.productType === "community") && (
+            <div className="toggle-row">
+              <label>
+                Contours
+                {!isPro && <span className="pro-badge">Pro</span>}
+              </label>
+              <label className="toggle-switch">
+                <input
+                  type="checkbox"
+                  checked={config.includeContours}
+                  onChange={(e) => update("includeContours", e.target.checked)}
+                  disabled={!isPro}
+                />
+                <span className="toggle-slider" />
+              </label>
+            </div>
+          )}
+
+          {/* 3D Carved Preview Toggle */}
+          {!isPrint && (
+            <div className="toggle-row">
+              <label>3D Carved Preview</label>
+              <label className="toggle-switch">
+                <input
+                  type="checkbox"
+                  checked={config.show3D || false}
+                  onChange={(e) => update("show3D", e.target.checked)}
+                />
+                <span className="toggle-slider" />
+              </label>
+            </div>
+          )}
+        </div>
+      )}
 
       {config.includeContours && isPro && (
         <div className="control-row">

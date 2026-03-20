@@ -45,6 +45,8 @@ def generate_svg(
     output_mode: str = "cnc",
     color_theme: str = "classic",
     product_type: str = "lake",
+    map_shape: str = "rectangle",
+    custom_colors: dict | None = None,
 ) -> dict:
     """Generate an SVG string from processed geometry.
 
@@ -76,6 +78,8 @@ def generate_svg(
             heart_location=heart_location,
             color_theme=color_theme,
             product_type=product_type,
+            map_shape=map_shape,
+            custom_colors=custom_colors,
         )
 
     return _generate_cnc_svg(
@@ -303,6 +307,8 @@ def _generate_print_svg(
     heart_location: tuple[float, float] | None = None,
     color_theme: str = "classic",
     product_type: str = "lake",
+    map_shape: str = "rectangle",
+    custom_colors: dict | None = None,
 ) -> dict:
     """Generate a poster-style print SVG with themed colors, filled regions,
     and clean typography matching premium city map wall art.
@@ -317,7 +323,7 @@ def _generate_print_svg(
     """
     from app.services.thumbnail_generator import get_poster_theme
 
-    theme = get_poster_theme(color_theme)
+    theme = get_poster_theme(color_theme, custom_colors=custom_colors)
     board_w, board_h = processed["board_mm"]
     polygons = processed["polygons"]
     latlon = center_latlon or processed.get("center_latlon", (0, 0))
@@ -446,12 +452,63 @@ def _generate_print_svg(
     lines.append("")
 
     # Clip path for map content (keeps streets/water inside the map area)
+    # When map_shape is not rectangle, use a shaped clip path
     lines.append("  <defs>")
-    lines.append(
-        f'    <clipPath id="map_clip">'
-        f'<rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"/>'
-        f"</clipPath>"
-    )
+    if map_shape == "circle":
+        shape_cx = round(map_x + map_w / 2, 2)
+        shape_cy = round(map_y + map_h / 2, 2)
+        shape_r = round(min(map_w, map_h) / 2, 2)
+        lines.append(
+            f'    <clipPath id="map_clip">'
+            f'<circle cx="{shape_cx}" cy="{shape_cy}" r="{shape_r}"/>'
+            f"</clipPath>"
+        )
+    elif map_shape == "heart":
+        hcx = map_x + map_w / 2
+        hcy = map_y + map_h / 2
+        hs = min(map_w, map_h) / 2 * 0.95
+        heart_pts = [
+            (hcx, hcy + hs * 0.85),
+            (hcx - hs * 1.0, hcy - hs * 0.05),
+            (hcx - hs * 0.85, hcy - hs * 0.65),
+            (hcx - hs * 0.35, hcy - hs * 0.9),
+            (hcx, hcy - hs * 0.5),
+            (hcx + hs * 0.35, hcy - hs * 0.9),
+            (hcx + hs * 0.85, hcy - hs * 0.65),
+            (hcx + hs * 1.0, hcy - hs * 0.05),
+        ]
+        heart_d = f"M{round(heart_pts[0][0], 2)},{round(heart_pts[0][1], 2)}"
+        for px, py in heart_pts[1:]:
+            heart_d += f" L{round(px, 2)},{round(py, 2)}"
+        heart_d += " Z"
+        lines.append(
+            f'    <clipPath id="map_clip">'
+            f'<path d="{heart_d}"/>'
+            f"</clipPath>"
+        )
+    elif map_shape == "hexagon":
+        hex_cx = map_x + map_w / 2
+        hex_cy = map_y + map_h / 2
+        hex_r = min(map_w, map_h) / 2 * 0.95
+        hex_pts = []
+        for i in range(6):
+            angle = math.radians(60 * i - 90)
+            hex_pts.append((hex_cx + hex_r * math.cos(angle), hex_cy + hex_r * math.sin(angle)))
+        hex_d = f"M{round(hex_pts[0][0], 2)},{round(hex_pts[0][1], 2)}"
+        for px, py in hex_pts[1:]:
+            hex_d += f" L{round(px, 2)},{round(py, 2)}"
+        hex_d += " Z"
+        lines.append(
+            f'    <clipPath id="map_clip">'
+            f'<path d="{hex_d}"/>'
+            f"</clipPath>"
+        )
+    else:
+        lines.append(
+            f'    <clipPath id="map_clip">'
+            f'<rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"/>'
+            f"</clipPath>"
+        )
     # For city/community maps, also clip streets to the city boundary polygon
     # so streets don't spill into surrounding suburbs outside the boundary.
     if product_type in ("city", "community", "name_sign") and polygons:

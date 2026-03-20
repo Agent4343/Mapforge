@@ -2071,3 +2071,93 @@ body {
   border-radius: 4px;
   white-space: nowrap;
 }
+
+/* Shape Selector Grid */
+.shape-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.shape-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 4px;
+  background: var(--bg-input);
+  border: 2px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: all 0.15s ease;
+}
+
+.shape-btn:hover {
+  border-color: var(--text-secondary);
+  color: var(--text-primary);
+}
+
+.shape-btn.active {
+  border-color: var(--crimson);
+  color: var(--crimson);
+  background: rgba(192, 57, 43, 0.08);
+}
+
+.shape-icon {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.shape-label {
+  font-size: 10px;
+  font-family: var(--font-mono);
+}
+
+/* 3D Carved Preview */
+.carved-3d-preview {
+  perspective: 800px;
+  transform-style: preserve-3d;
+}
+
+/* Modal Overlay */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.modal-content {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+  position: relative;
+}
+
+.modal-close {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 24px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.modal-close:hover {
+  color: var(--text-primary);
+}

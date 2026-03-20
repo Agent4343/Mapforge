@@ -13,6 +13,15 @@ class ProductType(str, Enum):
     community = "community"
     park = "park"
     name_sign = "name_sign"
+    star_map = "star_map"
+
+
+class MapShape(str, Enum):
+    """Shape crop for the map output — applies a clip mask to the map area."""
+    rectangle = "rectangle"  # default, no crop
+    circle = "circle"
+    heart = "heart"
+    hexagon = "hexagon"
 
 
 class CutStyle(str, Enum):
@@ -177,6 +186,17 @@ class GenerateRequest(BaseModel):
     color_theme: str = "classic"  # classic, modern_dark, rose_gold, midnight, sage, minimal
     heart_lat: Optional[float] = Field(None, ge=-90, le=90)
     heart_lon: Optional[float] = Field(None, ge=-180, le=180)
+    # Shape crop
+    map_shape: MapShape = MapShape.rectangle
+    # Custom color overrides (used when color_theme="custom")
+    custom_bg: Optional[str] = Field(None, max_length=7)       # e.g. "#1a2b3c"
+    custom_land: Optional[str] = Field(None, max_length=7)
+    custom_water: Optional[str] = Field(None, max_length=7)
+    custom_road: Optional[str] = Field(None, max_length=7)
+    custom_text: Optional[str] = Field(None, max_length=7)
+    # Star map fields
+    star_date: Optional[str] = None  # ISO date string e.g. "2024-06-15"
+    star_time: Optional[str] = None  # HH:MM format e.g. "22:30"
 
     @field_validator("text")
     @classmethod
@@ -213,6 +233,50 @@ class PinGenerateRequest(BaseModel):
     include_streets: bool = True
     output_mode: OutputMode = OutputMode.cnc
     color_theme: str = "classic"
+    map_shape: MapShape = MapShape.rectangle
+
+
+class StarMapRequest(BaseModel):
+    """Generate a star map showing the night sky for a specific date/time/location."""
+    lat: float = Field(..., ge=-90, le=90)
+    lon: float = Field(..., ge=-180, le=180)
+    label: str = Field("The Night Sky", min_length=1, max_length=200)
+    subtitle: str = ""
+    date: str = Field(..., description="ISO date e.g. 2024-06-15")
+    time: str = Field("22:00", description="HH:MM in 24h format")
+    board_size: BoardSize = BoardSize.print_16x20
+    board_width_inches: Optional[float] = Field(None, gt=1, le=60)
+    board_height_inches: Optional[float] = Field(None, gt=1, le=60)
+    show_coordinates: bool = True
+    font_size_mm: float = Field(14.0, ge=4, le=40)
+    font_family: FontFamily = FontFamily.serif
+    color_theme: str = "midnight"
+    output_mode: OutputMode = OutputMode.print
+    map_shape: MapShape = MapShape.circle
+
+
+class FulfillmentRequest(BaseModel):
+    """Request to order a physical print of a generated map."""
+    file_id: str
+    size: str = "16x20"  # print size
+    frame: str = "none"  # none, black, white, natural
+    paper: str = "matte"  # matte, glossy, canvas
+    quantity: int = Field(1, ge=1, le=10)
+    shipping_name: str = Field(..., min_length=2, max_length=200)
+    shipping_address: str = Field(..., min_length=5, max_length=500)
+    shipping_city: str = Field(..., min_length=1, max_length=100)
+    shipping_state: str = Field(..., min_length=1, max_length=100)
+    shipping_zip: str = Field(..., min_length=3, max_length=20)
+    shipping_country: str = Field("US", min_length=2, max_length=2)
+    email: str = Field(..., min_length=5, max_length=255)
+
+
+class FulfillmentResponse(BaseModel):
+    order_id: str
+    status: str
+    estimated_delivery: str
+    total_cents: int
+    currency: str = "usd"
 
 
 class GenerateResponse(BaseModel):

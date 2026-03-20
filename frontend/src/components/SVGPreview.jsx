@@ -90,7 +90,7 @@ function applyPrintColors(svg, themeName) {
   return result;
 }
 
-export default function SVGPreview({ svgContent, loading, error, outputMode, colorTheme }) {
+export default function SVGPreview({ svgContent, loading, error, outputMode, colorTheme, show3D }) {
   const [zoom, setZoom] = useState(100);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
@@ -236,13 +236,28 @@ export default function SVGPreview({ svgContent, loading, error, outputMode, col
       }}
     >
       <div
+        className={show3D && !isPrint ? "carved-3d-preview" : ""}
         style={{
           transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom / 100})`,
           transformOrigin: "center center",
           transition: isPanning ? "none" : "transform 0.15s ease",
+          ...(show3D && !isPrint ? {
+            perspective: "800px",
+            transformStyle: "preserve-3d",
+          } : {}),
         }}
-        dangerouslySetInnerHTML={{ __html: displaySvg }}
-      />
+      >
+        <div
+          style={show3D && !isPrint ? {
+            transform: "rotateX(15deg) rotateY(-5deg)",
+            filter: "drop-shadow(4px 8px 12px rgba(0,0,0,0.4))",
+            background: "linear-gradient(145deg, #d4a76a, #8b6914)",
+            borderRadius: "4px",
+            padding: "8px",
+          } : {}}
+          dangerouslySetInnerHTML={{ __html: displaySvg }}
+        />
+      </div>
       {/* Toolbar - positioned above the preview */}
       <div className="preview-toolbar">
         <button
@@ -290,6 +305,12 @@ export default function SVGPreview({ svgContent, loading, error, outputMode, col
           <>
             <div className="preview-toolbar-divider" />
             <span className="preview-toolbar-badge">Print Preview</span>
+          </>
+        )}
+        {show3D && !isPrint && (
+          <>
+            <div className="preview-toolbar-divider" />
+            <span className="preview-toolbar-badge" style={{ background: "#8b6914" }}>3D Preview</span>
           </>
         )}
       </div>

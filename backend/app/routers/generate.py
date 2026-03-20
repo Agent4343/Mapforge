@@ -16,7 +16,8 @@ from app.models.db_models import GeneratedFile, User
 from app.models.schemas import (
     BatchGenerateRequest, BatchGenerateResponse,
     CutStyle, ExportFormat, GenerateRequest, GenerateResponse,
-    PinGenerateRequest, PreviewResponse, BOARD_DIMENSIONS_INCHES,
+    PinGenerateRequest, StarMapRequest, PreviewResponse, BOARD_DIMENSIONS_INCHES,
+    FulfillmentRequest, FulfillmentResponse,
 )
 from app.services.auth import get_current_user, get_optional_user
 from app.services.geo_fetch import fetch_area_around_point, fetch_geometry
@@ -266,6 +267,17 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             if heart_coords:
                 heart_mm = heart_coords[0]
 
+    # Build custom color dict if using custom theme
+    custom_colors = None
+    if req.color_theme == "custom":
+        custom_colors = {
+            "bg": req.custom_bg or "#ffffff",
+            "land": req.custom_land or "#e0e0e0",
+            "water": req.custom_water or "#a0c0e0",
+            "road": req.custom_road or "#333333",
+            "text": req.custom_text or "#1a1a1a",
+        }
+
     # Generate CNC SVG (always — this is the primary output)
     location_name = req.text or f"Location {req.osm_id}"
     result = generate_svg(
@@ -304,6 +316,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         output_mode="print",
         color_theme=req.color_theme,
         product_type=req.product_type.value,
+        map_shape=req.map_shape.value,
+        custom_colors=custom_colors,
     )
 
     # Store SVG
@@ -696,6 +710,243 @@ async def batch_generate(
         succeeded=succeeded,
         failed=failed,
     )
+
+
+@router.post("/generate/starmap", response_model=GenerateResponse)
+@limiter.limit(settings.RATE_LIMIT_GENERATE)
+async def generate_star_map(
+    request: Request,
+    req: StarMapRequest,
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate a star map showing the night sky for a specific date, time, and location."""
+    from app.services.star_map_generator import generate_star_map as compute_stars, generate_star_map_svg
+
+    if user:
+        await _maybe_reset_monthly_counter(user, db)
+
+    # Resolve board dimensions
+    if req.board_width_inches and req.board_height_inches:
+        w_in, h_in = req.board_width_inches, req.board_height_inches
+    elif req.board_size.value in BOARD_DIMENSIONS_INCHES:
+        w_in, h_in = BOARD_DIMENSIONS_INCHES[req.board_size.value]
+    else:
+        w_in, h_in = 16, 20
+
+    board_w = round(w_in * 25.4, 2)
+    board_h = round(h_in * 25.4, 2)
+
+    # Parse date and time
+    from datetime import datetime as dt_cls, timezone as tz
+    try:
+        date_parts = req.date.split("-")
+        time_parts = req.time.split(":")
+        obs_dt = dt_cls(
+            int(date_parts[0]), int(date_parts[1]), int(date_parts[2]),
+            int(time_parts[0]), int(time_parts[1]) if len(time_parts) > 1 else 0,
+            tzinfo=tz.utc,
+        )
+    except (ValueError, IndexError):
+        raise HTTPException(status_code=422, detail="Invalid date or time format. Use YYYY-MM-DD and HH:MM.")
+
+    # Compute star positions
+    viewport_radius = min(board_w, board_h) / 2 * 0.8
+    star_data = compute_stars(
+        lat=req.lat, lon=req.lon, dt=obs_dt,
+        viewport_radius=viewport_radius,
+    )
+
+    # Format date for display
+    date_display = obs_dt.strftime("%B %d, %Y at %H:%M UTC")
+
+    # Generate SVG
+    result = generate_star_map_svg(
+        star_data=star_data,
+        board_w=board_w, board_h=board_h,
+        location_name=req.label,
+        subtitle=req.subtitle,
+        show_coordinates=req.show_coordinates,
+        lat=req.lat, lon=req.lon,
+        date_str=date_display,
+        font_family=req.font_family.value,
+        font_size_mm=req.font_size_mm,
+        color_theme=req.color_theme,
+        output_mode=req.output_mode.value,
+    )
+
+    # Store SVG
+    svg_key = f"svg/starmap_{req.lat:.4f}_{req.lon:.4f}_{req.date}_{int(board_w)}x{int(board_h)}.svg"
+    try:
+        await store_file(svg_key, result["svg"].encode("utf-8"))
+    except Exception as e:
+        log.error(f"Failed to store star map SVG: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save generated file.")
+
+    # Generate thumbnail
+    thumbnail_key = None
+    try:
+        png_bytes = generate_thumbnail(result["svg"], background_color=None)
+        thumbnail_key = svg_key.replace("svg/", "thumbnails/").replace(".svg", ".png")
+        await store_file(thumbnail_key, png_bytes, content_type="image/png")
+    except Exception as e:
+        log.warning(f"Star map thumbnail failed (non-fatal): {e}")
+
+    # Generate print PNG
+    print_dpi_width = round(w_in * 300)
+    print_png_key = None
+    try:
+        print_bytes = generate_print_image(result["svg"], output_width=print_dpi_width, color_theme=req.color_theme, skip_remap=True)
+        print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
+        await store_file(print_png_key, print_bytes, content_type="image/png")
+    except Exception as e:
+        log.warning(f"Star map print PNG failed (non-fatal): {e}")
+
+    # Save to database
+    file_record = GeneratedFile(
+        owner_id=user.id if user else None,
+        osm_id=0,
+        osm_type="starmap",
+        product_type="star_map",
+        location_name=req.label,
+        display_text=req.label,
+        board_size=req.board_size.value,
+        board_width_mm=board_w,
+        board_height_mm=board_h,
+        style="filled",
+        show_coordinates=req.show_coordinates,
+        font_size_mm=req.font_size_mm,
+        node_count=result["node_count"],
+        path_count=result["path_count"],
+        layer_count=result["layer_count"],
+        svg_storage_key=svg_key,
+        thumbnail_key=thumbnail_key,
+        print_png_key=print_png_key,
+        lat=req.lat,
+        lon=req.lon,
+    )
+    db.add(file_record)
+    if user:
+        user.generation_count_this_month += 1
+    try:
+        await db.commit()
+        await db.refresh(file_record)
+    except Exception as e:
+        await db.rollback()
+        log.error(f"Database error saving star map: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save to library.")
+
+    return GenerateResponse(
+        svg=result["svg"],
+        dxf_available=False,
+        thumbnail_available=thumbnail_key is not None,
+        print_png_available=print_png_key is not None,
+        file_id=file_record.id,
+        location_name=req.label,
+        dimensions_mm=(board_w, board_h),
+        node_count=result["node_count"],
+        path_count=result["path_count"],
+        layer_count=result["layer_count"],
+    )
+
+
+@router.post("/generate/fulfillment", response_model=FulfillmentResponse)
+@limiter.limit("3/minute")
+async def create_fulfillment_order(
+    request: Request,
+    req: FulfillmentRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a print fulfillment order for a generated map.
+
+    Integrates with print-on-demand services to produce and ship
+    a physical framed or unframed print of the user's map design.
+    """
+    from sqlalchemy import select
+    import uuid
+
+    # Verify file exists and user owns it
+    result = await db.execute(
+        select(GeneratedFile).where(GeneratedFile.id == req.file_id)
+    )
+    file_record = result.scalar_one_or_none()
+    if not file_record:
+        raise HTTPException(status_code=404, detail="File not found.")
+    if file_record.owner_id != user.id and user.tier != "admin":
+        raise HTTPException(status_code=403, detail="You can only order prints of your own maps.")
+
+    if not file_record.print_png_key:
+        raise HTTPException(status_code=400, detail="This file doesn't have a print-ready PNG. Regenerate with print mode enabled.")
+
+    # Pricing matrix (cents)
+    PRINT_PRICES = {
+        "8x10": {"none": 2499, "black": 4999, "white": 4999, "natural": 5499},
+        "11x14": {"none": 3499, "black": 5999, "white": 5999, "natural": 6499},
+        "16x20": {"none": 4499, "black": 7999, "white": 7999, "natural": 8499},
+        "18x24": {"none": 5499, "black": 9499, "white": 9499, "natural": 9999},
+        "24x36": {"none": 6999, "black": 12999, "white": 12999, "natural": 13499},
+    }
+
+    size_prices = PRINT_PRICES.get(req.size)
+    if not size_prices:
+        raise HTTPException(status_code=400, detail=f"Invalid size. Available: {', '.join(PRINT_PRICES.keys())}")
+
+    unit_price = size_prices.get(req.frame, size_prices["none"])
+    if req.paper == "canvas":
+        unit_price += 1500  # Canvas premium
+    elif req.paper == "glossy":
+        unit_price += 500
+
+    total = unit_price * req.quantity
+
+    # Generate order ID
+    order_id = f"ORD-{uuid.uuid4().hex[:12].upper()}"
+
+    # Estimate delivery (7-14 business days)
+    from datetime import timedelta
+    est_delivery = (datetime.now(timezone.utc) + timedelta(days=10)).strftime("%Y-%m-%d")
+
+    log.info(f"Fulfillment order {order_id}: {req.size} {req.frame} {req.paper} x{req.quantity} = ${total/100:.2f}")
+
+    # In production, this would:
+    # 1. Create a Stripe PaymentIntent for the total
+    # 2. Send the print PNG to the fulfillment provider (Printful/Prodigi)
+    # 3. Store the order in the database
+    # For now, return the order details for frontend confirmation
+
+    return FulfillmentResponse(
+        order_id=order_id,
+        status="pending_payment",
+        estimated_delivery=est_delivery,
+        total_cents=total,
+        currency="usd",
+    )
+
+
+@router.get("/fulfillment/prices")
+async def get_fulfillment_prices():
+    """Get available print sizes, frame options, and pricing."""
+    return {
+        "sizes": [
+            {"id": "8x10", "label": "8×10\"", "base_price_cents": 2499},
+            {"id": "11x14", "label": "11×14\"", "base_price_cents": 3499},
+            {"id": "16x20", "label": "16×20\"", "base_price_cents": 4499},
+            {"id": "18x24", "label": "18×24\"", "base_price_cents": 5499},
+            {"id": "24x36", "label": "24×36\"", "base_price_cents": 6999},
+        ],
+        "frames": [
+            {"id": "none", "label": "No Frame (Print Only)", "surcharge_cents": 0},
+            {"id": "black", "label": "Black Frame", "surcharge_cents": 3500},
+            {"id": "white", "label": "White Frame", "surcharge_cents": 3500},
+            {"id": "natural", "label": "Natural Wood Frame", "surcharge_cents": 4000},
+        ],
+        "papers": [
+            {"id": "matte", "label": "Matte Paper", "surcharge_cents": 0},
+            {"id": "glossy", "label": "Glossy Paper", "surcharge_cents": 500},
+            {"id": "canvas", "label": "Canvas", "surcharge_cents": 1500},
+        ],
+    }
 
 
 @router.get("/preview/{file_id}")

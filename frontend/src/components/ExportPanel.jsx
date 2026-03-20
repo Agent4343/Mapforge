@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { createListing, aiDescribe } from "../services/api.js";
+import FulfillmentModal from "./FulfillmentModal.jsx";
 
 export default function ExportPanel({
   result,
@@ -13,6 +14,7 @@ export default function ExportPanel({
   user,
   outputMode,
 }) {
+  const [showFulfillment, setShowFulfillment] = useState(false);
   const [showListForm, setShowListForm] = useState(false);
   const [listTitle, setListTitle] = useState("");
   const [listPrice, setListPrice] = useState("9.99");
@@ -166,6 +168,31 @@ export default function ExportPanel({
               )}
             </div>
           </div>
+
+          {/* Order Physical Print */}
+          {isPrint && result.print_png_available && user && (
+            <button
+              className="btn btn-full"
+              onClick={() => setShowFulfillment(true)}
+              style={{
+                background: "linear-gradient(135deg, #8b6914, #d4a76a)",
+                color: "#fff",
+                border: "none",
+                fontWeight: "bold",
+                marginBottom: "8px",
+              }}
+            >
+              Order a Physical Print
+            </button>
+          )}
+
+          {showFulfillment && (
+            <FulfillmentModal
+              fileId={result.file_id}
+              locationName={result.location_name}
+              onClose={() => setShowFulfillment(false)}
+            />
+          )}
 
           {/* AI + Marketplace Section */}
           {canSell && !showListForm && (
