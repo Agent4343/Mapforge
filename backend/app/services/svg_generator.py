@@ -474,9 +474,9 @@ def _generate_print_svg(
 
     lines.append('    <g id="geography_fill">')
     if is_street_map:
-        # Street maps: fill the boundary polygon with land color to create
-        # visible contrast between the city area and the white mat border.
-        # Streets and water are layered on top.
+        # Street maps: fill the boundary polygon with land color.
+        # Boundary stroke is very subtle — the streets define the city shape,
+        # not a heavy outline.
         for exterior, holes in polygons:
             path_d = _coords_to_path(exterior)
             for hole in holes:
@@ -484,7 +484,8 @@ def _generate_print_svg(
             lines.append(
                 f'      <path d="{path_d}"'
                 f' fill="{theme["land"]}" stroke="{theme["land_stroke"]}"'
-                f' stroke-width="0.5" fill-rule="evenodd" stroke-linejoin="round"/>'
+                f' stroke-width="0.15" fill-rule="evenodd" stroke-linejoin="round"'
+                f' opacity="0.6"/>'
             )
     else:
         # Lake/province/park maps: filled polygon is the main visual
@@ -769,23 +770,24 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
     from CNC mode which needs few thick lines for toolpaths.
 
     Width hierarchy for print (all in mm on the poster):
-        motorway/trunk:  0.8-1.0mm  (prominent but not dominant)
-        primary/secondary: 0.4-0.6mm (clearly visible)
-        tertiary:        0.25mm     (fine grid)
-        residential:     0.15mm     (background texture)
+        motorway/trunk:  0.4-0.5mm  (visible but not dominant)
+        primary/secondary: 0.25-0.35mm (clear hierarchy)
+        tertiary:        0.18mm     (fine grid)
+        residential:     0.12mm     (background texture)
     """
     transform = processed.get("transform")
 
     # Print-specific width map — much thinner than CNC widths.
     # The dense grid of thin lines IS the product for city map posters.
+    # Major roads should be visible but NOT dominant — the overall texture matters.
     PRINT_WIDTHS = {
-        "motorway": 1.0, "motorway_link": 0.7,
-        "trunk": 0.9, "trunk_link": 0.6,
-        "primary": 0.6, "primary_link": 0.45,
-        "secondary": 0.45, "secondary_link": 0.35,
-        "tertiary": 0.25, "tertiary_link": 0.2,
-        "residential": 0.15,
-        "unclassified": 0.12,
+        "motorway": 0.5, "motorway_link": 0.35,
+        "trunk": 0.45, "trunk_link": 0.3,
+        "primary": 0.35, "primary_link": 0.25,
+        "secondary": 0.28, "secondary_link": 0.22,
+        "tertiary": 0.18, "tertiary_link": 0.15,
+        "residential": 0.12,
+        "unclassified": 0.1,
     }
 
     lines.append('    <g id="streets">')
