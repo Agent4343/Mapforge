@@ -48,7 +48,7 @@ async def get_db() -> AsyncSession:
         yield session
 
 
-async def init_db(retries: int = 5, delay: float = 2.0):
+async def init_db(retries: int = 3, delay: float = 2.0):
     """Create all tables on startup, with retries for cold-start DB connections."""
     for attempt in range(1, retries + 1):
         try:

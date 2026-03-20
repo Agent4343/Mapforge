@@ -35,25 +35,29 @@ async def lifespan(app: FastAPI):
         else:
             log.warning(f"CONFIG: {issue}")
 
-    # Database initialization — retry with backoff, but always let the app start
-    # so the health endpoint can report status and Railway doesn't kill the container.
-    try:
-        await init_db()
-        log.info("Database initialized")
-    except Exception as e:
-        log.error(f"Database initialization failed: {e}")
-        log.warning("App starting without database — /health will report degraded status")
-
     # Ensure local storage directory exists
     if settings.STORAGE_BACKEND == "local":
         os.makedirs(settings.STORAGE_LOCAL_PATH, exist_ok=True)
 
-    # Pre-fetch popular locations (non-blocking, runs in background)
-    if settings.REDIS_URL:
-        import asyncio
-        from app.services.popular_locations import prefetch_popular_locations
-        asyncio.create_task(prefetch_popular_locations(include_us=True))
-        log.info("Popular locations pre-fetch started in background")
+    # Database initialization — run in background so the app starts immediately
+    # and Railway's healthcheck can reach the server while DB connects.
+    import asyncio
+
+    async def _background_init():
+        try:
+            await init_db()
+            log.info("Database initialized")
+        except Exception as e:
+            log.error(f"Database initialization failed: {e}")
+            log.warning("Running without database — /health will report degraded status")
+
+        # Pre-fetch popular locations after DB is ready
+        if settings.REDIS_URL:
+            from app.services.popular_locations import prefetch_popular_locations
+            asyncio.create_task(prefetch_popular_locations(include_us=True))
+            log.info("Popular locations pre-fetch started in background")
+
+    asyncio.create_task(_background_init())
 
     yield
     log.info("MapForge CNC shutting down...")
