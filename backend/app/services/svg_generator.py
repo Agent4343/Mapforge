@@ -432,10 +432,14 @@ def _generate_print_svg(
     lines.append("")
 
     # Layer: map area background
+    # For city/community maps, use the mat color so the city polygon alone
+    # defines the shape — creating a clean silhouette effect.
+    # For lake/province/park maps, use the themed map_bg for atmosphere.
+    map_area_bg = theme["mat"] if is_street_map else theme["map_bg"]
     lines.append('  <g id="map_area">')
     lines.append(
         f'    <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"'
-        f' fill="{theme["map_bg"]}"/>'
+        f' fill="{map_area_bg}"/>'
     )
     lines.append("  </g>")
     lines.append("")
@@ -741,18 +745,18 @@ def _render_print_water(lines: list[str], water_data: dict, processed: dict, the
             f' stroke-width="0.4" stroke-linejoin="round"/>'
         )
 
-    # Waterways (rivers, streams) — thicker than streets for clear hierarchy
+    # Waterways (rivers, streams) — wider than streets, clearly colored
     for coords, water_type, name in water_data.get("waterways", []):
         if len(coords) < 2:
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
         if water_type in ("river", "coastline"):
-            width = 1.8  # Thicker than any street — rivers are prominent
+            width = 0.9  # Wider than streets but not dominant
         elif water_type == "canal":
-            width = 1.0
+            width = 0.5
         else:
-            width = 0.5  # streams
+            width = 0.25  # streams
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="none" stroke="{theme["water_stroke"]}" stroke-width="{width}"'
@@ -779,15 +783,16 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
 
     # Print-specific width map — much thinner than CNC widths.
     # The dense grid of thin lines IS the product for city map posters.
-    # Major roads should be visible but NOT dominant — the overall texture matters.
+    # Widths are deliberately close together for a uniform "fabric" look.
+    # Premium prints avoid any single road dominating the composition.
     PRINT_WIDTHS = {
-        "motorway": 0.5, "motorway_link": 0.35,
-        "trunk": 0.45, "trunk_link": 0.3,
-        "primary": 0.35, "primary_link": 0.25,
-        "secondary": 0.28, "secondary_link": 0.22,
-        "tertiary": 0.18, "tertiary_link": 0.15,
-        "residential": 0.12,
-        "unclassified": 0.1,
+        "motorway": 0.35, "motorway_link": 0.25,
+        "trunk": 0.32, "trunk_link": 0.22,
+        "primary": 0.28, "primary_link": 0.2,
+        "secondary": 0.22, "secondary_link": 0.18,
+        "tertiary": 0.15, "tertiary_link": 0.12,
+        "residential": 0.1,
+        "unclassified": 0.08,
     }
 
     lines.append('    <g id="streets">')
