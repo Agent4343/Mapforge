@@ -37,7 +37,7 @@ const DEFAULT_CONFIG = {
   includeContours: false,
   contourType: "depth",
   numDepthBands: 5,
-  outputMode: "print",
+  outputMode: "print",  // Always print mode for customers
   colorTheme: "classic",
   heartLat: null,
   heartLon: null,
@@ -475,23 +475,16 @@ export default function App() {
               <option key={c.code} value={c.code}>{c.label}</option>
             ))}
           </select>
-          <button className="nav-btn" onClick={() => setShowPricing(true)}>Pricing</button>
-          <button className="nav-btn" onClick={() => setView("marketplace")}>Marketplace</button>
-          {user && <button className="nav-btn" onClick={() => setView("library")}>Library</button>}
-          {user && <button className="nav-btn" onClick={() => setView("purchases")}>Purchases</button>}
-          {user && (user.tier === "maker" || user.tier === "pro" || user.tier === "admin") && (
-            <button className="nav-btn" onClick={() => setView("dashboard")}>Seller</button>
-          )}
-          {user && (user.tier === "pro" || user.tier === "admin") && (
-            <button className="nav-btn" onClick={() => setShowBatch(true)}>Batch</button>
-          )}
+          {user && <button className="nav-btn" onClick={() => setView("library")}>My Designs</button>}
           {user && user.tier === "admin" && (
-            <button className="nav-btn nav-btn-admin" onClick={() => setView("admin")}>Admin</button>
+            <>
+              <button className="nav-btn" onClick={() => setView("dashboard")}>Orders</button>
+              <button className="nav-btn nav-btn-admin" onClick={() => setView("admin")}>Admin</button>
+            </>
           )}
           {user ? (
             <div className="user-info">
               <span className="user-name">{user.username}</span>
-              <span className="user-tier">{user.tier}</span>
               <button className="nav-btn" onClick={handleLogout}>Sign Out</button>
             </div>
           ) : (
@@ -570,33 +563,7 @@ export default function App() {
 
           <hr className="section-divider" />
 
-          {/* Undo/Redo bar */}
-          <div style={{ display: "flex", gap: "6px", justifyContent: "flex-end" }}>
-            <button
-              className="btn btn-secondary"
-              onClick={handleUndo}
-              disabled={!canUndo}
-              style={{ padding: "4px 10px", fontSize: "11px" }}
-              title="Undo (Ctrl+Z)"
-            >
-              Undo
-            </button>
-            <button
-              className="btn btn-secondary"
-              onClick={handleRedo}
-              disabled={!canRedo}
-              style={{ padding: "4px 10px", fontSize: "11px" }}
-              title="Redo (Ctrl+Shift+Z)"
-            >
-              Redo
-            </button>
-          </div>
-
           <CustomizePanel config={config} onChange={handleConfigChange} user={user} />
-
-          <MarkersPanel markers={markers} onChange={setMarkers} />
-
-          <hr className="section-divider" />
 
           {qualityWarning && (
             <div className="quality-warning" style={{
@@ -615,16 +582,11 @@ export default function App() {
           <ExportPanel
             result={result}
             onGenerate={handleGenerate}
-            onDownload={handleDownload}
-            onDownloadDXF={handleDownloadDXF}
-            onDownloadThumbnail={handleDownloadThumbnail}
             onDownloadPrintPNG={handleDownloadPrintPNG}
             onSaveDesign={handleSaveDesign}
             designId={designId}
             canGenerate={!!selectedResult || (config.productType === "name_sign" && !!pinCoords) || config.productType === "star_map"}
             generating={generating}
-            user={user}
-            outputMode={config.outputMode}
           />
         </div>
         <div className="panel-right">

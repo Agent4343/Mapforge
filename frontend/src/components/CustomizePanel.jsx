@@ -2,12 +2,12 @@ const COLOR_THEMES = [
   { value: "classic", label: "Classic", bg: "#faf8f5", road: "#8b7355", land: "#4a7c59" },
   { value: "modern_dark", label: "Modern Dark", bg: "#1a1a2e", road: "#e2e8f0", land: "#2d3748" },
   { value: "rose_gold", label: "Rose Gold", bg: "#fdf2f0", road: "#8b6f66", land: "#d4a59a" },
-  { value: "midnight", label: "Midnight Blue", bg: "#0f1923", road: "#c9d6df", land: "#1b3a4b" },
-  { value: "sage", label: "Sage Green", bg: "#f5f7f2", road: "#4a5e44", land: "#7d9b76" },
-  { value: "minimal", label: "Minimal B&W", bg: "#ffffff", road: "#222222", land: "#e0e0e0" },
+  { value: "midnight", label: "Midnight", bg: "#0f1923", road: "#c9d6df", land: "#1b3a4b" },
+  { value: "sage", label: "Sage", bg: "#f5f7f2", road: "#4a5e44", land: "#7d9b76" },
+  { value: "minimal", label: "B&W", bg: "#ffffff", road: "#222222", land: "#e0e0e0" },
   { value: "navy_gold", label: "Navy & Gold", bg: "#0a1628", road: "#d4a843", land: "#1a2d52" },
-  { value: "blush", label: "Blush Pink", bg: "#fef0f0", road: "#c27c7c", land: "#e8b4b4" },
-  { value: "ocean", label: "Ocean Blue", bg: "#e8f4f8", road: "#1a5276", land: "#5dade2" },
+  { value: "blush", label: "Blush", bg: "#fef0f0", road: "#c27c7c", land: "#e8b4b4" },
+  { value: "ocean", label: "Ocean", bg: "#e8f4f8", road: "#1a5276", land: "#5dade2" },
   { value: "charcoal", label: "Charcoal", bg: "#2d2d2d", road: "#e0d5c1", land: "#4a4a4a" },
   { value: "terracotta", label: "Terracotta", bg: "#faf0e6", road: "#8b4513", land: "#cd7f50" },
   { value: "lavender", label: "Lavender", bg: "#f3f0ff", road: "#5b4a8a", land: "#b8a9d4" },
@@ -31,11 +31,22 @@ const SUBTITLE_PRESETS = [
   "Written In The Stars",
 ];
 
-const SHAPE_OPTIONS = [
-  { value: "rectangle", label: "Rectangle" },
-  { value: "circle", label: "Circle" },
-  { value: "heart", label: "Heart" },
-  { value: "hexagon", label: "Hexagon" },
+const PRINT_SIZES = [
+  { value: "print_8x10", label: '8\u00d710"', price: "$18.99" },
+  { value: "print_11x14", label: '11\u00d714"', price: "$21.99" },
+  { value: "print_16x20", label: '16\u00d720"', price: "$24.99" },
+  { value: "print_18x24", label: '18\u00d724"', price: "$27.99" },
+  { value: "print_24x36", label: '24\u00d736"', price: "$29.99" },
+];
+
+const MAP_TYPES = [
+  { value: "city", label: "City / Town" },
+  { value: "community", label: "Neighborhood" },
+  { value: "lake", label: "Lake" },
+  { value: "province", label: "Province / State" },
+  { value: "park", label: "Park" },
+  { value: "name_sign", label: "Custom Pin" },
+  { value: "star_map", label: "Star Map" },
 ];
 
 export default function CustomizePanel({ config, onChange, user }) {
@@ -43,220 +54,203 @@ export default function CustomizePanel({ config, onChange, user }) {
     onChange({ ...config, [key]: value });
   }
 
-  function updateMulti(updates) {
-    onChange({ ...config, ...updates });
-  }
-
-  const isPro = user?.tier === "pro" || user?.tier === "admin";
-  const isPrint = config.outputMode === "print";
   const isStarMap = config.productType === "star_map";
 
   return (
     <div className="customize-section">
-      <h2>Customize</h2>
+      <h2>Design Your Print</h2>
 
-      {/* Output Mode Toggle */}
+      {/* Title */}
       <div className="control-group">
-        <label>Output Mode</label>
-        <div className="mode-toggle">
-          <button
-            className={`mode-toggle-btn${!isPrint ? " active" : ""}`}
-            onClick={() => update("outputMode", "cnc")}
-          >
-            CNC / Laser
-          </button>
-          <button
-            className={`mode-toggle-btn${isPrint ? " active" : ""}`}
-            onClick={() => update("outputMode", "print")}
-          >
-            Print / Poster
-          </button>
+        <label>Title</label>
+        <input
+          type="text"
+          value={config.text}
+          onChange={(e) => update("text", e.target.value)}
+          placeholder={isStarMap ? "The Night We Met" : "e.g. Toronto, Our First Home"}
+          maxLength={200}
+        />
+      </div>
+
+      {/* Subtitle */}
+      <div className="control-group">
+        <label>Subtitle</label>
+        <input
+          type="text"
+          value={config.subtitle || ""}
+          onChange={(e) => update("subtitle", e.target.value)}
+          placeholder={isStarMap ? "June 15, 2024" : "Where We Met, Est. 2024..."}
+          maxLength={100}
+        />
+        <div className="preset-chips">
+          {SUBTITLE_PRESETS.map((preset) => (
+            <button
+              key={preset}
+              className={`preset-chip${config.subtitle === preset ? " active" : ""}`}
+              onClick={() => update("subtitle", config.subtitle === preset ? "" : preset)}
+            >
+              {preset}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Display Text */}
+      {/* Map Type */}
       <div className="control-group">
-        <label>Display Text</label>
-        <div className="input-with-count">
-          <input
-            type="text"
-            value={config.text}
-            onChange={(e) => update("text", e.target.value)}
-            placeholder={isStarMap ? "The Night We Met" : "Location name"}
-            maxLength={200}
-          />
-          <span className="input-count">{config.text.length}/200</span>
+        <label>Map Type</label>
+        <div className="preset-chips" style={{ flexWrap: "wrap" }}>
+          {MAP_TYPES.map((t) => (
+            <button
+              key={t.value}
+              className={`preset-chip${config.productType === t.value ? " active" : ""}`}
+              onClick={() => update("productType", t.value)}
+            >
+              {t.label}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Subtitle / Tagline — Print mode */}
-      {isPrint && (
-        <div className="control-group">
-          <label>Subtitle / Tagline</label>
-          <input
-            type="text"
-            value={config.subtitle || ""}
-            onChange={(e) => update("subtitle", e.target.value)}
-            placeholder={isStarMap ? "June 15, 2024" : "Where We Met, Est. 2024, etc."}
-            maxLength={100}
-          />
-          <div className="preset-chips">
-            {SUBTITLE_PRESETS.map((preset) => (
-              <button
-                key={preset}
-                className={`preset-chip${config.subtitle === preset ? " active" : ""}`}
-                onClick={() => update("subtitle", config.subtitle === preset ? "" : preset)}
-              >
-                {preset}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Star Map Date/Time — only for star_map product type */}
+      {/* Star Map Date/Time */}
       {isStarMap && (
         <div className="customize-group">
-          <div className="customize-group-label">Star Map Date & Time</div>
+          <div className="customize-group-label">Date & Location</div>
           <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: "0 0 8px" }}>
-            Show the night sky as it appeared at a specific moment — perfect for birthdays, anniversaries, or &quot;the night we met.&quot;
+            The night sky from a special moment
           </p>
           <div className="control-row">
             <div className="control-group">
               <label>Date</label>
-              <input
-                type="date"
-                value={config.starDate || ""}
-                onChange={(e) => update("starDate", e.target.value)}
-              />
+              <input type="date" value={config.starDate || ""} onChange={(e) => update("starDate", e.target.value)} />
             </div>
             <div className="control-group">
-              <label>Time (UTC)</label>
-              <input
-                type="time"
-                value={config.starTime || "22:00"}
-                onChange={(e) => update("starTime", e.target.value)}
-              />
+              <label>Time</label>
+              <input type="time" value={config.starTime || "22:00"} onChange={(e) => update("starTime", e.target.value)} />
             </div>
           </div>
           <div className="control-row">
             <div className="control-group">
               <label>Latitude</label>
-              <input
-                type="number"
-                step="0.01"
-                placeholder="43.65"
-                value={config.starLat ?? ""}
-                onChange={(e) => update("starLat", e.target.value ? parseFloat(e.target.value) : null)}
-              />
+              <input type="number" step="0.01" placeholder="43.65" value={config.starLat ?? ""} onChange={(e) => update("starLat", e.target.value ? parseFloat(e.target.value) : null)} />
             </div>
             <div className="control-group">
               <label>Longitude</label>
-              <input
-                type="number"
-                step="0.01"
-                placeholder="-79.38"
-                value={config.starLon ?? ""}
-                onChange={(e) => update("starLon", e.target.value ? parseFloat(e.target.value) : null)}
-              />
+              <input type="number" step="0.01" placeholder="-79.38" value={config.starLon ?? ""} onChange={(e) => update("starLon", e.target.value ? parseFloat(e.target.value) : null)} />
             </div>
           </div>
         </div>
       )}
 
-      {/* Size Settings Group */}
+      {/* Print Size */}
       <div className="customize-group">
-        <div className="customize-group-label">{isPrint ? "Print Size" : "Board"}</div>
-        <div className="control-row">
-          <div className="control-group">
-            <label>Size</label>
-            <select
-              value={config.boardSize}
-              onChange={(e) => update("boardSize", e.target.value)}
+        <div className="customize-group-label">Print Size</div>
+        <div className="size-grid">
+          {PRINT_SIZES.map((s) => (
+            <button
+              key={s.value}
+              className={`size-btn${config.boardSize === s.value ? " active" : ""}`}
+              onClick={() => update("boardSize", s.value)}
             >
-              {isPrint ? (
-                <>
-                  <option value="print_8x10">8&times;10&quot;</option>
-                  <option value="print_11x14">11&times;14&quot;</option>
-                  <option value="print_16x20">16&times;20&quot;</option>
-                  <option value="print_18x24">18&times;24&quot;</option>
-                  <option value="print_24x36">24&times;36&quot;</option>
-                  <option value="custom">Custom</option>
-                </>
-              ) : (
-                <>
-                  <option value="small">Small 12&times;16&quot;</option>
-                  <option value="medium">Medium 16&times;20&quot;</option>
-                  <option value="large">Large 20&times;24&quot;</option>
-                  <option value="xl">XL 24&times;32&quot;</option>
-                  <option value="max">Max 32&times;48&quot;</option>
-                  <option value="custom">Custom</option>
-                </>
-              )}
-            </select>
-          </div>
+              <span className="size-label">{s.label}</span>
+              <span className="size-price">{s.price}</span>
+            </button>
+          ))}
+        </div>
+      </div>
 
-          {!isPrint && (
-            <div className="control-group">
-              <label>Cut Style</label>
-              <select
-                value={config.style}
-                onChange={(e) => update("style", e.target.value)}
-              >
-                <option value="outline">Outline (Profile)</option>
-                <option value="filled">Filled (Pocket)</option>
-                <option value="engraved">Engraved (V-Carve)</option>
-              </select>
-            </div>
-          )}
+      {/* Color Theme */}
+      <div className="customize-group">
+        <div className="customize-group-label">Color Theme</div>
+        <div className="theme-grid">
+          {COLOR_THEMES.map((theme) => (
+            <button
+              key={theme.value}
+              className={`theme-swatch${config.colorTheme === theme.value ? " active" : ""}`}
+              onClick={() => update("colorTheme", theme.value)}
+              title={theme.label}
+            >
+              <div className="theme-swatch-preview">
+                {theme.value === "custom" ? (
+                  <div className="theme-swatch-bg" style={{ background: "linear-gradient(135deg, #ff6b6b, #4ecdc4, #45b7d1)" }} />
+                ) : (
+                  <>
+                    <div className="theme-swatch-bg" style={{ background: theme.bg }} />
+                    <div className="theme-swatch-land" style={{ background: theme.land }} />
+                    <div className="theme-swatch-road" style={{ background: theme.road }} />
+                  </>
+                )}
+              </div>
+              <span className="theme-swatch-label">{theme.label}</span>
+            </button>
+          ))}
         </div>
 
-        {config.boardSize === "custom" && (
-          <div className="control-row">
-            <div className="control-group">
-              <label>Width (in)</label>
-              <input
-                type="number"
-                min="2"
-                max="60"
-                step="0.5"
-                value={config.customWidth || 16}
-                onChange={(e) => update("customWidth", Number(e.target.value))}
-              />
-            </div>
-            <div className="control-group">
-              <label>Height (in)</label>
-              <input
-                type="number"
-                min="2"
-                max="60"
-                step="0.5"
-                value={config.customHeight || 20}
-                onChange={(e) => update("customHeight", Number(e.target.value))}
-              />
-            </div>
+        {/* Custom colors */}
+        {config.colorTheme === "custom" && (
+          <div style={{ marginTop: "8px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+            {[
+              { key: "customBg", label: "Background", def: "#1a1a2e" },
+              { key: "customLand", label: "Land", def: "#2d3748" },
+              { key: "customWater", label: "Water", def: "#a0c0e0" },
+              { key: "customRoad", label: "Roads", def: "#e2e8f0" },
+              { key: "customText", label: "Text", def: "#1a1a1a" },
+            ].map((c) => (
+              <div key={c.key} className="control-group">
+                <label>{c.label}</label>
+                <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+                  <input type="color" value={config[c.key] || c.def} onChange={(e) => update(c.key, e.target.value)}
+                    style={{ width: "28px", height: "26px", padding: 0, border: "1px solid var(--border)", borderRadius: "4px", cursor: "pointer" }} />
+                  <input type="text" value={config[c.key] || c.def} onChange={(e) => update(c.key, e.target.value)}
+                    maxLength={7} style={{ flex: 1, fontSize: "11px", fontFamily: "var(--font-mono)" }} />
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>
 
-      {/* Map Shape — Print mode only */}
-      {isPrint && !isStarMap && (
+      {/* Font & Frame */}
+      <div className="customize-group">
+        <div className="customize-group-label">Style</div>
+        <div className="control-row">
+          <div className="control-group">
+            <label>Font</label>
+            <select value={config.fontFamily || "serif"} onChange={(e) => update("fontFamily", e.target.value)}>
+              <option value="serif">Classic Serif</option>
+              <option value="sans">Clean Sans</option>
+              <option value="script">Script</option>
+              <option value="mono">Mono</option>
+            </select>
+          </div>
+          <div className="control-group">
+            <label>Frame</label>
+            <select value={config.borderStyle || "none"} onChange={(e) => update("borderStyle", e.target.value)}>
+              <option value="none">None</option>
+              <option value="thin">Thin Line</option>
+              <option value="double">Double Frame</option>
+              <option value="ornate">Ornate</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* Map Shape */}
+      {!isStarMap && (
         <div className="customize-group">
-          <div className="customize-group-label">Map Shape</div>
+          <div className="customize-group-label">Shape</div>
           <div className="shape-grid">
-            {SHAPE_OPTIONS.map((shape) => (
+            {[
+              { value: "rectangle", label: "Rectangle", icon: "\u25AD" },
+              { value: "circle", label: "Circle", icon: "\u25CB" },
+              { value: "heart", label: "Heart", icon: "\u2665" },
+              { value: "hexagon", label: "Hexagon", icon: "\u2B21" },
+            ].map((shape) => (
               <button
                 key={shape.value}
                 className={`shape-btn${config.mapShape === shape.value ? " active" : ""}`}
                 onClick={() => update("mapShape", shape.value)}
-                title={shape.label}
               >
-                <span className="shape-icon">
-                  {shape.value === "rectangle" && "\u25AD"}
-                  {shape.value === "circle" && "\u25CB"}
-                  {shape.value === "heart" && "\u2665"}
-                  {shape.value === "hexagon" && "\u2B21"}
-                </span>
+                <span className="shape-icon">{shape.icon}</span>
                 <span className="shape-label">{shape.label}</span>
               </button>
             ))}
@@ -264,329 +258,22 @@ export default function CustomizePanel({ config, onChange, user }) {
         </div>
       )}
 
-      {/* Color Theme — Print mode only */}
-      {isPrint && (
-        <div className="customize-group">
-          <div className="customize-group-label">Color Theme</div>
-          <div className="theme-grid">
-            {COLOR_THEMES.map((theme) => (
-              <button
-                key={theme.value}
-                className={`theme-swatch${config.colorTheme === theme.value ? " active" : ""}`}
-                onClick={() => update("colorTheme", theme.value)}
-                title={theme.label}
-              >
-                <div className="theme-swatch-preview">
-                  {theme.value === "custom" ? (
-                    <>
-                      <div className="theme-swatch-bg" style={{ background: "linear-gradient(135deg, #ff6b6b, #4ecdc4, #45b7d1)" }} />
-                      <div className="theme-swatch-land" style={{ background: "transparent" }} />
-                      <div className="theme-swatch-road" style={{ background: "transparent" }} />
-                    </>
-                  ) : (
-                    <>
-                      <div className="theme-swatch-bg" style={{ background: theme.bg }} />
-                      <div className="theme-swatch-land" style={{ background: theme.land }} />
-                      <div className="theme-swatch-road" style={{ background: theme.road }} />
-                    </>
-                  )}
-                </div>
-                <span className="theme-swatch-label">{theme.label}</span>
-              </button>
-            ))}
-          </div>
-
-          {/* Custom Color Picker — shown when "Custom" theme is selected */}
-          {config.colorTheme === "custom" && (
-            <div className="custom-colors" style={{ marginTop: "8px" }}>
-              <div className="control-row">
-                <div className="control-group">
-                  <label>Background</label>
-                  <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-                    <input
-                      type="color"
-                      value={config.customBg || "#1a1a2e"}
-                      onChange={(e) => update("customBg", e.target.value)}
-                      style={{ width: "32px", height: "28px", padding: "1px", border: "1px solid var(--border)", borderRadius: "4px", cursor: "pointer" }}
-                    />
-                    <input
-                      type="text"
-                      value={config.customBg || "#1a1a2e"}
-                      onChange={(e) => update("customBg", e.target.value)}
-                      maxLength={7}
-                      style={{ flex: 1, fontSize: "11px", fontFamily: "var(--font-mono)" }}
-                    />
-                  </div>
-                </div>
-                <div className="control-group">
-                  <label>Land</label>
-                  <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-                    <input
-                      type="color"
-                      value={config.customLand || "#2d3748"}
-                      onChange={(e) => update("customLand", e.target.value)}
-                      style={{ width: "32px", height: "28px", padding: "1px", border: "1px solid var(--border)", borderRadius: "4px", cursor: "pointer" }}
-                    />
-                    <input
-                      type="text"
-                      value={config.customLand || "#2d3748"}
-                      onChange={(e) => update("customLand", e.target.value)}
-                      maxLength={7}
-                      style={{ flex: 1, fontSize: "11px", fontFamily: "var(--font-mono)" }}
-                    />
-                  </div>
-                </div>
-              </div>
-              <div className="control-row">
-                <div className="control-group">
-                  <label>Water</label>
-                  <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-                    <input
-                      type="color"
-                      value={config.customWater || "#a0c0e0"}
-                      onChange={(e) => update("customWater", e.target.value)}
-                      style={{ width: "32px", height: "28px", padding: "1px", border: "1px solid var(--border)", borderRadius: "4px", cursor: "pointer" }}
-                    />
-                    <input
-                      type="text"
-                      value={config.customWater || "#a0c0e0"}
-                      onChange={(e) => update("customWater", e.target.value)}
-                      maxLength={7}
-                      style={{ flex: 1, fontSize: "11px", fontFamily: "var(--font-mono)" }}
-                    />
-                  </div>
-                </div>
-                <div className="control-group">
-                  <label>Roads</label>
-                  <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-                    <input
-                      type="color"
-                      value={config.customRoad || "#e2e8f0"}
-                      onChange={(e) => update("customRoad", e.target.value)}
-                      style={{ width: "32px", height: "28px", padding: "1px", border: "1px solid var(--border)", borderRadius: "4px", cursor: "pointer" }}
-                    />
-                    <input
-                      type="text"
-                      value={config.customRoad || "#e2e8f0"}
-                      onChange={(e) => update("customRoad", e.target.value)}
-                      maxLength={7}
-                      style={{ flex: 1, fontSize: "11px", fontFamily: "var(--font-mono)" }}
-                    />
-                  </div>
-                </div>
-              </div>
-              <div className="control-row">
-                <div className="control-group">
-                  <label>Text</label>
-                  <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
-                    <input
-                      type="color"
-                      value={config.customText || "#1a1a1a"}
-                      onChange={(e) => update("customText", e.target.value)}
-                      style={{ width: "32px", height: "28px", padding: "1px", border: "1px solid var(--border)", borderRadius: "4px", cursor: "pointer" }}
-                    />
-                    <input
-                      type="text"
-                      value={config.customText || "#1a1a1a"}
-                      onChange={(e) => update("customText", e.target.value)}
-                      maxLength={7}
-                      style={{ flex: 1, fontSize: "11px", fontFamily: "var(--font-mono)" }}
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Typography & Frame — Print mode */}
-      {isPrint && (
-        <div className="customize-group">
-          <div className="customize-group-label">Typography & Frame</div>
-          <div className="control-row">
-            <div className="control-group">
-              <label>Font Style</label>
-              <select
-                value={config.fontFamily || "serif"}
-                onChange={(e) => update("fontFamily", e.target.value)}
-              >
-                <option value="serif">Classic Serif</option>
-                <option value="sans">Clean Sans</option>
-                <option value="script">Script / Romantic</option>
-                <option value="mono">Technical Mono</option>
-              </select>
-            </div>
-            <div className="control-group">
-              <label>Border Frame</label>
-              <select
-                value={config.borderStyle || "none"}
-                onChange={(e) => update("borderStyle", e.target.value)}
-              >
-                <option value="none">None</option>
-                <option value="thin">Thin Line</option>
-                <option value="double">Double Frame</option>
-                <option value="ornate">Ornate Corners</option>
-              </select>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Heart Marker — Print mode, for gift/romantic maps */}
-      {isPrint && (config.productType === "city" || config.productType === "community") && (
-        <div className="customize-group">
-          <div className="customize-group-label">Heart Marker</div>
-          <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: "0 0 8px" }}>
-            Drop a heart on a special location — perfect for &quot;where we met&quot; gifts.
-          </p>
-          <div className="control-row">
-            <div className="control-group">
-              <label>Latitude</label>
-              <input
-                type="number"
-                step="0.0001"
-                placeholder="45.4215"
-                value={config.heartLat ?? ""}
-                onChange={(e) => update("heartLat", e.target.value ? parseFloat(e.target.value) : null)}
-              />
-            </div>
-            <div className="control-group">
-              <label>Longitude</label>
-              <input
-                type="number"
-                step="0.0001"
-                placeholder="-75.6972"
-                value={config.heartLon ?? ""}
-                onChange={(e) => update("heartLon", e.target.value ? parseFloat(e.target.value) : null)}
-              />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Product & Format Group */}
-      <div className="customize-group">
-        <div className="customize-group-label">Output</div>
-        <div className="control-row">
-          <div className="control-group">
-            <label>Product Type</label>
-            <select
-              value={config.productType}
-              onChange={(e) => update("productType", e.target.value)}
-            >
-              <option value="city">City</option>
-              <option value="community">Community</option>
-              <option value="lake">Lake</option>
-              <option value="province">Province / State</option>
-              <option value="park">Park</option>
-              <option value="name_sign">Name Sign (Pin)</option>
-              <option value="star_map">Star Map</option>
-            </select>
-          </div>
-
-          {!isPrint && !isStarMap && (
-            <div className="control-group">
-              <label>Format</label>
-              <select
-                value={config.exportFormat}
-                onChange={(e) => update("exportFormat", e.target.value)}
-              >
-                <option value="svg">SVG</option>
-                <option value="dxf" disabled={!user || user.tier === "free"}>
-                  DXF {!user || user.tier === "free" ? "(Maker+)" : ""}
-                </option>
-              </select>
-            </div>
-          )}
-        </div>
-
-        <div className="control-group">
-          <label>Font Size (mm)</label>
-          <input
-            type="range"
-            min="4"
-            max="40"
-            step="1"
-            value={config.fontSize}
-            onChange={(e) => update("fontSize", Number(e.target.value))}
-            className="range-input"
-          />
-          <span className="range-value">{config.fontSize}mm</span>
-        </div>
-      </div>
-
-      {/* Feature Toggles */}
+      {/* Options */}
       {!isStarMap && (
         <div className="customize-group">
-          <div className="customize-group-label">Features</div>
-
+          <div className="customize-group-label">Options</div>
           <div className="toggle-row">
             <label>Show Coordinates</label>
             <label className="toggle-switch">
-              <input
-                type="checkbox"
-                checked={config.showCoordinates}
-                onChange={(e) => update("showCoordinates", e.target.checked)}
-              />
+              <input type="checkbox" checked={config.showCoordinates} onChange={(e) => update("showCoordinates", e.target.checked)} />
               <span className="toggle-slider" />
             </label>
           </div>
-
-          <div className="toggle-row">
-            <label>Include Islands</label>
-            <label className="toggle-switch">
-              <input
-                type="checkbox"
-                checked={config.includeIslands}
-                onChange={(e) => update("includeIslands", e.target.checked)}
-              />
-              <span className="toggle-slider" />
-            </label>
-          </div>
-
           {(config.productType === "city" || config.productType === "community") && (
             <div className="toggle-row">
-              <label>Include Streets</label>
+              <label>Show Streets</label>
               <label className="toggle-switch">
-                <input
-                  type="checkbox"
-                  checked={config.includeStreets}
-                  onChange={(e) => update("includeStreets", e.target.checked)}
-                />
-                <span className="toggle-slider" />
-              </label>
-            </div>
-          )}
-
-          {(config.productType === "lake" || config.productType === "park" || config.productType === "community") && (
-            <div className="toggle-row">
-              <label>
-                Contours
-                {!isPro && <span className="pro-badge">Pro</span>}
-              </label>
-              <label className="toggle-switch">
-                <input
-                  type="checkbox"
-                  checked={config.includeContours}
-                  onChange={(e) => update("includeContours", e.target.checked)}
-                  disabled={!isPro}
-                />
-                <span className="toggle-slider" />
-              </label>
-            </div>
-          )}
-
-          {/* 3D Carved Preview Toggle */}
-          {!isPrint && (
-            <div className="toggle-row">
-              <label>3D Carved Preview</label>
-              <label className="toggle-switch">
-                <input
-                  type="checkbox"
-                  checked={config.show3D || false}
-                  onChange={(e) => update("show3D", e.target.checked)}
-                />
+                <input type="checkbox" checked={config.includeStreets} onChange={(e) => update("includeStreets", e.target.checked)} />
                 <span className="toggle-slider" />
               </label>
             </div>
@@ -594,27 +281,24 @@ export default function CustomizePanel({ config, onChange, user }) {
         </div>
       )}
 
-      {config.includeContours && isPro && (
-        <div className="control-row">
-          <div className="control-group">
-            <label>Contour Type</label>
-            <select
-              value={config.contourType}
-              onChange={(e) => update("contourType", e.target.value)}
-            >
-              <option value="depth">Bathymetric (Depth)</option>
-              <option value="elevation">Topographic (Elevation)</option>
-            </select>
-          </div>
-          <div className="control-group">
-            <label>Depth Bands</label>
-            <input
-              type="number"
-              min="2"
-              max="10"
-              value={config.numDepthBands}
-              onChange={(e) => update("numDepthBands", Number(e.target.value))}
-            />
+      {/* Heart marker for city maps */}
+      {(config.productType === "city" || config.productType === "community") && (
+        <div className="customize-group">
+          <div className="customize-group-label">Heart Marker</div>
+          <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: "0 0 8px" }}>
+            Mark a special spot with a heart
+          </p>
+          <div className="control-row">
+            <div className="control-group">
+              <label>Lat</label>
+              <input type="number" step="0.0001" placeholder="45.4215" value={config.heartLat ?? ""}
+                onChange={(e) => update("heartLat", e.target.value ? parseFloat(e.target.value) : null)} />
+            </div>
+            <div className="control-group">
+              <label>Lon</label>
+              <input type="number" step="0.0001" placeholder="-75.6972" value={config.heartLon ?? ""}
+                onChange={(e) => update("heartLon", e.target.value ? parseFloat(e.target.value) : null)} />
+            </div>
           </div>
         </div>
       )}
