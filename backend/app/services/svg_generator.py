@@ -842,23 +842,20 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
     """
     transform = processed.get("transform")
 
-    # Premium print widths — compressed hierarchy for unified fabric.
-    # The goal: when you squint, the streets form a cohesive texture,
-    # not isolated thick lines floating in empty space.
+    # Bold white streets — prominent, clean lines that pop against the land.
     PRINT_WIDTHS = {
-        "motorway": 0.22, "motorway_link": 0.16,
-        "trunk": 0.20, "trunk_link": 0.15,
-        "primary": 0.18, "primary_link": 0.14,
-        "secondary": 0.14, "secondary_link": 0.11,
-        "tertiary": 0.10, "tertiary_link": 0.08,
-        "residential": 0.08,
-        "unclassified": 0.07,
-        "service": 0.05,
+        "motorway": 0.50, "motorway_link": 0.35,
+        "trunk": 0.45, "trunk_link": 0.30,
+        "primary": 0.40, "primary_link": 0.30,
+        "secondary": 0.30, "secondary_link": 0.22,
+        "tertiary": 0.22, "tertiary_link": 0.18,
+        "residential": 0.18,
+        "unclassified": 0.15,
+        "service": 0.10,
     }
 
-    # Use a single unified street color for the fabric look.
-    # Premium posters don't distinguish major/minor by color — only by width.
-    street_color = theme["street_major"]
+    # Force white streets for clean, bold contrast against the map.
+    street_color = "#ffffff"
 
     lines.append('    <g id="streets">')
 
