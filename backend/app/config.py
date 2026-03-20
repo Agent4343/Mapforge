@@ -42,7 +42,7 @@ def _parse_admin_emails() -> list[str]:
 
 class Settings:
     # Database
-    DATABASE_URL: str = _fixup_db_url(os.getenv("DATABASE_URL", "sqlite+aiosqlite:////tmp/mapforge.db"))
+    DATABASE_URL: str = _fixup_db_url(os.getenv("DATABASE_URL", "") or "sqlite+aiosqlite:////tmp/mapforge.db")
 
     # Auth
     SECRET_KEY: str = _get_secret_key()
