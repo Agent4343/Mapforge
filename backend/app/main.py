@@ -35,15 +35,14 @@ async def lifespan(app: FastAPI):
         else:
             log.warning(f"CONFIG: {issue}")
 
-    # Database is required — fail startup if unreachable
+    # Database initialization — retry with backoff, but always let the app start
+    # so the health endpoint can report status and Railway doesn't kill the container.
     try:
         await init_db()
         log.info("Database initialized")
     except Exception as e:
         log.error(f"Database initialization failed: {e}")
-        if settings.is_production:
-            raise  # Don't start without database in production
-        log.warning("Continuing without database (development mode)")
+        log.warning("App starting without database — /health will report degraded status")
 
     # Ensure local storage directory exists
     if settings.STORAGE_BACKEND == "local":
