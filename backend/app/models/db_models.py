@@ -145,3 +145,69 @@ class Review(Base):
     )
 
     listing = relationship("MarketplaceListing", back_populates="reviews")
+
+
+def _design_id() -> str:
+    """Generate a short, human-readable Design ID (e.g. MS-A3F8K2)."""
+    chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # No I/O/0/1 to avoid confusion
+    code = "".join(chars[b % len(chars)] for b in uuid.uuid4().bytes[:6])
+    return f"MS-{code}"
+
+
+class SavedDesign(Base):
+    """A saved design configuration that can be retrieved by Design ID.
+
+    This is the core of the Etsy workflow:
+    1. Customer designs their map on the app
+    2. Gets a Design ID (e.g. MS-A3F8K2)
+    3. Purchases on Etsy, provides Design ID
+    4. Admin retrieves design, exports print file, fulfills order
+    """
+    __tablename__ = "saved_designs"
+
+    id = Column(String(16), primary_key=True, default=_uuid)
+    design_id = Column(String(12), unique=True, nullable=False, index=True, default=_design_id)
+    # Who created it (nullable for anonymous users)
+    creator_email = Column(String(255), nullable=True)
+
+    # Location data
+    location_name = Column(String(255), nullable=False)
+    osm_id = Column(Integer, nullable=True)
+    osm_type = Column(String(20), nullable=True)
+    lat = Column(Float, nullable=True)
+    lon = Column(Float, nullable=True)
+
+    # Design configuration (stored as JSON-compatible text)
+    product_type = Column(String(20), nullable=False, default="city")
+    board_size = Column(String(20), nullable=False, default="print_16x20")
+    color_theme = Column(String(30), nullable=False, default="classic")
+    display_text = Column(String(255), nullable=False, default="")
+    subtitle = Column(String(255), nullable=True, default="")
+    font_family = Column(String(20), nullable=False, default="serif")
+    border_style = Column(String(20), nullable=False, default="none")
+    map_shape = Column(String(20), nullable=False, default="rectangle")
+    show_coordinates = Column(Boolean, default=True)
+    font_size_mm = Column(Float, default=14.0)
+
+    # Custom colors (when theme is "custom")
+    custom_bg = Column(String(7), nullable=True)
+    custom_land = Column(String(7), nullable=True)
+    custom_water = Column(String(7), nullable=True)
+    custom_road = Column(String(7), nullable=True)
+    custom_text = Column(String(7), nullable=True)
+
+    # Star map fields
+    star_date = Column(String(10), nullable=True)
+    star_time = Column(String(5), nullable=True)
+
+    # Generated file reference (after first generation)
+    generated_file_id = Column(String(16), ForeignKey("generated_files.id"), nullable=True)
+
+    # Order tracking
+    order_status = Column(String(20), default="designed")  # designed, purchased, printing, shipped
+    etsy_order_id = Column(String(100), nullable=True)
+    tracking_number = Column(String(100), nullable=True)
+    notes = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)

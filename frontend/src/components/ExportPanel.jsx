@@ -9,12 +9,15 @@ export default function ExportPanel({
   onDownloadDXF,
   onDownloadThumbnail,
   onDownloadPrintPNG,
+  onSaveDesign,
+  designId,
   canGenerate,
   generating,
   user,
   outputMode,
 }) {
   const [showFulfillment, setShowFulfillment] = useState(false);
+  const [savingDesign, setSavingDesign] = useState(false);
   const [showListForm, setShowListForm] = useState(false);
   const [listTitle, setListTitle] = useState("");
   const [listPrice, setListPrice] = useState("9.99");
@@ -81,7 +84,7 @@ export default function ExportPanel({
 
   return (
     <div className="export-section">
-      <h2>{isPrint ? "Generate & Download" : "Export"}</h2>
+      <h2>{isPrint ? "Generate & Save" : "Export"}</h2>
 
       <button
         className="btn btn-primary btn-full generate-btn"
@@ -100,7 +103,69 @@ export default function ExportPanel({
       </button>
 
       {!canGenerate && !result && (
-        <p className="export-hint">Select a location above to generate</p>
+        <p className="export-hint">Search for a location and customize your design above</p>
+      )}
+
+      {/* Design ID — Save & Order via Etsy */}
+      {result && !designId && (
+        <button
+          className="btn btn-full"
+          onClick={async () => {
+            setSavingDesign(true);
+            await onSaveDesign();
+            setSavingDesign(false);
+          }}
+          disabled={savingDesign}
+          style={{
+            background: "linear-gradient(135deg, #27ae60, #2ecc71)",
+            color: "#fff",
+            border: "none",
+            fontWeight: "bold",
+            fontSize: "14px",
+            padding: "12px",
+            marginBottom: "8px",
+          }}
+        >
+          {savingDesign ? "Saving..." : "Save Design & Get Design ID"}
+        </button>
+      )}
+
+      {designId && (
+        <div style={{
+          background: "rgba(39, 174, 96, 0.1)",
+          border: "2px solid #27ae60",
+          borderRadius: "8px",
+          padding: "16px",
+          textAlign: "center",
+          marginBottom: "12px",
+        }}>
+          <div style={{ fontSize: "11px", color: "var(--text-secondary)", marginBottom: "4px", textTransform: "uppercase", letterSpacing: "1px" }}>
+            Your Design ID
+          </div>
+          <div style={{
+            fontSize: "28px",
+            fontWeight: "bold",
+            fontFamily: "var(--font-mono)",
+            color: "#27ae60",
+            letterSpacing: "2px",
+            marginBottom: "8px",
+          }}>
+            {designId}
+          </div>
+          <p style={{ fontSize: "12px", color: "var(--text-secondary)", margin: "0 0 8px" }}>
+            Use this ID when you order on our Etsy shop.
+            <br />Copy it now — you'll need it at checkout.
+          </p>
+          <button
+            className="btn btn-secondary"
+            onClick={() => {
+              navigator.clipboard.writeText(designId);
+            }}
+            style={{ fontSize: "12px", padding: "6px 16px" }}
+          >
+            Copy to Clipboard
+          </button>
+        </div>
       )}
 
       {result && (

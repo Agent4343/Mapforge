@@ -16,7 +16,7 @@ import PricingModal from "./components/PricingModal.jsx";
 import PurchasesView from "./components/PurchasesView.jsx";
 import {
   generateSVG, generatePin, generateStarMap, downloadSVG, downloadDXF, downloadThumbnail, downloadPrintPNG,
-  getProfile, logout, getToken, subscribe,
+  getProfile, logout, getToken, subscribe, saveDesign,
 } from "./services/api.js";
 
 const DEFAULT_CONFIG = {
@@ -99,6 +99,7 @@ export default function App() {
   const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [pinCoords, setPinCoords] = useState(null); // {lat, lon} for name_sign pin drop
   const [markers, setMarkers] = useState([]); // custom markers [{lat, lon, label, icon}]
+  const [designId, setDesignId] = useState(null); // saved Design ID for Etsy
 
   // Undo/redo state
   const [configHistory, setConfigHistory] = useState([config]);
@@ -339,6 +340,41 @@ export default function App() {
     }
   }, [selectedResult, config, pinCoords, markers]);
 
+  const handleSaveDesign = useCallback(async () => {
+    if (!result && !config.text) return;
+    try {
+      const designData = {
+        location_name: config.text || "Untitled",
+        osm_id: selectedResult?.osm_id || undefined,
+        osm_type: selectedResult?.osm_type || undefined,
+        lat: config.starLat || selectedResult?.lat || pinCoords?.lat || undefined,
+        lon: config.starLon || selectedResult?.lon || pinCoords?.lon || undefined,
+        product_type: config.productType,
+        board_size: config.boardSize,
+        color_theme: config.colorTheme,
+        display_text: config.text,
+        subtitle: config.subtitle || "",
+        font_family: config.fontFamily || "serif",
+        border_style: config.borderStyle || "none",
+        map_shape: config.mapShape || "rectangle",
+        show_coordinates: config.showCoordinates,
+        font_size_mm: config.fontSize,
+        custom_bg: config.colorTheme === "custom" ? config.customBg : undefined,
+        custom_land: config.colorTheme === "custom" ? config.customLand : undefined,
+        custom_water: config.colorTheme === "custom" ? config.customWater : undefined,
+        custom_road: config.colorTheme === "custom" ? config.customRoad : undefined,
+        custom_text: config.colorTheme === "custom" ? config.customText : undefined,
+        star_date: config.productType === "star_map" ? config.starDate : undefined,
+        star_time: config.productType === "star_map" ? config.starTime : undefined,
+        generated_file_id: result?.file_id || undefined,
+      };
+      const saved = await saveDesign(designData);
+      setDesignId(saved.design_id);
+    } catch (err) {
+      setError(err.message);
+    }
+  }, [result, config, selectedResult, pinCoords]);
+
   const handleDownload = useCallback(async () => {
     if (!result) return;
     // Always fetch CNC SVG from server — the in-memory svgContent may be
@@ -421,11 +457,9 @@ export default function App() {
       <header className="header">
         <div className="header-brand">
           <div>
-            <h1>Map<span>Forge</span></h1>
+            <h1>Map<span>Story</span> Studio</h1>
             <div className="subtitle">
-              {config.outputMode === "print"
-                ? "Custom Street Map Prints for Etsy & Wall Art"
-                : "Geographic SVG Generator for CNC Routing"}
+              Custom Map Prints for Life's Special Places
             </div>
           </div>
         </div>
@@ -585,6 +619,8 @@ export default function App() {
             onDownloadDXF={handleDownloadDXF}
             onDownloadThumbnail={handleDownloadThumbnail}
             onDownloadPrintPNG={handleDownloadPrintPNG}
+            onSaveDesign={handleSaveDesign}
+            designId={designId}
             canGenerate={!!selectedResult || (config.productType === "name_sign" && !!pinCoords) || config.productType === "star_map"}
             generating={generating}
             user={user}

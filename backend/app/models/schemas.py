@@ -435,6 +435,82 @@ class SellerDashboardResponse(BaseModel):
 
 # --- Subscription ---
 
+class SaveDesignRequest(BaseModel):
+    """Save a design configuration and get a Design ID for Etsy orders."""
+    location_name: str = Field(..., min_length=1, max_length=255)
+    osm_id: Optional[int] = None
+    osm_type: Optional[str] = None
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+    product_type: str = "city"
+    board_size: str = "print_16x20"
+    color_theme: str = "classic"
+    display_text: str = ""
+    subtitle: str = ""
+    font_family: str = "serif"
+    border_style: str = "none"
+    map_shape: str = "rectangle"
+    show_coordinates: bool = True
+    font_size_mm: float = 14.0
+    custom_bg: Optional[str] = None
+    custom_land: Optional[str] = None
+    custom_water: Optional[str] = None
+    custom_road: Optional[str] = None
+    custom_text: Optional[str] = None
+    star_date: Optional[str] = None
+    star_time: Optional[str] = None
+    creator_email: Optional[str] = None
+    generated_file_id: Optional[str] = None
+
+
+class SaveDesignResponse(BaseModel):
+    design_id: str
+    location_name: str
+    created_at: str
+
+
+class DesignDetailResponse(BaseModel):
+    design_id: str
+    location_name: str
+    product_type: str
+    board_size: str
+    color_theme: str
+    display_text: str
+    subtitle: Optional[str]
+    font_family: str
+    border_style: str
+    map_shape: str
+    show_coordinates: bool
+    font_size_mm: float
+    lat: Optional[float]
+    lon: Optional[float]
+    osm_id: Optional[int]
+    osm_type: Optional[str]
+    custom_bg: Optional[str]
+    custom_land: Optional[str]
+    custom_water: Optional[str]
+    custom_road: Optional[str]
+    custom_text: Optional[str]
+    star_date: Optional[str]
+    star_time: Optional[str]
+    generated_file_id: Optional[str]
+    order_status: str
+    etsy_order_id: Optional[str]
+    tracking_number: Optional[str]
+    created_at: str
+
+    class Config:
+        from_attributes = True
+
+
+class AdminUpdateDesignRequest(BaseModel):
+    """Admin: update order status, add tracking, etc."""
+    order_status: Optional[str] = None
+    etsy_order_id: Optional[str] = None
+    tracking_number: Optional[str] = None
+    notes: Optional[str] = None
+
+
 class SubscriptionRequest(BaseModel):
     plan: str  # maker_monthly, maker_annual, pro_monthly, pro_annual
     success_url: str

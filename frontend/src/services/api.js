@@ -414,6 +414,52 @@ async function aiDescribe(locationName, style, country = "", isCity = false, pro
   return resp.json();
 }
 
+// --- Designs (Design ID system for Etsy) ---
+
+async function saveDesign(params) {
+  const resp = await fetchWithTimeout(`${API_BASE}/designs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Failed to save design"));
+  }
+  return resp.json();
+}
+
+async function getDesign(designId) {
+  const resp = await fetchWithTimeout(`${API_BASE}/designs/${encodeURIComponent(designId)}`);
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Design not found"));
+  }
+  return resp.json();
+}
+
+async function listDesigns(page = 1, status = "", search = "") {
+  const params = new URLSearchParams({ page, per_page: 20 });
+  if (status) params.set("status", status);
+  if (search) params.set("search", search);
+  const resp = await fetchWithTimeout(`${API_BASE}/designs?${params}`);
+  if (!resp.ok) throw new Error("Failed to load designs");
+  return resp.json();
+}
+
+async function updateDesign(designId, updates) {
+  const resp = await fetchWithTimeout(`${API_BASE}/designs/${encodeURIComponent(designId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Update failed"));
+  }
+  return resp.json();
+}
+
 async function getAdminStats() {
   const resp = await fetchWithTimeout(`${API_BASE}/admin/stats`, {
     headers: { Authorization: `Bearer ${authToken}` },
@@ -435,4 +481,5 @@ export {
   getMyPurchases, updateListing, removeListing,
   getSellerDashboard, submitReview, getReviews,
   aiDescribe, getAdminStats,
+  saveDesign, getDesign, listDesigns, updateDesign,
 };

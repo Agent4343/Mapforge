@@ -15,7 +15,7 @@ from slowapi.errors import RateLimitExceeded
 from app.config import settings
 from app.database import init_db
 from app.logging_config import log
-from app.routers import admin, auth, generate, library, marketplace, search, webhooks
+from app.routers import admin, auth, designs, generate, library, marketplace, search, webhooks
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
@@ -108,6 +108,7 @@ async def add_security_headers(request: Request, call_next):
 # API Routers
 app.include_router(admin.router)
 app.include_router(auth.router)
+app.include_router(designs.router)
 app.include_router(search.router)
 app.include_router(generate.router)
 app.include_router(library.router)
