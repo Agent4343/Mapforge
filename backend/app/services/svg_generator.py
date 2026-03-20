@@ -345,12 +345,13 @@ def _generate_print_svg(
 
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # Poster layout dimensions — generous white mat for premium wall art feel
-    mat_pct = 0.07  # 7% white mat on each side — balanced empty space
+    # Poster layout dimensions — generous white mat for premium wall art feel.
+    # 12% mat creates the spacious, gallery-quality framing seen on Mapiful/Grafomap.
+    mat_pct = 0.12  # 12% white mat on each side — premium gallery spacing
     mat_x = round(board_w * mat_pct, 2)
     mat_y = round(board_h * mat_pct, 2)
-    # Extra space at bottom for text area
-    text_area_h = round(board_h * 0.12, 2)
+    # Extra space at bottom for text area (city name, subtitle, coordinates)
+    text_area_h = round(board_h * 0.13, 2)
     map_x = mat_x
     map_y = mat_y
     map_w = round(board_w - 2 * mat_x, 2)
@@ -536,17 +537,16 @@ def _generate_print_svg(
     lines.append('    <g id="geography_fill">')
     if is_street_map:
         # Street maps: fill the boundary polygon with land color.
-        # No visible stroke — the streets define the city shape naturally.
-        # The contrast between the filled land and the white mat background
-        # is enough to show the city boundary.
+        # Add a subtle stroke to define the city silhouette against the
+        # white mat — premium posters have a clean, visible city shape.
         for exterior, holes in polygons:
             path_d = _coords_to_path(exterior)
             for hole in holes:
                 path_d += " " + _coords_to_path(hole)
             lines.append(
                 f'      <path d="{path_d}"'
-                f' fill="{theme["land"]}" stroke="none"'
-                f' fill-rule="evenodd"/>'
+                f' fill="{theme["land"]}" stroke="{theme["land_stroke"]}"'
+                f' stroke-width="0.4" fill-rule="evenodd" stroke-linejoin="round"/>'
             )
     else:
         # Lake/province/park maps: filled polygon is the main visual
@@ -631,29 +631,30 @@ def _generate_print_svg(
     lines.append("")
 
     # Premium layered border frame around the map area
-    # Outer thin line (the mat border edge)
-    inset = 1.5  # mm inset for the inner accent line
+    # Use text_secondary for the frame so it visually connects to the title area
+    inset = 2.0  # mm inset for the outer accent line — wider gap for premium feel
     lines.append('  <g id="map_frame">')
+    # Inner frame (tight to map area)
     lines.append(
         f'    <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"'
-        f' fill="none" stroke="{theme["land_stroke"]}" stroke-width="0.6"/>'
+        f' fill="none" stroke="{theme["text_secondary"]}" stroke-width="0.5" opacity="0.6"/>'
     )
-    # Inner accent line (creates premium double-frame effect)
+    # Outer accent line (creates premium double-frame effect)
     lines.append(
         f'    <rect x="{round(map_x - inset, 2)}" y="{round(map_y - inset, 2)}"'
         f' width="{round(map_w + 2 * inset, 2)}" height="{round(map_h + 2 * inset, 2)}"'
-        f' fill="none" stroke="{theme["land_stroke"]}" stroke-width="0.25"'
-        f' opacity="0.5"/>'
+        f' fill="none" stroke="{theme["text_secondary"]}" stroke-width="0.2"'
+        f' opacity="0.3"/>'
     )
     lines.append("  </g>")
     lines.append("")
 
-    # Thin separator line between map and text area
-    sep_y = round(map_y + map_h + text_area_h * 0.18, 2)
-    sep_margin = round(board_w * 0.25, 2)  # 25% inset from each side
+    # Separator line between map and text area — visible and elegant
+    sep_y = round(map_y + map_h + text_area_h * 0.15, 2)
+    sep_margin = round(board_w * 0.20, 2)  # 20% inset from each side — wider line
     lines.append(
         f'  <line x1="{sep_margin}" y1="{sep_y}" x2="{round(board_w - sep_margin, 2)}" y2="{sep_y}"'
-        f' stroke="{theme["land_stroke"]}" stroke-width="0.3" opacity="0.4"/>'
+        f' stroke="{theme["text_secondary"]}" stroke-width="0.5" opacity="0.6"/>'
     )
     lines.append("")
 
@@ -662,23 +663,23 @@ def _generate_print_svg(
     # Vertically center text block within the text area (below separator)
     text_start_y = round(sep_y + text_area_h * 0.32, 2)
 
-    # Print-mode font sizes (larger for poster readability)
-    title_size = round(font_size_mm * 1.6, 2)
-    subtitle_size = round(font_size_mm * 0.65, 2)
-    coord_size = round(font_size_mm * 0.45, 2)
+    # Print-mode font sizes — larger and wider-spaced for premium poster feel
+    title_size = round(font_size_mm * 1.8, 2)
+    subtitle_size = round(font_size_mm * 0.6, 2)
+    coord_size = round(font_size_mm * 0.4, 2)
 
     lines.append('  <g id="poster_text">')
 
-    # City name (large, bold, uppercase, wide tracking)
+    # City name — large, bold, uppercase with wide tracking (premium poster style)
     lines.append(
         f'    <text x="{text_center_x}" y="{round(text_start_y, 2)}"'
         f' text-anchor="middle" font-family="{ff}"'
         f' font-size="{title_size}" font-weight="bold"'
-        f' letter-spacing="{round(title_size * 0.2, 2)}"'
+        f' letter-spacing="{round(title_size * 0.35, 2)}"'
         f' fill="{theme["text_primary"]}">{_escape_xml(location_name.upper())}</text>'
     )
 
-    next_y = text_start_y + title_size * 1.1
+    next_y = text_start_y + title_size * 1.2
 
     # Subtitle (state/country or custom tagline)
     if subtitle:
@@ -686,10 +687,10 @@ def _generate_print_svg(
             f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
             f' text-anchor="middle" font-family="{ff}"'
             f' font-size="{subtitle_size}" font-weight="300"'
-            f' letter-spacing="{round(subtitle_size * 0.25, 2)}"'
+            f' letter-spacing="{round(subtitle_size * 0.3, 2)}"'
             f' fill="{theme["text_secondary"]}">{_escape_xml(subtitle)}</text>'
         )
-        next_y += subtitle_size * 1.6
+        next_y += subtitle_size * 1.8
         layer_count += 1
 
     # GPS coordinates
@@ -802,18 +803,18 @@ def _render_print_water(lines: list[str], water_data: dict, processed: dict, the
             f' stroke-width="0.4" stroke-linejoin="round"/>'
         )
 
-    # Waterways (rivers, streams) — wider than streets, clearly colored
+    # Waterways (rivers, streams) — proportional to street widths, not overwhelming
     for coords, water_type, name in water_data.get("waterways", []):
         if len(coords) < 2:
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
         if water_type in ("river", "coastline"):
-            width = 0.9  # Wider than streets but not dominant
+            width = 0.35  # Similar to major roads — integrates into the map
         elif water_type == "canal":
-            width = 0.5
+            width = 0.20
         else:
-            width = 0.25  # streams
+            width = 0.10  # streams — same as tertiary roads
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="none" stroke="{theme["water_stroke"]}" stroke-width="{width}"'
@@ -827,56 +828,62 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
     """Render streets with themed poster colors for premium city map art.
 
     Print posters need a dense street grid — hundreds of thin lines that
-    form the visual texture of the city. This is fundamentally different
-    from CNC mode which needs few thick lines for toolpaths.
+    form the visual texture of the city. The key insight from premium map
+    posters (Mapiful, Grafomap) is that ALL streets use very similar widths
+    creating a unified "fabric" look. The hierarchy is subtle — major roads
+    are only ~2x wider than residential, not 4x.
 
-    Width hierarchy for print (all in mm on the poster):
-        motorway/trunk:  0.4-0.5mm  (visible but not dominant)
-        primary/secondary: 0.25-0.35mm (clear hierarchy)
-        tertiary:        0.18mm     (fine grid)
-        residential:     0.12mm     (background texture)
+    Width hierarchy for premium print (all in mm):
+        motorway/trunk:     0.20-0.22mm  (slightly thicker, same color)
+        primary/secondary:  0.14-0.18mm  (visible but not dominant)
+        tertiary:           0.10mm       (fine grid texture)
+        residential:        0.08mm       (background fabric)
     """
     transform = processed.get("transform")
 
-    # Print-specific width map — much thinner than CNC widths.
-    # The dense grid of thin lines IS the product for city map posters.
-    # Widths are deliberately close together for a uniform "fabric" look.
-    # Premium prints avoid any single road dominating the composition.
+    # Premium print widths — compressed hierarchy for unified fabric.
+    # The goal: when you squint, the streets form a cohesive texture,
+    # not isolated thick lines floating in empty space.
     PRINT_WIDTHS = {
-        "motorway": 0.35, "motorway_link": 0.25,
-        "trunk": 0.32, "trunk_link": 0.22,
-        "primary": 0.28, "primary_link": 0.2,
-        "secondary": 0.22, "secondary_link": 0.18,
-        "tertiary": 0.15, "tertiary_link": 0.12,
-        "residential": 0.1,
-        "unclassified": 0.08,
+        "motorway": 0.22, "motorway_link": 0.16,
+        "trunk": 0.20, "trunk_link": 0.15,
+        "primary": 0.18, "primary_link": 0.14,
+        "secondary": 0.14, "secondary_link": 0.11,
+        "tertiary": 0.10, "tertiary_link": 0.08,
+        "residential": 0.08,
+        "unclassified": 0.07,
+        "service": 0.05,
     }
+
+    # Use a single unified street color for the fabric look.
+    # Premium posters don't distinguish major/minor by color — only by width.
+    street_color = theme["street_major"]
 
     lines.append('    <g id="streets">')
 
-    # Major roads — visible hierarchy but not thick like CNC toolpaths
+    # Major roads
     for coords, road_class, width, name in streets_data.get("major_roads", []):
         if len(coords) < 2:
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
-        sw = PRINT_WIDTHS.get(road_class, 0.5)
+        sw = PRINT_WIDTHS.get(road_class, 0.14)
         lines.append(
             f'      <path d="{path_d}"'
-            f' fill="none" stroke="{theme["street_major"]}" stroke-width="{sw}"'
+            f' fill="none" stroke="{street_color}" stroke-width="{sw}"'
             f' stroke-linecap="round" stroke-linejoin="round"/>'
         )
 
-    # Minor roads — fine grid creating the city texture
+    # Minor roads — same color, thinner width creates the dense grid
     for coords, road_class, width, name in streets_data.get("minor_roads", []):
         if len(coords) < 2:
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
-        sw = PRINT_WIDTHS.get(road_class, 0.15)
+        sw = PRINT_WIDTHS.get(road_class, 0.08)
         lines.append(
             f'      <path d="{path_d}"'
-            f' fill="none" stroke="{theme["street_minor"]}" stroke-width="{sw}"'
+            f' fill="none" stroke="{street_color}" stroke-width="{sw}"'
             f' stroke-linecap="round" stroke-linejoin="round"/>'
         )
 
