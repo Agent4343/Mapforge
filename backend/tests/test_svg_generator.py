@@ -115,7 +115,7 @@ def test_svg_coordinates_shown():
         style=CutStyle.outline, show_coordinates=True, font_size_mm=14,
     )
     assert 'id="text_coordinates"' in result["svg"]
-    assert "\u00b0N" in result["svg"] or "°N" in result["svg"]
+    assert "\u00b0 N" in result["svg"] or "° N" in result["svg"]
 
 
 def test_svg_coordinates_hidden():
