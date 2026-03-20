@@ -561,19 +561,20 @@ def _generate_print_svg(
             )
     lines.append("    </g>")
 
-    # For city maps, clip streets and water to the city boundary polygon
+    # Water features — rendered OUTSIDE geo_clip so oceans, coastlines,
+    # and rivers surrounding the city boundary are visible.
+    if water_data:
+        _render_print_water(lines, water_data, processed, theme)
+
+    # Contour bands — also outside geo_clip (topography spans full map)
+    if contour_data:
+        _render_contour_bands(lines, contour_data, processed)
+
+    # For city maps, clip streets to the city boundary polygon
     # so they don't spill into surrounding suburbs from the bbox query.
     use_geo_clip = is_street_map and polygons
     if use_geo_clip:
         lines.append('    <g clip-path="url(#geo_clip)">')
-
-    # Water features — filled with water color
-    if water_data:
-        _render_print_water(lines, water_data, processed, theme)
-
-    # Contour bands
-    if contour_data:
-        _render_contour_bands(lines, contour_data, processed)
 
     # Streets — the hero visual for city maps
     if streets_data:
