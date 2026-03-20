@@ -440,10 +440,10 @@ def _generate_print_svg(
     lines.append("")
 
     # Layer: map area background
-    # For city/community maps, use the mat color so the city polygon alone
-    # defines the shape — creating a clean silhouette effect.
+    # For city/community maps, use water color as the base so surrounding
+    # ocean/rivers are visible, then the land polygon paints over it.
     # For lake/province/park maps, use the themed map_bg for atmosphere.
-    map_area_bg = theme["mat"] if is_street_map else theme["map_bg"]
+    map_area_bg = theme["water"] if is_street_map else theme["map_bg"]
     lines.append('  <g id="map_area">')
     lines.append(
         f'    <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"'
@@ -527,18 +527,18 @@ def _generate_print_svg(
     # All map content clipped to the map area
     lines.append(f'  <g clip-path="url(#map_clip)">')
 
-    # For city/community maps, the streets ARE the visual — the geography
-    # boundary should be subtle or invisible. The map_bg rectangle already
-    # provides the "land" color. The polygon is only used as a subtle boundary.
-    #
-    # For lake/province/park maps, the filled polygon IS the visual —
-    # the shape of the lake or province is the main content.
+    # Water features — rendered FIRST so they fill the ocean/river areas.
+    # The land polygon renders on top, creating a clean land-over-water look.
+    if water_data:
+        _render_print_water(lines, water_data, processed, theme)
 
+    # Contour bands — below land for subtle topographic texture
+    if contour_data:
+        _render_contour_bands(lines, contour_data, processed)
+
+    # Geography fill — land polygon on top of water, creating the city/region shape.
     lines.append('    <g id="geography_fill">')
     if is_street_map:
-        # Street maps: fill the boundary polygon with land color.
-        # Add a subtle stroke to define the city silhouette against the
-        # white mat — premium posters have a clean, visible city shape.
         for exterior, holes in polygons:
             path_d = _coords_to_path(exterior)
             for hole in holes:
@@ -546,10 +546,9 @@ def _generate_print_svg(
             lines.append(
                 f'      <path d="{path_d}"'
                 f' fill="{theme["land"]}" stroke="{theme["land_stroke"]}"'
-                f' stroke-width="0.4" fill-rule="evenodd" stroke-linejoin="round"/>'
+                f' stroke-width="0.5" fill-rule="evenodd" stroke-linejoin="round"/>'
             )
     else:
-        # Lake/province/park maps: filled polygon is the main visual
         for exterior, holes in polygons:
             path_d = _coords_to_path(exterior)
             for hole in holes:
@@ -560,15 +559,6 @@ def _generate_print_svg(
                 f' stroke-width="0.3" fill-rule="evenodd" stroke-linejoin="round"/>'
             )
     lines.append("    </g>")
-
-    # Water features — rendered OUTSIDE geo_clip so oceans, coastlines,
-    # and rivers surrounding the city boundary are visible.
-    if water_data:
-        _render_print_water(lines, water_data, processed, theme)
-
-    # Contour bands — also outside geo_clip (topography spans full map)
-    if contour_data:
-        _render_contour_bands(lines, contour_data, processed)
 
     # For city maps, clip streets to the city boundary polygon
     # so they don't spill into surrounding suburbs from the bbox query.
