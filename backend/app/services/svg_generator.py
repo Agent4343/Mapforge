@@ -321,6 +321,7 @@ def _generate_print_svg(
     board_w, board_h = processed["board_mm"]
     polygons = processed["polygons"]
     latlon = center_latlon or processed.get("center_latlon", (0, 0))
+    is_street_map = product_type in ("city", "community", "name_sign")
 
     path_count = sum(1 + len(holes) for _, holes in polygons)
     node_count = processed["node_count"]
@@ -474,7 +475,6 @@ def _generate_print_svg(
     #
     # For lake/province/park maps, the filled polygon IS the visual —
     # the shape of the lake or province is the main content.
-    is_street_map = product_type in ("city", "community", "name_sign")
 
     lines.append('    <g id="geography_fill">')
     if is_street_map:
