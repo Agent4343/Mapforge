@@ -5,7 +5,7 @@ const COLOR_THEMES = [
   { value: "rose_gold", label: "Rose Gold", bg: "#fdf0ee", road: "#a08078", land: "#e8c4bb" },
   { value: "midnight", label: "Midnight", bg: "#0f1923", road: "#c9d6df", land: "#1a3050" },
   { value: "sage", label: "Sage", bg: "#eef2ea", road: "#5a7050", land: "#a8c4a0" },
-  { value: "minimal", label: "B&W", bg: "#f0f0f0", road: "#333333", land: "#e0e0e0" },
+  { value: "minimal", label: "B&W", bg: "#f0f4f8", road: "#333333", land: "#e0e0e0" },
   { value: "navy_gold", label: "Navy & Gold", bg: "#0a1628", road: "#d4a843", land: "#1a2d52" },
   { value: "blush", label: "Blush", bg: "#fef0f0", road: "#c27c7c", land: "#e8b4b4" },
   { value: "ocean", label: "Ocean", bg: "#b8dce8", road: "#1a5276", land: "#4a9e6e" },
