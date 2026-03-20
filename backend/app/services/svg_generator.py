@@ -475,17 +475,17 @@ def _generate_print_svg(
     lines.append('    <g id="geography_fill">')
     if is_street_map:
         # Street maps: fill the boundary polygon with land color.
-        # Boundary stroke is very subtle — the streets define the city shape,
-        # not a heavy outline.
+        # No visible stroke — the streets define the city shape naturally.
+        # The contrast between the filled land and the white mat background
+        # is enough to show the city boundary.
         for exterior, holes in polygons:
             path_d = _coords_to_path(exterior)
             for hole in holes:
                 path_d += " " + _coords_to_path(hole)
             lines.append(
                 f'      <path d="{path_d}"'
-                f' fill="{theme["land"]}" stroke="{theme["land_stroke"]}"'
-                f' stroke-width="0.15" fill-rule="evenodd" stroke-linejoin="round"'
-                f' opacity="0.6"/>'
+                f' fill="{theme["land"]}" stroke="none"'
+                f' fill-rule="evenodd"/>'
             )
     else:
         # Lake/province/park maps: filled polygon is the main visual
