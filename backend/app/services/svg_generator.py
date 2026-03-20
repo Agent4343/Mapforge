@@ -447,6 +447,17 @@ def _generate_print_svg(
         f'<rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"/>'
         f"</clipPath>"
     )
+    # For city/community maps, also clip streets to the city boundary polygon
+    # so streets don't spill into surrounding suburbs outside the boundary.
+    if product_type in ("city", "community", "name_sign") and polygons:
+        geo_clip_d = ""
+        for exterior, holes in polygons:
+            geo_clip_d += _coords_to_path(exterior) + " "
+        lines.append(
+            f'    <clipPath id="geo_clip">'
+            f'<path d="{geo_clip_d.strip()}"/>'
+            f"</clipPath>"
+        )
     lines.append("  </defs>")
     lines.append("")
 
@@ -488,6 +499,12 @@ def _generate_print_svg(
             )
     lines.append("    </g>")
 
+    # For city maps, clip streets and water to the city boundary polygon
+    # so they don't spill into surrounding suburbs from the bbox query.
+    use_geo_clip = is_street_map and polygons
+    if use_geo_clip:
+        lines.append('    <g clip-path="url(#geo_clip)">')
+
     # Water features — filled with water color
     if water_data:
         _render_print_water(lines, water_data, processed, theme)
@@ -499,6 +516,9 @@ def _generate_print_svg(
     # Streets — the hero visual for city maps
     if streets_data:
         _render_print_streets(lines, streets_data, processed, theme)
+
+    if use_geo_clip:
+        lines.append('    </g>')
 
     # Markers — remap coordinates from board space to poster map space
     def _remap_point(x, y):
