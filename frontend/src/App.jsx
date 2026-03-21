@@ -16,6 +16,7 @@ import PricingModal from "./components/PricingModal.jsx";
 import PurchasesView from "./components/PurchasesView.jsx";
 import {
   generateSVG, generatePin, downloadSVG, downloadDXF, downloadThumbnail, downloadPrintPNG,
+  downloadEtsyListing, downloadPreview,
   getProfile, logout, getToken, subscribe,
 } from "./services/api.js";
 
@@ -41,6 +42,9 @@ const DEFAULT_CONFIG = {
   colorTheme: "classic",
   heartLat: null,
   heartLon: null,
+  includeBleed: false,
+  includeCropMarks: false,
+  printDPI: 300,
 };
 
 function loadSavedConfig() {
@@ -222,6 +226,9 @@ export default function App() {
           include_streets: config.includeStreets,
           output_mode: config.outputMode || "cnc",
           color_theme: config.colorTheme || "classic",
+          include_bleed: config.includeBleed || false,
+          include_crop_marks: config.includeCropMarks || false,
+          print_dpi: config.printDPI || 300,
         };
         if (config.boardSize === "custom") {
           pinParams.board_width_inches = config.customWidth || 16;
@@ -264,6 +271,9 @@ export default function App() {
           color_theme: config.colorTheme || "classic",
           heart_lat: config.heartLat || undefined,
           heart_lon: config.heartLon || undefined,
+          include_bleed: config.includeBleed || false,
+          include_crop_marks: config.includeCropMarks || false,
+          print_dpi: config.printDPI || 300,
         };
         if (config.boardSize === "custom") {
           params.board_width_inches = config.customWidth || 16;
@@ -327,6 +337,26 @@ export default function App() {
     try {
       const blob = await downloadPrintPNG(result.file_id);
       _triggerDownload(blob, config.text + "_print_300dpi", "png");
+    } catch (err) {
+      setError(err.message);
+    }
+  }, [result, config.text]);
+
+  const handleDownloadEtsyListing = useCallback(async () => {
+    if (!result) return;
+    try {
+      const blob = await downloadEtsyListing(result.file_id);
+      _triggerDownload(blob, config.text + "_etsy_listing", "png");
+    } catch (err) {
+      setError(err.message);
+    }
+  }, [result, config.text]);
+
+  const handleDownloadPreview = useCallback(async () => {
+    if (!result) return;
+    try {
+      const blob = await downloadPreview(result.file_id);
+      _triggerDownload(blob, config.text + "_preview", "png");
     } catch (err) {
       setError(err.message);
     }
@@ -535,10 +565,13 @@ export default function App() {
             onDownloadDXF={handleDownloadDXF}
             onDownloadThumbnail={handleDownloadThumbnail}
             onDownloadPrintPNG={handleDownloadPrintPNG}
+            onDownloadEtsyListing={handleDownloadEtsyListing}
+            onDownloadPreview={handleDownloadPreview}
             canGenerate={!!selectedResult || (config.productType === "name_sign" && !!pinCoords)}
             generating={generating}
             user={user}
             outputMode={config.outputMode}
+            printDPI={config.printDPI}
           />
         </div>
         <div className="panel-right">

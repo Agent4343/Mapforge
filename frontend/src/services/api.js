@@ -220,6 +220,24 @@ async function downloadPrintPNG(fileId) {
   return resp.blob();
 }
 
+async function downloadEtsyListing(fileId) {
+  const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}/etsy`);
+  if (!resp.ok) throw new Error("Etsy listing image download failed");
+  return resp.blob();
+}
+
+async function downloadPreview(fileId) {
+  const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}/preview`);
+  if (!resp.ok) throw new Error("Preview download failed");
+  return resp.blob();
+}
+
+async function getPrintSizes() {
+  const resp = await fetchWithTimeout(`${API_BASE}/print-sizes`);
+  if (!resp.ok) throw new Error("Failed to load print sizes");
+  return resp.json();
+}
+
 // --- Library ---
 
 async function getLibrary(page = 1, perPage = 20, filters = {}) {
@@ -379,6 +397,7 @@ export {
   setToken, getToken, register, login, logout, getProfile, requestPasswordReset, resetPassword, subscribe,
   searchLocations, generateSVG, generatePin, batchGenerate,
   downloadSVG, downloadDXF, downloadThumbnail, downloadPrintPNG,
+  downloadEtsyListing, downloadPreview, getPrintSizes,
   getLibrary, deleteLibraryFile,
   browseMarketplace, createListing, purchaseListing,
   getMyPurchases, updateListing, removeListing,

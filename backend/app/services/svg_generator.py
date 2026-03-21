@@ -51,6 +51,8 @@ def generate_svg(
     output_mode: str = "cnc",
     color_theme: str = "classic",
     product_type: str = "lake",
+    include_bleed: bool = False,
+    include_crop_marks: bool = False,
 ) -> dict:
     """Generate an SVG string from processed geometry.
 
@@ -82,6 +84,8 @@ def generate_svg(
             heart_location=heart_location,
             color_theme=color_theme,
             product_type=product_type,
+            include_bleed=include_bleed,
+            include_crop_marks=include_crop_marks,
         )
 
     return _generate_cnc_svg(
@@ -308,6 +312,8 @@ def _generate_print_svg(
     heart_location: tuple[float, float] | None = None,
     color_theme: str = "classic",
     product_type: str = "lake",
+    include_bleed: bool = False,
+    include_crop_marks: bool = False,
 ) -> dict:
     """Generate a poster-style print SVG with themed colors, filled regions,
     and clean typography matching premium city map wall art.
@@ -412,20 +418,35 @@ def _generate_print_svg(
     # Resolve font family
     ff = FONT_FAMILIES.get(font_family, FONT_FAMILIES["sans"])
 
+    # Calculate bleed dimensions
+    bleed = BLEED_MM if include_bleed else 0.0
+    svg_w = board_w + 2 * bleed
+    svg_h = board_h + 2 * bleed
+
     lines = []
     lines.append('<?xml version="1.0" encoding="UTF-8"?>')
-    lines.append(
+    svg_attrs = (
         f'<svg xmlns="http://www.w3.org/2000/svg"'
-        f' width="{board_w}mm" height="{board_h}mm"'
-        f' viewBox="0 0 {board_w} {board_h}">'
+        f' width="{svg_w}mm" height="{svg_h}mm"'
+        f' viewBox="0 0 {svg_w} {svg_h}"'
     )
+    if include_bleed:
+        svg_attrs += ' color-profile="sRGB"'
+    svg_attrs += '>'
+    lines.append(svg_attrs)
 
     # Metadata
     lines.append(f"  <!-- MapForge Print Poster v1.0 | Theme: {color_theme} -->")
     lines.append(f"  <!-- Location: {_escape_xml(location_name)} -->")
     lines.append("  <!-- Geographic data: © OpenStreetMap contributors (ODbL) -->")
+    if include_bleed:
+        lines.append(f"  <!-- Bleed: {BLEED_MM}mm on all sides -->")
     lines.append(f"  <!-- Generated: {timestamp} -->")
     lines.append("")
+
+    # When bleed is active, offset all content by the bleed margin
+    if include_bleed:
+        lines.append(f'  <g transform="translate({bleed}, {bleed})">')
 
     # Layer: white mat background (entire poster)
     lines.append('  <g id="poster_background">')
@@ -632,6 +653,17 @@ def _generate_print_svg(
 
     lines.append("  </g>")
     lines.append("")
+
+    # Close the bleed offset group
+    if include_bleed:
+        lines.append("  </g>")  # close bleed translate group
+        lines.append("")
+
+    # Render crop marks outside the bleed group (in full SVG coordinate space)
+    if include_crop_marks:
+        _render_crop_marks(lines, board_w, board_h, bleed)
+        lines.append("")
+
     lines.append("</svg>")
 
     svg_str = "\n".join(lines)
@@ -642,6 +674,60 @@ def _generate_print_svg(
         "path_count": path_count,
         "layer_count": layer_count,
     }
+
+
+def _render_crop_marks(
+    lines: list[str],
+    board_w: float,
+    board_h: float,
+    bleed: float,
+) -> None:
+    """Render crop marks (trim guides) at the four corners of the print area.
+
+    Crop marks are short lines placed just outside the bleed area to indicate
+    where the paper should be trimmed after printing. Each corner gets two
+    perpendicular lines (horizontal and vertical).
+
+    Args:
+        lines: SVG lines list to append to.
+        board_w: Board width in mm (trim size).
+        board_h: Board height in mm (trim size).
+        bleed: Bleed margin in mm.
+    """
+    offset = CROP_MARK_OFFSET
+    length = CROP_MARK_LENGTH
+
+    lines.append('  <g id="crop_marks" stroke="#000000" stroke-width="0.25">')
+
+    # The trim edges are at (bleed, bleed) to (bleed+board_w, bleed+board_h)
+    trim_left = bleed
+    trim_top = bleed
+    trim_right = bleed + board_w
+    trim_bottom = bleed + board_h
+
+    corners = [
+        # (corner_x, corner_y, h_dir, v_dir)
+        (trim_left, trim_top, -1, -1),       # top-left
+        (trim_right, trim_top, 1, -1),        # top-right
+        (trim_left, trim_bottom, -1, 1),      # bottom-left
+        (trim_right, trim_bottom, 1, 1),      # bottom-right
+    ]
+
+    for cx, cy, hd, vd in corners:
+        # Horizontal crop mark
+        h_start = round(cx + hd * offset, 2)
+        h_end = round(cx + hd * (offset + length), 2)
+        lines.append(
+            f'    <line x1="{h_start}" y1="{cy}" x2="{h_end}" y2="{cy}"/>'
+        )
+        # Vertical crop mark
+        v_start = round(cy + vd * offset, 2)
+        v_end = round(cy + vd * (offset + length), 2)
+        lines.append(
+            f'    <line x1="{cx}" y1="{v_start}" x2="{cx}" y2="{v_end}"/>'
+        )
+
+    lines.append("  </g>")
 
 
 def _render_geography(lines: list[str], polygons: list, style: CutStyle):

@@ -8,10 +8,13 @@ export default function ExportPanel({
   onDownloadDXF,
   onDownloadThumbnail,
   onDownloadPrintPNG,
+  onDownloadEtsyListing,
+  onDownloadPreview,
   canGenerate,
   generating,
   user,
   outputMode,
+  printDPI,
 }) {
   const [showListForm, setShowListForm] = useState(false);
   const [listTitle, setListTitle] = useState("");
@@ -121,6 +124,18 @@ export default function ExportPanel({
               <span className="file-stat-label">Layers</span>
               <span className="file-stat-value">{result.layer_count}</span>
             </div>
+            {isPrint && result.print_pixels && (
+              <div className="file-stat">
+                <span className="file-stat-label">Pixels</span>
+                <span className="file-stat-value">{result.print_pixels[0]}&times;{result.print_pixels[1]}</span>
+              </div>
+            )}
+            {isPrint && result.print_dpi && (
+              <div className="file-stat">
+                <span className="file-stat-label">DPI</span>
+                <span className="file-stat-value">{result.print_dpi}</span>
+              </div>
+            )}
           </div>
 
           {/* Download Buttons */}
@@ -130,7 +145,12 @@ export default function ExportPanel({
                 <>
                   {result.print_png_available && (
                     <button className="btn btn-primary" onClick={onDownloadPrintPNG}>
-                      Download Print PNG (300 DPI)
+                      Download Print PNG ({printDPI || 300} DPI)
+                    </button>
+                  )}
+                  {result.etsy_listing_available && (
+                    <button className="btn btn-secondary" onClick={onDownloadEtsyListing}>
+                      Etsy Listing (2700x2025)
                     </button>
                   )}
                   {result.thumbnail_available && (
@@ -138,6 +158,9 @@ export default function ExportPanel({
                       Etsy Mockup PNG
                     </button>
                   )}
+                  <button className="btn btn-secondary" onClick={onDownloadPreview}>
+                    Watermarked Preview
+                  </button>
                   <button className="btn btn-secondary" onClick={onDownload}>
                     SVG Source
                   </button>

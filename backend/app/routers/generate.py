@@ -28,7 +28,11 @@ from app.services.street_fetcher import fetch_streets
 from app.services.water_fetcher import fetch_water_features
 from app.services.contour_fetcher import fetch_contour_lines, generate_depth_bands
 from app.services.file_storage import store_file, retrieve_file
-from app.services.thumbnail_generator import generate_thumbnail, generate_print_image, COLOR_THEMES
+from app.services.thumbnail_generator import (
+    generate_thumbnail, generate_print_image, generate_etsy_listing_image,
+    generate_watermarked_preview, calculate_print_pixels,
+    COLOR_THEMES, PRINT_SIZE_PIXELS,
+)
 
 router = APIRouter(prefix="/api/v1", tags=["generate"])
 limiter = Limiter(key_func=get_remote_address)
@@ -283,6 +287,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         output_mode="print",
         color_theme=req.color_theme,
         product_type=req.product_type.value,
+        include_bleed=req.include_bleed,
+        include_crop_marks=req.include_crop_marks,
     )
 
     # Store SVG
@@ -331,11 +337,29 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             print_svg_result["svg"],
             color_theme=req.color_theme,
             skip_remap=True,  # Print SVG already has themed colors
+            board_size=req.board_size.value,
+            dpi=req.print_dpi,
         )
         print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
         await store_file(print_png_key, print_bytes, content_type="image/png")
     except Exception as e:
         log.warning(f"Print PNG generation failed (non-fatal): {e}")
+
+    # Generate Etsy listing image (4:3 ratio for Etsy grid)
+    etsy_key = None
+    try:
+        etsy_bytes = generate_etsy_listing_image(print_svg_result["svg"])
+        etsy_key = svg_key.replace("svg/", "etsy/").replace(".svg", "_etsy.png")
+        await store_file(etsy_key, etsy_bytes, content_type="image/png")
+    except Exception as e:
+        log.warning(f"Etsy listing image generation failed (non-fatal): {e}")
+
+    # Calculate print pixel dimensions for the response
+    print_pixels = None
+    if req.board_size.value in PRINT_SIZE_PIXELS:
+        base_w, base_h = PRINT_SIZE_PIXELS[req.board_size.value]
+        scale = req.print_dpi / 300
+        print_pixels = (int(base_w * scale), int(base_h * scale))
 
     # Parse province from location name for filtering
     province = _extract_province(location_name)
@@ -396,12 +420,15 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         dxf_available=dxf_key is not None,
         thumbnail_available=thumbnail_key is not None,
         print_png_available=print_png_key is not None,
+        etsy_listing_available=etsy_key is not None,
         file_id=file_id,
         location_name=location_name,
         dimensions_mm=(board_w, board_h),
         node_count=result["node_count"],
         path_count=result["path_count"],
         layer_count=result["layer_count"],
+        print_dpi=req.print_dpi,
+        print_pixels=print_pixels,
         warnings=warnings,
     )
 
@@ -522,6 +549,8 @@ async def generate_pin(
         output_mode="print",
         color_theme=req.color_theme,
         product_type="name_sign",
+        include_bleed=req.include_bleed,
+        include_crop_marks=req.include_crop_marks,
     )
 
     # Store SVG
@@ -567,11 +596,29 @@ async def generate_pin(
             print_svg_result["svg"],
             color_theme=req.color_theme,
             skip_remap=True,
+            board_size=req.board_size.value,
+            dpi=req.print_dpi,
         )
         print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
         await store_file(print_png_key, print_bytes, content_type="image/png")
     except Exception as e:
         log.warning(f"Print PNG generation failed (non-fatal): {e}")
+
+    # Generate Etsy listing image for pin maps
+    etsy_key = None
+    try:
+        etsy_bytes = generate_etsy_listing_image(print_svg_result["svg"])
+        etsy_key = svg_key.replace("svg/", "etsy/").replace(".svg", "_etsy.png")
+        await store_file(etsy_key, etsy_bytes, content_type="image/png")
+    except Exception as e:
+        log.warning(f"Etsy listing image generation failed (non-fatal): {e}")
+
+    # Calculate print pixel dimensions for the response
+    pin_print_pixels = None
+    if req.board_size.value in PRINT_SIZE_PIXELS:
+        base_w, base_h = PRINT_SIZE_PIXELS[req.board_size.value]
+        scale = req.print_dpi / 300
+        pin_print_pixels = (int(base_w * scale), int(base_h * scale))
 
     # Save to database
     file_id = None
@@ -619,12 +666,15 @@ async def generate_pin(
         dxf_available=dxf_key is not None,
         thumbnail_available=thumbnail_key is not None,
         print_png_available=print_png_key is not None,
+        etsy_listing_available=etsy_key is not None,
         file_id=file_id,
         location_name=location_name,
         dimensions_mm=(board_w, board_h),
         node_count=result["node_count"],
         path_count=result["path_count"],
         layer_count=result["layer_count"],
+        print_dpi=req.print_dpi,
+        print_pixels=pin_print_pixels,
     )
 
 
@@ -721,7 +771,7 @@ async def download(
     if content is None:
         raise HTTPException(status_code=404, detail="File not found in storage.")
 
-    filename = file_record.location_name.replace(" ", "_").lower() + f".{ext}"
+    filename = _seo_filename(file_record.location_name, ext)
     return Response(
         content=content,
         media_type=media_type,
@@ -731,6 +781,105 @@ async def download(
             "X-MapForge-Paths": str(file_record.path_count),
         },
     )
+
+
+@router.get("/download/{file_id}/etsy")
+async def download_etsy_listing(
+    file_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Download the Etsy-optimized listing image (2700x2025 PNG, 4:3 ratio)."""
+    result = await db.execute(
+        select(GeneratedFile).where(GeneratedFile.id == file_id)
+    )
+    file_record = result.scalar_one_or_none()
+    if not file_record:
+        raise HTTPException(status_code=404, detail="File not found.")
+
+    # Derive etsy key from svg key
+    etsy_key = file_record.svg_storage_key.replace("svg/", "etsy/").replace(".svg", "_etsy.png")
+    content = await retrieve_file(etsy_key)
+    if content is None:
+        raise HTTPException(status_code=404, detail="Etsy listing image not available. Regenerate the map to create one.")
+
+    filename = _seo_filename(file_record.location_name, "png", suffix="etsy_listing_2700x2025")
+    return Response(
+        content=content,
+        media_type="image/png",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
+
+
+@router.get("/download/{file_id}/preview")
+async def download_preview(
+    file_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Download a watermarked preview image (not for commercial use)."""
+    result = await db.execute(
+        select(GeneratedFile).where(GeneratedFile.id == file_id)
+    )
+    file_record = result.scalar_one_or_none()
+    if not file_record:
+        raise HTTPException(status_code=404, detail="File not found.")
+
+    # Get the print SVG to generate watermarked preview on the fly
+    svg_bytes = await retrieve_file(file_record.svg_storage_key)
+    if svg_bytes is None:
+        raise HTTPException(status_code=404, detail="SVG file not found in storage.")
+
+    try:
+        preview_bytes = generate_watermarked_preview(svg_bytes.decode("utf-8"))
+    except Exception as e:
+        log.error(f"Watermarked preview generation failed: {e}")
+        raise HTTPException(status_code=500, detail="Preview generation failed.")
+
+    filename = _seo_filename(file_record.location_name, "png", suffix="preview_watermarked")
+    return Response(
+        content=preview_bytes,
+        media_type="image/png",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
+
+
+@router.get("/print-sizes")
+async def list_print_sizes():
+    """List available print sizes with pixel dimensions at 300 and 600 DPI."""
+    sizes = {}
+    for size_key, (w, h) in PRINT_SIZE_PIXELS.items():
+        # Parse inches from the key (e.g. "print_8x10" → 8, 10)
+        label = size_key.replace("print_", "").replace("x", '" x ') + '"'
+        sizes[size_key] = {
+            "label": label,
+            "pixels_300dpi": {"width": w, "height": h},
+            "pixels_600dpi": {"width": w * 2, "height": h * 2},
+        }
+    return sizes
+
+
+def _seo_filename(location_name: str, ext: str, suffix: str = "") -> str:
+    """Generate an SEO-friendly filename from location name.
+
+    Produces clean, hyphenated filenames suitable for Etsy digital downloads
+    where the filename appears in the customer's download folder.
+
+    Examples:
+        _seo_filename("Lake Muskoka", "png") → "mapforge-lake-muskoka.png"
+        _seo_filename("Ottawa", "png", "etsy_listing") → "mapforge-ottawa-etsy_listing.png"
+    """
+    import re as _re
+    clean = _re.sub(r'[^a-zA-Z0-9\s-]', '', location_name)
+    clean = _re.sub(r'\s+', '-', clean.strip()).lower()
+    if not clean:
+        clean = "map"
+    parts = ["mapforge", clean]
+    if suffix:
+        parts.append(suffix)
+    return "-".join(parts) + f".{ext}"
 
 
 @router.get("/download/{file_id}/thumbnail")

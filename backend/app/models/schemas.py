@@ -150,6 +150,11 @@ class OutputMode(str, Enum):
     print = "print"
 
 
+class PrintDPI(int, Enum):
+    standard = 300
+    high = 600
+
+
 class GenerateRequest(BaseModel):
     osm_id: int
     osm_type: str = "relation"
@@ -177,6 +182,10 @@ class GenerateRequest(BaseModel):
     color_theme: str = "classic"  # classic, modern_dark, rose_gold, midnight, sage, minimal
     heart_lat: Optional[float] = Field(None, ge=-90, le=90)
     heart_lon: Optional[float] = Field(None, ge=-180, le=180)
+    # Print production fields
+    include_bleed: bool = False
+    include_crop_marks: bool = False
+    print_dpi: int = Field(300, description="Print DPI (300 standard, 600 high)")
 
     @field_validator("text")
     @classmethod
@@ -205,6 +214,10 @@ class PinGenerateRequest(BaseModel):
     include_streets: bool = True
     output_mode: str = "cnc"  # "cnc" or "print"
     color_theme: str = "classic"
+    # Print production fields
+    include_bleed: bool = False
+    include_crop_marks: bool = False
+    print_dpi: int = Field(300, description="Print DPI (300 standard, 600 high)")
 
 
 class GenerateResponse(BaseModel):
@@ -212,12 +225,15 @@ class GenerateResponse(BaseModel):
     dxf_available: bool = False
     thumbnail_available: bool = False
     print_png_available: bool = False
+    etsy_listing_available: bool = False
     file_id: str
     location_name: str
     dimensions_mm: tuple[float, float]
     node_count: int
     path_count: int
     layer_count: int
+    print_dpi: Optional[int] = None
+    print_pixels: Optional[tuple[int, int]] = None
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -238,6 +254,28 @@ class BatchGenerateResponse(BaseModel):
     total: int
     succeeded: int
     failed: int
+
+
+# --- Multi-Size Export ---
+
+class MultiSizeExportRequest(BaseModel):
+    """Request to export a design at multiple print sizes."""
+    file_id: str
+    sizes: list[str] = Field(
+        default_factory=lambda: ["print_8x10", "print_11x14", "print_16x20"],
+        description="List of board size keys to export",
+    )
+    dpi: int = Field(300, description="Print DPI (300 or 600)")
+
+
+class MultiSizeExportResponse(BaseModel):
+    """Response with download keys for each exported size."""
+    file_id: str
+    exports: dict[str, str] = Field(
+        default_factory=dict,
+        description="Map of size key to storage key",
+    )
+    failed: list[str] = Field(default_factory=list)
 
 
 # --- Template Library ---

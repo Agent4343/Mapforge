@@ -395,6 +395,52 @@ export default function CustomizePanel({ config, onChange, user }) {
           </div>
         </div>
       )}
+
+      {/* Print Production — DPI, bleed, crop marks for professional printing */}
+      {isPrint && (
+        <div className="customize-group">
+          <div className="customize-group-label">Print Production</div>
+
+          <div className="control-group">
+            <label>Print DPI</label>
+            <select
+              value={config.printDPI || 300}
+              onChange={(e) => update("printDPI", Number(e.target.value))}
+            >
+              <option value={300}>300 DPI (Standard)</option>
+              <option value={600}>600 DPI (High Quality)</option>
+            </select>
+          </div>
+
+          <div className="toggle-row">
+            <label>Include Bleed (3mm)</label>
+            <label className="toggle-switch">
+              <input
+                type="checkbox"
+                checked={config.includeBleed || false}
+                onChange={(e) => update("includeBleed", e.target.checked)}
+              />
+              <span className="toggle-slider" />
+            </label>
+          </div>
+
+          <div className="toggle-row">
+            <label>Include Crop Marks</label>
+            <label className="toggle-switch">
+              <input
+                type="checkbox"
+                checked={config.includeCropMarks || false}
+                onChange={(e) => update("includeCropMarks", e.target.checked)}
+              />
+              <span className="toggle-slider" />
+            </label>
+          </div>
+
+          <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: "8px 0 0" }}>
+            Enable bleed and crop marks for professional print shops. Standard prints do not need these.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
