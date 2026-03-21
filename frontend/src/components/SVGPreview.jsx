@@ -3,8 +3,8 @@ import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 // Color theme definitions matching backend COLOR_THEMES
 const THEME_COLOR_MAPS = {
   classic: {
-    bg: "#f8f6f2",
-    map: { "#2a2a2a": "#f0ebe0", "#1a1a1a": "#3a3a3a", "#d4e6f1": "#a8cce8", "#7fb3d3": "#88b4d4", "#333333": "#3a3a3a", "#555555": "#888888", "#444444": "#555555", "#cccccc": "#ddd6c8", "#666666": "#666666" },
+    bg: "#f5f3ee",
+    map: { "#2a2a2a": "#ece6d6", "#1a1a1a": "#2a2a2a", "#d4e6f1": "#8fb8d8", "#7fb3d3": "#6a9ec4", "#333333": "#2a2a2a", "#555555": "#777777", "#444444": "#555555", "#cccccc": "#d4ccb8", "#666666": "#555555" },
   },
   modern_dark: {
     bg: "#1a1a2e",

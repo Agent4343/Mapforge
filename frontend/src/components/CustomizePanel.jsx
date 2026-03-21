@@ -1,6 +1,6 @@
 // Swatch colors match the actual poster theme output (from backend COLOR_THEMES.poster)
 const COLOR_THEMES = [
-  { value: "classic", label: "Classic", bg: "#dceef8", road: "#ffffff", land: "#8cc084" },
+  { value: "classic", label: "Classic", bg: "#8fb8d8", road: "#2a2a2a", land: "#ece6d6" },
   { value: "modern_dark", label: "Modern Dark", bg: "#1a1a2e", road: "#e2e8f0", land: "#2a2a50" },
   { value: "rose_gold", label: "Rose Gold", bg: "#fdf0ee", road: "#a08078", land: "#e8c4bb" },
   { value: "midnight", label: "Midnight", bg: "#0f1923", road: "#c9d6df", land: "#1a3050" },

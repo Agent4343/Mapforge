@@ -19,7 +19,11 @@ import {
   getProfile, logout, getToken, subscribe, saveDesign,
 } from "./services/api.js";
 
+// Bump this version when theme defaults change to reset stale localStorage
+const CONFIG_VERSION = 2;
+
 const DEFAULT_CONFIG = {
+  _v: CONFIG_VERSION,
   text: "",
   subtitle: "",
   boardSize: "print_16x20",
@@ -61,7 +65,15 @@ const DEFAULT_CONFIG = {
 function loadSavedConfig() {
   try {
     const saved = localStorage.getItem("mapforge_config");
-    if (saved) return { ...DEFAULT_CONFIG, ...JSON.parse(saved) };
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      // Reset to defaults if config version changed (theme/default updates)
+      if (parsed._v !== CONFIG_VERSION) {
+        localStorage.removeItem("mapforge_config");
+        return DEFAULT_CONFIG;
+      }
+      return { ...DEFAULT_CONFIG, ...parsed };
+    }
   } catch {}
   return DEFAULT_CONFIG;
 }
