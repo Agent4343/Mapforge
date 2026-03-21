@@ -810,16 +810,17 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
     """
     transform = processed.get("transform")
 
-    # Street widths — fine lines create the dense "fabric" texture of the city
+    # Street widths — bold white lines on colored land create the iconic
+    # Mapiful-style street network look. All streets are prominent and visible.
     PRINT_WIDTHS = {
-        "motorway": 0.50, "motorway_link": 0.35,
-        "trunk": 0.45, "trunk_link": 0.30,
-        "primary": 0.40, "primary_link": 0.30,
-        "secondary": 0.30, "secondary_link": 0.22,
-        "tertiary": 0.22, "tertiary_link": 0.18,
-        "residential": 0.18,
-        "unclassified": 0.15,
-        "service": 0.10,
+        "motorway": 1.2, "motorway_link": 0.9,
+        "trunk": 1.1, "trunk_link": 0.8,
+        "primary": 1.0, "primary_link": 0.7,
+        "secondary": 0.8, "secondary_link": 0.6,
+        "tertiary": 0.6, "tertiary_link": 0.5,
+        "residential": 0.45,
+        "unclassified": 0.40,
+        "service": 0.30,
     }
 
     # Use themed street colors — dark streets on light land, light on dark

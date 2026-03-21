@@ -4,7 +4,7 @@ import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 const THEME_COLOR_MAPS = {
   classic: {
     bg: "#f5f3ee",
-    map: { "#2a2a2a": "#ece6d6", "#1a1a1a": "#2a2a2a", "#d4e6f1": "#8fb8d8", "#7fb3d3": "#6a9ec4", "#333333": "#2a2a2a", "#555555": "#777777", "#444444": "#555555", "#cccccc": "#d4ccb8", "#666666": "#555555" },
+    map: { "#2a2a2a": "#ece6d6", "#1a1a1a": "#ffffff", "#d4e6f1": "#8fb8d8", "#7fb3d3": "#6a9ec4", "#333333": "#ffffff", "#555555": "#ffffff", "#444444": "#555555", "#cccccc": "#d4ccb8", "#666666": "#555555" },
   },
   modern_dark: {
     bg: "#1a1a2e",

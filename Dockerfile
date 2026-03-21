@@ -1,5 +1,5 @@
 # Stage 1: Build frontend
-# build: 2026-03-21-v1
+# build: 2026-03-21-v2
 FROM node:22-alpine AS frontend-build
 
 WORKDIR /frontend
