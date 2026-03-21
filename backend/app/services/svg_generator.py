@@ -255,7 +255,7 @@ def _generate_cnc_svg(
         lat, lon = latlon
         lat_dir = "N" if lat >= 0 else "S"
         lon_dir = "W" if lon < 0 else "E"
-        coord_text = f"{abs(lat):.6f}\u00b0 {lat_dir}  /  {abs(lon):.6f}\u00b0 {lon_dir}"
+        coord_text = f"{abs(lat):.4f}\u00b0 {lat_dir}  /  {abs(lon):.4f}\u00b0 {lon_dir}"
 
         lines.append("")
         lines.append("  <!-- Layer: text_coordinates -->")
@@ -537,27 +537,21 @@ def _generate_print_svg(
         _render_contour_bands(lines, contour_data, processed)
 
     # Geography fill — land polygon on top of water, creating the city/region shape.
+    # Use both fill attribute AND inline style for maximum browser compatibility.
+    land_color = theme["land"]
+    land_stroke = theme["land_stroke"]
+    stroke_w = "0.5" if is_street_map else "0.3"
     lines.append('    <g id="geography_fill">')
-    if is_street_map:
-        for exterior, holes in polygons:
-            path_d = _coords_to_path(exterior)
-            for hole in holes:
-                path_d += " " + _coords_to_path(hole)
-            lines.append(
-                f'      <path d="{path_d}"'
-                f' fill="{theme["land"]}" stroke="{theme["land_stroke"]}"'
-                f' stroke-width="0.5" fill-rule="evenodd" stroke-linejoin="round"/>'
-            )
-    else:
-        for exterior, holes in polygons:
-            path_d = _coords_to_path(exterior)
-            for hole in holes:
-                path_d += " " + _coords_to_path(hole)
-            lines.append(
-                f'      <path d="{path_d}"'
-                f' fill="{theme["land"]}" stroke="{theme["land_stroke"]}"'
-                f' stroke-width="0.3" fill-rule="evenodd" stroke-linejoin="round"/>'
-            )
+    for exterior, holes in polygons:
+        path_d = _coords_to_path(exterior)
+        for hole in holes:
+            path_d += " " + _coords_to_path(hole)
+        lines.append(
+            f'      <path d="{path_d}"'
+            f' fill="{land_color}" stroke="{land_stroke}"'
+            f' stroke-width="{stroke_w}" fill-rule="evenodd" stroke-linejoin="round"'
+            f' style="fill:{land_color};stroke:{land_stroke}"/>'
+        )
     lines.append("    </g>")
 
     # For city maps, clip streets to the city boundary polygon
@@ -600,23 +594,7 @@ def _generate_print_svg(
         layer_count += 1
         path_count += len(markers)
 
-    # Subtle vignette edge fade — softens the map boundary for a premium look
-    lines.append('    <g id="vignette">')
-    vig_id = "vig_grad"
-    lines.append("      <defs>")
-    # Radial gradient: transparent center → semi-transparent map_bg edges
-    lines.append(
-        f'        <radialGradient id="{vig_id}" cx="50%" cy="50%" r="70%">'
-    )
-    lines.append(f'          <stop offset="60%" stop-color="{theme["map_bg"]}" stop-opacity="0"/>')
-    lines.append(f'          <stop offset="100%" stop-color="{theme["map_bg"]}" stop-opacity="0.3"/>')
-    lines.append(f"        </radialGradient>")
-    lines.append("      </defs>")
-    lines.append(
-        f'      <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"'
-        f' fill="url(#{vig_id})"/>'
-    )
-    lines.append("    </g>")
+    # Clean map edges — no vignette overlay for crisp, professional output
 
     lines.append("  </g>")  # close map clip group
     lines.append("")
@@ -689,7 +667,7 @@ def _generate_print_svg(
         lat, lon = latlon
         lat_dir = "N" if lat >= 0 else "S"
         lon_dir = "W" if lon < 0 else "E"
-        coord_text = f"{abs(lat):.6f}\u00b0 {lat_dir}  /  {abs(lon):.6f}\u00b0 {lon_dir}"
+        coord_text = f"{abs(lat):.4f}\u00b0 {lat_dir}  /  {abs(lon):.4f}\u00b0 {lon_dir}"
 
         lines.append(
             f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
@@ -832,7 +810,7 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
     """
     transform = processed.get("transform")
 
-    # Bold white streets — prominent, clean lines that pop against the land.
+    # Street widths — fine lines create the dense "fabric" texture of the city
     PRINT_WIDTHS = {
         "motorway": 0.50, "motorway_link": 0.35,
         "trunk": 0.45, "trunk_link": 0.30,
@@ -844,8 +822,8 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
         "service": 0.10,
     }
 
-    # Force white streets for clean, bold contrast against the map.
-    street_color = "#ffffff"
+    # Use themed street colors — dark streets on light land, light on dark
+    street_color = theme.get("street_major", "#3a3a3a")
 
     lines.append('    <g id="streets">')
 
@@ -862,7 +840,8 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
             f' stroke-linecap="round" stroke-linejoin="round"/>'
         )
 
-    # Minor roads — same color, thinner width creates the dense grid
+    # Minor roads — lighter shade, thinner width creates the dense grid
+    minor_color = theme.get("street_minor", "#888888")
     for coords, road_class, width, name in streets_data.get("minor_roads", []):
         if len(coords) < 2:
             continue
@@ -871,7 +850,7 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
         sw = PRINT_WIDTHS.get(road_class, 0.08)
         lines.append(
             f'      <path d="{path_d}"'
-            f' fill="none" stroke="{street_color}" stroke-width="{sw}"'
+            f' fill="none" stroke="{minor_color}" stroke-width="{sw}"'
             f' stroke-linecap="round" stroke-linejoin="round"/>'
         )
 
