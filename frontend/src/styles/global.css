@@ -1935,42 +1935,6 @@ body {
 }
 
 /* Popular Cities Quick-Picks */
-.popular-cities {
-  margin-top: 12px;
-}
-
-.popular-cities-label {
-  font-size: 11px;
-  font-family: var(--font-mono);
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  margin-bottom: 8px;
-}
-
-.popular-cities-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.popular-city-btn {
-  padding: 6px 12px;
-  font-size: 12px;
-  font-family: var(--font-body);
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  color: var(--text-primary);
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.popular-city-btn:hover {
-  background: var(--bg-card);
-  border-color: var(--crimson);
-  color: var(--crimson-hover);
-}
 
 .theme-swatch {
   display: flex;
