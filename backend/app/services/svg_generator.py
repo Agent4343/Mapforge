@@ -348,8 +348,8 @@ def _generate_print_svg(
     mat_pct = 0.05  # 5% white mat on each side
     mat_x = round(board_w * mat_pct, 2)
     mat_y = round(board_h * mat_pct, 2)
-    # Extra space at bottom for text area
-    text_area_h = round(board_h * 0.12, 2)
+    # Extra space at bottom for text area (title + subtitle + coordinates)
+    text_area_h = round(board_h * 0.16, 2)
     map_x = mat_x
     map_y = mat_y
     map_w = round(board_w - 2 * mat_x, 2)
@@ -588,7 +588,7 @@ def _generate_print_svg(
     lines.append("")
 
     # Thin separator line between map and text area
-    sep_y = round(map_y + map_h + text_area_h * 0.18, 2)
+    sep_y = round(map_y + map_h + text_area_h * 0.10, 2)
     sep_margin = round(board_w * 0.25, 2)  # 25% inset from each side
     lines.append(
         f'  <line x1="{sep_margin}" y1="{sep_y}" x2="{round(board_w - sep_margin, 2)}" y2="{sep_y}"'
@@ -599,7 +599,7 @@ def _generate_print_svg(
     # Text area — below the map, on the white mat
     text_center_x = round(board_w / 2, 2)
     # Vertically center text block within the text area (below separator)
-    text_start_y = round(sep_y + text_area_h * 0.32, 2)
+    text_start_y = round(sep_y + text_area_h * 0.22, 2)
 
     # Print-mode font sizes (larger for poster readability)
     title_size = round(font_size_mm * 1.6, 2)
@@ -809,7 +809,7 @@ def _render_print_water(lines: list[str], water_data: dict, processed: dict, the
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
-        width = 1.5 if water_type in ("river", "coastline") else 0.7
+        width = 0.6 if water_type in ("river", "coastline") else 0.25
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="none" stroke="{theme["water_stroke"]}" stroke-width="{width}"'
