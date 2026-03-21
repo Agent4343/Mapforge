@@ -13,6 +13,14 @@ import re
 
 import cairosvg
 
+# Regex to strip crop marks group from SVG before rasterizing for previews/listings
+_CROP_MARKS_RE = re.compile(r'<g\s+id="crop_marks"[^>]*>.*?</g>', re.DOTALL)
+
+
+def _strip_crop_marks(svg_string: str) -> str:
+    """Remove crop marks from SVG for display images (thumbnails, listings, previews)."""
+    return _CROP_MARKS_RE.sub('', svg_string)
+
 # --- Production print constants ---
 PRINT_DPI_STANDARD = 300
 PRINT_DPI_HIGH = 600
@@ -510,7 +518,8 @@ def generate_thumbnail(
     Returns:
         PNG image as bytes.
     """
-    styled_svg = _add_background(svg_string, background_color) if background_color else svg_string
+    clean_svg = _strip_crop_marks(svg_string)
+    styled_svg = _add_background(clean_svg, background_color) if background_color else clean_svg
 
     png_bytes = cairosvg.svg2png(
         bytestring=styled_svg.encode("utf-8"),
@@ -634,8 +643,9 @@ def generate_etsy_listing_image(
     Returns:
         PNG image as bytes sized for Etsy listings.
     """
+    clean_svg = _strip_crop_marks(svg_string)
     png_bytes = cairosvg.svg2png(
-        bytestring=svg_string.encode("utf-8"),
+        bytestring=clean_svg.encode("utf-8"),
         output_width=output_width,
         output_height=output_height,
     )
@@ -660,7 +670,8 @@ def generate_watermarked_preview(
     Returns:
         Watermarked PNG image as bytes.
     """
-    watermarked_svg = _add_watermark_to_svg(svg_string, watermark_text)
+    clean_svg = _strip_crop_marks(svg_string)
+    watermarked_svg = _add_watermark_to_svg(clean_svg, watermark_text)
     png_bytes = cairosvg.svg2png(
         bytestring=watermarked_svg.encode("utf-8"),
         output_width=output_width,

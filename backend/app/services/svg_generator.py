@@ -822,35 +822,34 @@ def _render_print_water(lines: list[str], water_data: dict, processed: dict, the
 def _render_print_streets(lines: list[str], streets_data: dict, processed: dict, theme: dict):
     """Render streets with themed poster colors.
 
-    Print-mode streets use modest width scaling over CNC base widths to
-    create a clean road hierarchy without overwhelming the map.  The old
-    5x multiplier produced highway bands ~6 mm wide which dominated the
-    poster.  New values: major 1.8x, minor 1.2x.
+    Print-mode streets use reduced widths compared to CNC base widths to
+    produce the thin, delicate line work seen on premium Etsy map prints.
+    Major roads: 0.5x base, minor roads: 0.35x base.
     """
     transform = processed.get("transform")
 
     lines.append('    <g id="streets">')
 
-    # Major roads — clearly visible but proportional
+    # Major roads — visible but thin and elegant
     for coords, road_class, width, name in streets_data.get("major_roads", []):
         if len(coords) < 2:
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
-        sw = round(width * 1.8, 2)
+        sw = round(width * 0.5, 2)
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="none" stroke="{theme["street_major"]}" stroke-width="{sw}"'
             f' stroke-linecap="round" stroke-linejoin="round"/>'
         )
 
-    # Minor roads — thin grid that fills the city area
+    # Minor roads — fine grid that fills the city area
     for coords, road_class, width, name in streets_data.get("minor_roads", []):
         if len(coords) < 2:
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
-        sw = round(width * 1.2, 2)
+        sw = round(width * 0.35, 2)
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="none" stroke="{theme["street_minor"]}" stroke-width="{sw}"'
@@ -1018,12 +1017,11 @@ def _render_streets(lines: list[str], streets_data: dict, processed: dict, outpu
     transform = processed.get("transform")
     is_print = output_mode == "print"
 
-    # Print mode: modest scale-up for visible poster output.
-    # CNC base widths (0.3–1.2 mm) need a small bump for print, but 3x was
-    # way too heavy — roads became dominant black bands.  Use separate scales
-    # for major vs minor to preserve the premium road hierarchy.
-    major_width_scale = 1.8 if is_print else 1.0
-    minor_width_scale = 1.2 if is_print else 1.0
+    # Print mode: scale down CNC base widths for thin, elegant poster lines.
+    # CNC widths (0.3–1.2 mm) are too heavy for prints — premium map posters
+    # use delicate line work. Major 0.5x, minor 0.35x.
+    major_width_scale = 0.5 if is_print else 1.0
+    minor_width_scale = 0.35 if is_print else 1.0
 
     lines.append("  <!-- Layer: detail_lines (streets) -->")
     lines.append('  <!-- Toolpath: Engrave, 1/8" ball nose, 0.03"-0.05" -->')
