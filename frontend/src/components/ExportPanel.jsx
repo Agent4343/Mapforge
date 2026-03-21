@@ -5,7 +5,6 @@ export default function ExportPanel({
   result,
   onGenerate,
   onDownload,
-  onDownloadDXF,
   onDownloadThumbnail,
   onDownloadPrintPNG,
   onDownloadEtsyListing,
@@ -13,7 +12,6 @@ export default function ExportPanel({
   canGenerate,
   generating,
   user,
-  outputMode,
   printDPI,
 }) {
   const [showListForm, setShowListForm] = useState(false);
@@ -26,7 +24,7 @@ export default function ExportPanel({
   const [listing, setListing] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
 
-  const isPrint = outputMode === "print";
+  const isPrint = true; // Always print/poster mode
 
   async function handleList() {
     if (!result) return;
@@ -82,7 +80,7 @@ export default function ExportPanel({
 
   return (
     <div className="export-section">
-      <h2>{isPrint ? "Generate & Download" : "Export"}</h2>
+      <h2>Generate & Download</h2>
 
       <button
         className="btn btn-primary btn-full generate-btn"
@@ -93,10 +91,8 @@ export default function ExportPanel({
           <span className="generate-btn-content">
             <span className="spinner-inline" /> Generating...
           </span>
-        ) : isPrint ? (
-          "Generate Map"
         ) : (
-          "Generate SVG"
+          "Generate Map"
         )}
       </button>
 
@@ -141,8 +137,6 @@ export default function ExportPanel({
           {/* Download Buttons */}
           <div className="export-download-section">
             <div className="export-buttons">
-              {isPrint ? (
-                <>
                   {result.print_png_available && (
                     <button className="btn btn-primary" onClick={onDownloadPrintPNG}>
                       Download Print PNG ({printDPI || 300} DPI)
@@ -164,29 +158,6 @@ export default function ExportPanel({
                   <button className="btn btn-secondary" onClick={onDownload}>
                     SVG Source
                   </button>
-                </>
-              ) : (
-                <>
-                  <button className="btn btn-secondary" onClick={onDownload}>
-                    SVG
-                  </button>
-                  {result.dxf_available && (
-                    <button className="btn btn-secondary" onClick={onDownloadDXF}>
-                      DXF
-                    </button>
-                  )}
-                  {result.thumbnail_available && (
-                    <button className="btn btn-secondary" onClick={onDownloadThumbnail}>
-                      Mockup PNG
-                    </button>
-                  )}
-                  {result.print_png_available && (
-                    <button className="btn btn-secondary" onClick={onDownloadPrintPNG}>
-                      Print 300DPI
-                    </button>
-                  )}
-                </>
-              )}
             </div>
           </div>
 
@@ -249,7 +220,7 @@ export default function ExportPanel({
                 <textarea
                   value={listDesc}
                   onChange={(e) => setListDesc(e.target.value)}
-                  placeholder="Describe the design, wood recommendations, CNC settings..."
+                  placeholder="Describe the design, style, and what makes it unique..."
                   maxLength={2000}
                   rows={5}
                   className="list-textarea"
@@ -261,7 +232,7 @@ export default function ExportPanel({
                   type="text"
                   value={listTags}
                   onChange={(e) => setListTags(e.target.value)}
-                  placeholder="lake, cottage, muskoka, cnc"
+                  placeholder="lake, cottage, muskoka, wall art, map print"
                   maxLength={500}
                 />
               </div>

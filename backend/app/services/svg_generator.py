@@ -1,14 +1,9 @@
-"""CNC-optimized SVG generation engine.
+"""Print/poster SVG generation engine for MapForge.
 
-Produces SVG files conforming to the MapForge CNC output spec:
-- Units in mm, explicit mm on width/height
-- M/L/Z path commands only (no curves)
-- Organized layer structure mapping to VCarve toolpaths
-- All paths closed (Z command)
-- Max 2 decimal places
-- CNC metadata in XML comments
+Produces print-mode poster SVGs for wall art, Etsy listings, and high-quality
+map prints with colored fills, themed typography, and professional layout.
 
-Also produces print-mode poster SVGs for wall art when output_mode="print".
+Also retains CNC SVG generation for legacy/internal use.
 """
 
 import math

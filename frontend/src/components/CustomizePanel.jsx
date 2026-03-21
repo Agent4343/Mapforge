@@ -31,30 +31,11 @@ export default function CustomizePanel({ config, onChange, user }) {
   }
 
   const isPro = user?.tier === "pro" || user?.tier === "admin";
-  const isPrint = config.outputMode === "print";
+  const isPrint = true; // Always print/poster mode
 
   return (
     <div className="customize-section">
       <h2>Customize</h2>
-
-      {/* Output Mode Toggle */}
-      <div className="control-group">
-        <label>Output Mode</label>
-        <div className="mode-toggle">
-          <button
-            className={`mode-toggle-btn${!isPrint ? " active" : ""}`}
-            onClick={() => update("outputMode", "cnc")}
-          >
-            CNC / Laser
-          </button>
-          <button
-            className={`mode-toggle-btn${isPrint ? " active" : ""}`}
-            onClick={() => update("outputMode", "print")}
-          >
-            Print / Poster
-          </button>
-        </div>
-      </div>
 
       {/* Display Text */}
       <div className="control-group">
@@ -128,19 +109,6 @@ export default function CustomizePanel({ config, onChange, user }) {
             </select>
           </div>
 
-          {!isPrint && (
-            <div className="control-group">
-              <label>Cut Style</label>
-              <select
-                value={config.style}
-                onChange={(e) => update("style", e.target.value)}
-              >
-                <option value="outline">Outline (Profile)</option>
-                <option value="filled">Filled (Pocket)</option>
-                <option value="engraved">Engraved (V-Carve)</option>
-              </select>
-            </div>
-          )}
         </div>
 
         {config.boardSize === "custom" && (
@@ -279,20 +247,6 @@ export default function CustomizePanel({ config, onChange, user }) {
             </select>
           </div>
 
-          {!isPrint && (
-            <div className="control-group">
-              <label>Format</label>
-              <select
-                value={config.exportFormat}
-                onChange={(e) => update("exportFormat", e.target.value)}
-              >
-                <option value="svg">SVG</option>
-                <option value="dxf" disabled={!user || user.tier === "free"}>
-                  DXF {!user || user.tier === "free" ? "(Maker+)" : ""}
-                </option>
-              </select>
-            </div>
-          )}
         </div>
 
         <div className="control-group">

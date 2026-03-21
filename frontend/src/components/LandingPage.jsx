@@ -2,12 +2,12 @@ import { useState } from "react";
 
 const FEATURES = [
   {
-    title: "CNC-Ready Output",
-    desc: "SVG files with M/L/Z commands only. No curves, no cleanup. Import directly into VCarve Pro, Carbide Create, or any CAM software.",
+    title: "Print-Ready Output",
+    desc: "High-resolution PNG and SVG files at 300 or 600 DPI. Ready for professional printing, Etsy digital downloads, and wall art.",
   },
   {
-    title: "DXF Export",
-    desc: "Industry-standard DXF files with proper layers, units in mm, and DASHED board outlines. Ready for AutoCAD and CNC controllers.",
+    title: "15 Color Themes",
+    desc: "From Classic to Midnight Blue, Rose Gold, and Arctic. Choose the perfect palette for any room or gift.",
   },
   {
     title: "Any Location on Earth",
@@ -19,7 +19,7 @@ const FEATURES = [
   },
   {
     title: "Seller Marketplace",
-    desc: "List your designs for sale. Stripe-powered payments with automatic seller payouts. Build a CNC design business.",
+    desc: "List your designs for sale. Stripe-powered payments with automatic seller payouts. Build a map print business.",
   },
   {
     title: "Batch Generation",
@@ -29,9 +29,9 @@ const FEATURES = [
 
 const SHOWCASE = [
   { name: "Lake Muskoka", type: "Lake", size: "16x20\"" },
-  { name: "Banff National Park", type: "Park", size: "24x32\"" },
-  { name: "Toronto", type: "City", size: "20x24\"" },
-  { name: "Nova Scotia", type: "Province", size: "32x48\"" },
+  { name: "Banff National Park", type: "Park", size: "24x36\"" },
+  { name: "Toronto", type: "City", size: "18x24\"" },
+  { name: "Nova Scotia", type: "Province", size: "24x36\"" },
 ];
 
 export default function LandingPage({ onGetStarted, onSignIn }) {
@@ -42,12 +42,12 @@ export default function LandingPage({ onGetStarted, onSignIn }) {
         <div className="landing-hero-content">
           <h1>
             Turn Any Location Into a<br />
-            <span className="text-crimson">CNC-Ready</span> Wood Map
+            <span className="text-crimson">Beautiful</span> Map Print
           </h1>
           <p className="landing-hero-sub">
-            Generate production-quality SVG and DXF files from real geographic data.
+            Generate stunning print-ready map posters from real geographic data.
             Lakes, cities, provinces, parks — or drop a pin on your family's special place.
-            Import directly into VCarve Pro, Carbide Create, or any CAM software.
+            Perfect for Etsy shops, wall art, and personalized gifts.
           </p>
           <div className="landing-hero-actions">
             <button className="btn btn-primary btn-lg" onClick={onGetStarted}>
@@ -75,19 +75,19 @@ export default function LandingPage({ onGetStarted, onSignIn }) {
           <div className="landing-step">
             <div className="landing-step-num">2</div>
             <h3>Customize</h3>
-            <p>Choose board size, cut style (outline, filled, engraved), add text and coordinates. Preview instantly.</p>
+            <p>Choose print size, color theme, typography, and border style. Add a subtitle and heart marker for gifts.</p>
           </div>
           <div className="landing-step">
             <div className="landing-step-num">3</div>
-            <h3>Export & Cut</h3>
-            <p>Download SVG or DXF. Import into your CNC software. Cut, engrave, or pocket on real wood.</p>
+            <h3>Download & Sell</h3>
+            <p>Download print-ready PNG at 300 or 600 DPI. List on Etsy, print at home, or send to a print shop.</p>
           </div>
         </div>
       </section>
 
       {/* Features */}
       <section className="landing-section landing-section-dark">
-        <h2>Built for CNC Makers</h2>
+        <h2>Built for Print Sellers</h2>
         <div className="landing-features">
           {FEATURES.map((f, i) => (
             <div key={i} className="landing-feature">
@@ -111,14 +111,14 @@ export default function LandingPage({ onGetStarted, onSignIn }) {
           ))}
         </div>
         <p className="landing-showcase-note">
-          Every design includes proper toolpath comments, organized layers, closed paths, and CNC metadata.
+          Every design includes professional typography, themed colors, and print-ready resolution.
         </p>
       </section>
 
       {/* CTA */}
       <section className="landing-section landing-cta">
-        <h2>Ready to Build?</h2>
-        <p>Join makers selling custom wood maps on Etsy, at craft fairs, and in their shops.</p>
+        <h2>Ready to Create?</h2>
+        <p>Join sellers offering custom map prints on Etsy, at craft fairs, and in their shops.</p>
         <button className="btn btn-primary btn-lg" onClick={onGetStarted}>
           Create Your First Map — Free
         </button>
@@ -127,8 +127,8 @@ export default function LandingPage({ onGetStarted, onSignIn }) {
       {/* Footer */}
       <footer className="landing-footer">
         <div className="landing-footer-brand">
-          <strong>Map<span className="text-crimson">Forge</span> CNC</strong>
-          <span>Geographic SVG Generator for CNC Routing</span>
+          <strong>Map<span className="text-crimson">Forge</span></strong>
+          <span>Custom Map Prints for Etsy & Wall Art</span>
         </div>
         <div className="landing-footer-links">
           <span>Geographic data: OpenStreetMap (ODbL)</span>

@@ -1,5 +1,5 @@
 /**
- * MapForge CNC — API client with auth support
+ * MapForge — API client with auth support
  */
 
 const API_BASE = "/api/v1";
@@ -202,12 +202,6 @@ async function downloadSVG(fileId) {
   return resp.blob();
 }
 
-async function downloadDXF(fileId) {
-  const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}?format=dxf`);
-  if (!resp.ok) throw new Error("DXF download failed");
-  return resp.blob();
-}
-
 async function downloadThumbnail(fileId) {
   const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}/thumbnail`);
   if (!resp.ok) throw new Error("Thumbnail download failed");
@@ -396,7 +390,7 @@ async function getAdminStats() {
 export {
   setToken, getToken, register, login, logout, getProfile, requestPasswordReset, resetPassword, subscribe,
   searchLocations, generateSVG, generatePin, batchGenerate,
-  downloadSVG, downloadDXF, downloadThumbnail, downloadPrintPNG,
+  downloadSVG, downloadThumbnail, downloadPrintPNG,
   downloadEtsyListing, downloadPreview, getPrintSizes,
   getLibrary, deleteLibraryFile,
   browseMarketplace, createListing, purchaseListing,

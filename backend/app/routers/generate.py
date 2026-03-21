@@ -1,4 +1,4 @@
-"""SVG/DXF generation API router — with persistence, auth, and all product types."""
+"""Print/poster map generation API router — with persistence, auth, and all product types."""
 
 import asyncio
 from datetime import datetime, timezone
@@ -23,7 +23,6 @@ from app.services.auth import get_current_user, get_optional_user
 from app.services.geo_fetch import fetch_area_around_point, fetch_geometry
 from app.services.geometry_processor import process_geometry, transform_wgs84_to_board
 from app.services.svg_generator import generate_svg
-from app.services.dxf_generator import generate_dxf
 from app.services.street_fetcher import fetch_streets
 from app.services.water_fetcher import fetch_water_features
 from app.services.contour_fetcher import fetch_contour_lines, generate_depth_bands
@@ -71,8 +70,8 @@ async def _maybe_reset_monthly_counter(user: User, db: AsyncSession):
 def _check_tier_limits(user: User | None, req: GenerateRequest):
     """Enforce subscription tier limits per Product Bible pricing matrix.
 
-    Free: province silhouettes only, 3/month, no DXF, no contours
-    Maker: unlimited provinces + 20 lake/city/park/community per month, DXF, no contours
+    Free: province silhouettes only, 3/month, no contours
+    Maker: unlimited provinces + 20 lake/city/park/community per month, no contours
     Pro: unlimited everything including contours and batch
     """
     is_province = req.product_type.value == "province"
@@ -83,8 +82,6 @@ def _check_tier_limits(user: User | None, req: GenerateRequest):
             raise HTTPException(status_code=403, detail="Lake, city, park, and community maps require a Maker or Pro subscription. Sign up free to generate province silhouettes.")
         if req.include_contours:
             raise HTTPException(status_code=403, detail="Contour layers require a Pro subscription. Sign up free to get started.")
-        if req.export_format == ExportFormat.dxf:
-            raise HTTPException(status_code=403, detail="DXF export requires a Maker or Pro subscription.")
         return
 
     tier = user.tier
@@ -99,8 +96,6 @@ def _check_tier_limits(user: User | None, req: GenerateRequest):
             raise HTTPException(status_code=403, detail=f"Free tier limit reached ({settings.FREE_PROVINCE_LIMIT} province maps/month). Upgrade to Maker for more.")
         if req.include_contours:
             raise HTTPException(status_code=403, detail="Bathymetric/topo layers require Pro subscription.")
-        if req.export_format == ExportFormat.dxf:
-            raise HTTPException(status_code=403, detail="DXF export requires Maker or Pro subscription.")
 
     elif tier == "maker":
         # Maker: unlimited provinces, 20 lake/city/park/community per month
@@ -249,28 +244,9 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             if heart_coords:
                 heart_mm = heart_coords[0]
 
-    # Generate CNC SVG (always — this is the primary output)
+    # Generate print poster SVG (the primary and only output)
     location_name = req.text or f"Location {req.osm_id}"
     result = generate_svg(
-        processed=processed,
-        location_name=location_name,
-        style=req.style,
-        show_coordinates=req.show_coordinates,
-        font_size_mm=req.font_size_mm,
-        streets_data=streets_data,
-        contour_data=contour_data,
-        water_data=water_data,
-        markers=board_markers,
-        subtitle=req.subtitle,
-        font_family=req.font_family.value,
-        border_style=req.border_style.value,
-        heart_location=heart_mm,
-        output_mode="cnc",
-        product_type=req.product_type.value,
-    )
-
-    # Generate print poster SVG (used for high-res PNG wall art and preview)
-    print_svg_result = generate_svg(
         processed=processed,
         location_name=location_name,
         style=req.style,
@@ -300,29 +276,11 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         log.error(f"Failed to store SVG: {e}")
         raise HTTPException(status_code=500, detail="Failed to save generated file. Please try again.")
 
-    # Generate DXF if requested or for persistence
-    dxf_key = None
-    if req.export_format == ExportFormat.dxf or (user and user.tier in ("maker", "pro", "admin")):
-        try:
-            dxf_bytes = generate_dxf(
-                processed=processed,
-                location_name=location_name,
-                show_coordinates=req.show_coordinates,
-                font_size_mm=req.font_size_mm,
-                streets_data=streets_data,
-                markers=board_markers,
-            )
-            dxf_key = svg_key.replace("svg/", "dxf/").replace(".svg", ".dxf")
-            await store_file(dxf_key, dxf_bytes, content_type="application/dxf")
-        except Exception as e:
-            log.warning(f"DXF generation failed (non-fatal): {e}")
-
-    # Generate PNG thumbnail for Etsy product mockups — use the themed print SVG
-    # so thumbnails look like the actual product (not raw CNC toolpath colors)
+    # Generate PNG thumbnail for Etsy product mockups
     thumbnail_key = None
     try:
         png_bytes = generate_thumbnail(
-            print_svg_result["svg"],
+            result["svg"],
             background_color=None,  # Print SVG already has mat + background
         )
         thumbnail_key = svg_key.replace("svg/", "thumbnails/").replace(".svg", ".png")
@@ -334,9 +292,9 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     print_png_key = None
     try:
         print_bytes = generate_print_image(
-            print_svg_result["svg"],
+            result["svg"],
             color_theme=req.color_theme,
-            skip_remap=True,  # Print SVG already has themed colors
+            skip_remap=True,
             board_size=req.board_size.value,
             dpi=req.print_dpi,
         )
@@ -348,7 +306,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     # Generate Etsy listing image (4:3 ratio for Etsy grid)
     etsy_key = None
     try:
-        etsy_bytes = generate_etsy_listing_image(print_svg_result["svg"])
+        etsy_bytes = generate_etsy_listing_image(result["svg"])
         etsy_key = svg_key.replace("svg/", "etsy/").replace(".svg", "_etsy.png")
         await store_file(etsy_key, etsy_bytes, content_type="image/png")
     except Exception as e:
@@ -385,7 +343,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         path_count=result["path_count"],
         layer_count=result["layer_count"],
         svg_storage_key=svg_key,
-        dxf_storage_key=dxf_key,
+        dxf_storage_key=None,
         thumbnail_key=thumbnail_key,
         print_png_key=print_png_key,
         province=province,
@@ -411,13 +369,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         raise HTTPException(status_code=500, detail="Failed to save to library. Please try again.")
     log.info(f"Generated file {file_id}: {location_name} ({result['node_count']} nodes)")
 
-    # Return the appropriate SVG based on output mode
-    is_print = req.output_mode == "print"
-    display_result = print_svg_result if is_print else result
-
     return GenerateResponse(
-        svg=display_result["svg"] if req.export_format == ExportFormat.svg else None,
-        dxf_available=dxf_key is not None,
+        svg=result["svg"],
         thumbnail_available=thumbnail_key is not None,
         print_png_available=print_png_key is not None,
         etsy_listing_available=etsy_key is not None,
@@ -441,7 +394,7 @@ async def generate(
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Generate a CNC-ready SVG/DXF from a geographic location."""
+    """Generate a print-ready poster map from a geographic location."""
     if user:
         await _maybe_reset_monthly_counter(user, db)
     _check_tier_limits(user, req)
@@ -456,7 +409,7 @@ async def generate_pin(
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Generate a CNC-ready SVG/DXF centered on a specific coordinate (home, cabin, etc.)."""
+    """Generate a print-ready poster map centered on a specific coordinate (home, cabin, etc.)."""
     if user:
         await _maybe_reset_monthly_counter(user, db)
 
@@ -513,27 +466,9 @@ async def generate_pin(
     except Exception as e:
         log.warning(f"Water feature fetch failed (non-fatal): {e}")
 
-    # Generate CNC SVG with pin marker
+    # Generate print poster SVG (the primary and only output)
     location_name = req.label
     result = generate_svg(
-        processed=processed,
-        location_name=location_name,
-        style=req.style,
-        show_coordinates=req.show_coordinates,
-        font_size_mm=req.font_size_mm,
-        center_latlon=(req.lat, req.lon),
-        streets_data=streets_data,
-        water_data=water_data,
-        pin_location=pin_mm,
-        subtitle=req.subtitle,
-        font_family=req.font_family.value,
-        border_style=req.border_style.value,
-        output_mode="cnc",
-        product_type="name_sign",
-    )
-
-    # Generate print poster SVG (themed, with proper layout)
-    print_svg_result = generate_svg(
         processed=processed,
         location_name=location_name,
         style=req.style,
@@ -562,28 +497,10 @@ async def generate_pin(
         log.error(f"Failed to store pin SVG: {e}")
         raise HTTPException(status_code=500, detail="Failed to save generated file. Please try again.")
 
-    # Generate DXF
-    dxf_key = None
-    if req.export_format == ExportFormat.dxf or (user and user.tier in ("maker", "pro", "admin")):
-        try:
-            dxf_bytes = generate_dxf(
-                processed=processed,
-                location_name=location_name,
-                show_coordinates=req.show_coordinates,
-                font_size_mm=req.font_size_mm,
-                center_latlon=(req.lat, req.lon),
-                streets_data=streets_data,
-                pin_location=pin_mm,
-            )
-            dxf_key = svg_key.replace("svg/", "dxf/").replace(".svg", ".dxf")
-            await store_file(dxf_key, dxf_bytes, content_type="application/dxf")
-        except Exception as e:
-            log.warning(f"DXF generation failed (non-fatal): {e}")
-
-    # Generate thumbnail from the themed print SVG
+    # Generate thumbnail
     thumbnail_key = None
     try:
-        png_bytes = generate_thumbnail(print_svg_result["svg"], background_color=None)
+        png_bytes = generate_thumbnail(result["svg"], background_color=None)
         thumbnail_key = svg_key.replace("svg/", "thumbnails/").replace(".svg", ".png")
         await store_file(thumbnail_key, png_bytes, content_type="image/png")
     except Exception as e:
@@ -593,7 +510,7 @@ async def generate_pin(
     print_png_key = None
     try:
         print_bytes = generate_print_image(
-            print_svg_result["svg"],
+            result["svg"],
             color_theme=req.color_theme,
             skip_remap=True,
             board_size=req.board_size.value,
@@ -607,7 +524,7 @@ async def generate_pin(
     # Generate Etsy listing image for pin maps
     etsy_key = None
     try:
-        etsy_bytes = generate_etsy_listing_image(print_svg_result["svg"])
+        etsy_bytes = generate_etsy_listing_image(result["svg"])
         etsy_key = svg_key.replace("svg/", "etsy/").replace(".svg", "_etsy.png")
         await store_file(etsy_key, etsy_bytes, content_type="image/png")
     except Exception as e:
@@ -639,7 +556,7 @@ async def generate_pin(
         path_count=result["path_count"],
         layer_count=result["layer_count"],
         svg_storage_key=svg_key,
-        dxf_storage_key=dxf_key,
+        dxf_storage_key=None,
         thumbnail_key=thumbnail_key,
         print_png_key=print_png_key,
         lat=req.lat,
@@ -657,13 +574,8 @@ async def generate_pin(
         log.error(f"Database error saving pin file: {e}")
         raise HTTPException(status_code=500, detail="Failed to save to library. Please try again.")
 
-    # Return the appropriate SVG based on output mode
-    is_print = getattr(req, "output_mode", "cnc") == "print"
-    display_result = print_svg_result if is_print else result
-
     return GenerateResponse(
-        svg=display_result["svg"] if req.export_format == ExportFormat.svg else None,
-        dxf_available=dxf_key is not None,
+        svg=result["svg"],
         thumbnail_available=thumbnail_key is not None,
         print_png_available=print_png_key is not None,
         etsy_listing_available=etsy_key is not None,
@@ -686,7 +598,7 @@ async def batch_generate(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Batch generate multiple SVG/DXF files (Pro tier only)."""
+    """Batch generate multiple print poster maps (Pro tier only)."""
     if user.tier not in ("pro", "admin"):
         raise HTTPException(status_code=403, detail="Batch generation requires Pro subscription.")
 
@@ -743,7 +655,7 @@ async def download(
     format: ExportFormat = ExportFormat.svg,
     db: AsyncSession = Depends(get_db),
 ):
-    """Download a generated SVG or DXF file."""
+    """Download a generated SVG or PNG file."""
     result = await db.execute(
         select(GeneratedFile).where(GeneratedFile.id == file_id)
     )
@@ -751,13 +663,7 @@ async def download(
     if not file_record:
         raise HTTPException(status_code=404, detail="File not found.")
 
-    if format == ExportFormat.dxf:
-        if not file_record.dxf_storage_key:
-            raise HTTPException(status_code=404, detail="DXF not available for this file.")
-        content = await retrieve_file(file_record.dxf_storage_key)
-        media_type = "application/dxf"
-        ext = "dxf"
-    elif format == ExportFormat.png:
+    if format == ExportFormat.png:
         if not file_record.print_png_key:
             raise HTTPException(status_code=404, detail="Print PNG not available for this file.")
         content = await retrieve_file(file_record.print_png_key)

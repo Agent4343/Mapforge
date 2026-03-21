@@ -1,4 +1,4 @@
-"""Pydantic models for MapForge CNC API requests and responses."""
+"""Pydantic models for MapForge Print/Poster API requests and responses."""
 
 from enum import Enum
 from typing import Optional
@@ -23,7 +23,6 @@ class CutStyle(str, Enum):
 
 class ExportFormat(str, Enum):
     svg = "svg"
-    dxf = "dxf"
     png = "png"
 
 
@@ -146,7 +145,6 @@ class BorderStyle(str, Enum):
 
 
 class OutputMode(str, Enum):
-    cnc = "cnc"
     print = "print"
 
 
@@ -164,7 +162,7 @@ class GenerateRequest(BaseModel):
     board_height_inches: Optional[float] = Field(None, gt=1, le=60)
     style: CutStyle = CutStyle.outline
     export_format: ExportFormat = ExportFormat.svg
-    output_mode: str = "cnc"  # "cnc" or "print"
+    output_mode: str = "print"
     text: str = ""
     subtitle: str = ""  # "Where We Met" / "Est. 2024" / custom tagline
     show_coordinates: bool = True
@@ -212,7 +210,7 @@ class PinGenerateRequest(BaseModel):
     border_style: BorderStyle = BorderStyle.none
     radius_m: float = Field(500.0, ge=100, le=5000)
     include_streets: bool = True
-    output_mode: str = "cnc"  # "cnc" or "print"
+    output_mode: str = "print"
     color_theme: str = "classic"
     # Print production fields
     include_bleed: bool = False
@@ -222,7 +220,6 @@ class PinGenerateRequest(BaseModel):
 
 class GenerateResponse(BaseModel):
     svg: Optional[str] = None
-    dxf_available: bool = False
     thumbnail_available: bool = False
     print_png_available: bool = False
     etsy_listing_available: bool = False

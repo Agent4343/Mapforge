@@ -15,7 +15,7 @@ import LandingPage from "./components/LandingPage.jsx";
 import PricingModal from "./components/PricingModal.jsx";
 import PurchasesView from "./components/PurchasesView.jsx";
 import {
-  generateSVG, generatePin, downloadSVG, downloadDXF, downloadThumbnail, downloadPrintPNG,
+  generateSVG, generatePin, downloadSVG, downloadThumbnail, downloadPrintPNG,
   downloadEtsyListing, downloadPreview,
   getProfile, logout, getToken, subscribe,
 } from "./services/api.js";
@@ -217,14 +217,14 @@ export default function App() {
           label: config.text || "My Place",
           subtitle: config.subtitle || "",
           board_size: config.boardSize,
-          style: config.outputMode === "print" ? "filled" : config.style,
-          export_format: config.outputMode === "print" ? "svg" : config.exportFormat,
+          style: "filled",
+          export_format: "svg",
           show_coordinates: config.showCoordinates,
           font_size_mm: config.fontSize,
           font_family: config.fontFamily || "sans",
           border_style: config.borderStyle || "none",
           include_streets: config.includeStreets,
-          output_mode: config.outputMode || "cnc",
+          output_mode: "print",
           color_theme: config.colorTheme || "classic",
           include_bleed: config.includeBleed || false,
           include_crop_marks: config.includeCropMarks || false,
@@ -251,9 +251,9 @@ export default function App() {
           osm_type: selectedResult.osm_type,
           product_type: config.productType,
           board_size: config.boardSize,
-          style: config.outputMode === "print" ? "filled" : config.style,
-          export_format: config.outputMode === "print" ? "svg" : config.exportFormat,
-          output_mode: config.outputMode || "cnc",
+          style: "filled",
+          export_format: "svg",
+          output_mode: "print",
           text: config.text,
           subtitle: config.subtitle || "",
           show_coordinates: config.showCoordinates,
@@ -288,9 +288,7 @@ export default function App() {
       // Quality/generation warnings
       const allWarnings = [...(data.warnings || [])];
       if (data.node_count < 20) {
-        allWarnings.push("Low detail: This location has very few data points. The SVG may appear rough or oversimplified.");
-      } else if (data.node_count > 50000) {
-        allWarnings.push("High complexity: This file has many nodes and may be slow to process on some CNC controllers. Consider reducing detail.");
+        allWarnings.push("Low detail: This location has very few data points. The map may appear rough or oversimplified.");
       }
       setQualityWarning(allWarnings.length > 0 ? allWarnings.join(" ") : null);
     } catch (err) {
@@ -302,21 +300,9 @@ export default function App() {
 
   const handleDownload = useCallback(async () => {
     if (!result) return;
-    // Always fetch CNC SVG from server — the in-memory svgContent may be
-    // the print/poster SVG (colored fills, mat borders) which isn't VCarve-ready.
     try {
       const blob = await downloadSVG(result.file_id);
       _triggerDownload(blob, config.text, "svg");
-    } catch (err) {
-      setError(err.message);
-    }
-  }, [result, config.text]);
-
-  const handleDownloadDXF = useCallback(async () => {
-    if (!result) return;
-    try {
-      const blob = await downloadDXF(result.file_id);
-      _triggerDownload(blob, config.text, "dxf");
     } catch (err) {
       setError(err.message);
     }
@@ -402,11 +388,7 @@ export default function App() {
         <div className="header-brand">
           <div>
             <h1>Map<span>Forge</span></h1>
-            <div className="subtitle">
-              {config.outputMode === "print"
-                ? "Custom Street Map Prints for Etsy & Wall Art"
-                : "Geographic SVG Generator for CNC Routing"}
-            </div>
+            <div className="subtitle">Custom Street Map Prints for Etsy & Wall Art</div>
           </div>
         </div>
         <nav className="header-nav">
@@ -562,7 +544,6 @@ export default function App() {
             result={result}
             onGenerate={handleGenerate}
             onDownload={handleDownload}
-            onDownloadDXF={handleDownloadDXF}
             onDownloadThumbnail={handleDownloadThumbnail}
             onDownloadPrintPNG={handleDownloadPrintPNG}
             onDownloadEtsyListing={handleDownloadEtsyListing}
@@ -570,7 +551,6 @@ export default function App() {
             canGenerate={!!selectedResult || (config.productType === "name_sign" && !!pinCoords)}
             generating={generating}
             user={user}
-            outputMode={config.outputMode}
             printDPI={config.printDPI}
           />
         </div>
@@ -579,7 +559,6 @@ export default function App() {
             svgContent={svgContent}
             loading={generating}
             error={error}
-            outputMode={config.outputMode}
             colorTheme={config.colorTheme}
           />
         </div>
