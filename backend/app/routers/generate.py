@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from slowapi import Limiter
 from slowapi.util import get_remote_address
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -16,7 +17,7 @@ from app.models.db_models import GeneratedFile, User
 from app.models.schemas import (
     BatchGenerateRequest, BatchGenerateResponse,
     ExportFormat, GenerateRequest, GenerateResponse,
-    PinGenerateRequest, PreviewResponse, BOARD_DIMENSIONS_INCHES,
+    PinGenerateRequest, PreviewResponse, ProductType, BOARD_DIMENSIONS_INCHES,
 )
 from app.services.auth import get_current_user, get_optional_user
 from app.services.geo_fetch import fetch_area_around_point, fetch_geometry
@@ -441,7 +442,6 @@ async def generate_pin(
         w_in, h_in = 16, 20
 
     # Create area polygon around the pin point
-    from app.models.schemas import ProductType
     geom = await fetch_area_around_point(req.lat, req.lon, radius_m=req.radius_m)
 
     try:
@@ -669,7 +669,6 @@ async def batch_generate(
 @router.get("/preview/{file_id}")
 async def preview(file_id: str, db: AsyncSession = Depends(get_db)):
     """Get a cached SVG preview."""
-    from sqlalchemy import select
     result = await db.execute(
         select(GeneratedFile).where(GeneratedFile.id == file_id)
     )
@@ -695,7 +694,6 @@ async def download(
     db: AsyncSession = Depends(get_db),
 ):
     """Download a generated SVG or DXF file."""
-    from sqlalchemy import select
     result = await db.execute(
         select(GeneratedFile).where(GeneratedFile.id == file_id)
     )
@@ -741,7 +739,6 @@ async def download_thumbnail(
     db: AsyncSession = Depends(get_db),
 ):
     """Download a PNG thumbnail image for Etsy/product listings."""
-    from sqlalchemy import select
     result = await db.execute(
         select(GeneratedFile).where(GeneratedFile.id == file_id)
     )

@@ -18,6 +18,12 @@ from app.models.schemas import CutStyle
 from app.services.geometry_processor import transform_wgs84_to_board
 
 
+# Print production constants — bleed and crop marks for professional printing
+BLEED_MM = 3.0        # Standard bleed margin in mm
+CROP_MARK_LENGTH = 5.0  # Length of crop mark lines in mm
+CROP_MARK_OFFSET = 1.5  # Gap between trim edge and crop mark start
+
+
 FONT_FAMILIES = {
     "sans": "Arial, Helvetica, sans-serif",
     "serif": "Georgia, 'Times New Roman', Times, serif",

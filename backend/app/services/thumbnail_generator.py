@@ -8,9 +8,28 @@ Uses cairosvg for SVG-to-PNG rasterization with color remapping
 to transform CNC toolpath colors into rich, natural print colors.
 """
 
+import math
 import re
 
 import cairosvg
+
+# --- Production print constants ---
+PRINT_DPI_STANDARD = 300
+PRINT_DPI_HIGH = 600
+
+# Etsy listing image dimensions (4:3 ratio for grid display)
+ETSY_LISTING_WIDTH = 2700
+ETSY_LISTING_HEIGHT = 2025
+ETSY_SQUARE_SIZE = 2000
+
+# Print size to pixel dimensions at 300 DPI
+PRINT_SIZE_PIXELS = {
+    "print_8x10": (2400, 3000),
+    "print_11x14": (3300, 4200),
+    "print_16x20": (4800, 6000),
+    "print_18x24": (5400, 7200),
+    "print_24x36": (7200, 10800),
+}
 
 # CNC toolpath colors → Professional print colors
 # Maps the dark CNC-optimized colors to rich natural tones for wall art
@@ -506,6 +525,8 @@ def generate_print_image(
     background_color: str | None = None,
     color_theme: str = "classic",
     skip_remap: bool = False,
+    board_size: str | None = None,
+    dpi: int = PRINT_DPI_STANDARD,
 ) -> bytes:
     """Render SVG to a high-resolution print-ready PNG for wall art.
 
@@ -521,6 +542,8 @@ def generate_print_image(
         background_color: Background color override. If None, uses theme default.
         color_theme: Color theme name (classic, modern_dark, rose_gold, etc.).
         skip_remap: If True, skip color remapping (SVG already themed).
+        board_size: Board size key (e.g. "print_16x20") for DPI-accurate rendering.
+        dpi: Target DPI (300 or 600). Used with board_size for pixel calculation.
 
     Returns:
         High-resolution PNG image as bytes.
@@ -533,6 +556,12 @@ def generate_print_image(
         bg = background_color or get_theme_background(color_theme)
         print_svg = _remap_colors(svg_string, colors)
         print_svg = _add_background(print_svg, bg)
+
+    # Calculate DPI-accurate output width when board_size is provided
+    if board_size and board_size in PRINT_SIZE_PIXELS:
+        base_w, base_h = PRINT_SIZE_PIXELS[board_size]
+        scale = dpi / PRINT_DPI_STANDARD
+        output_width = int(base_w * scale)
 
     png_bytes = cairosvg.svg2png(
         bytestring=print_svg.encode("utf-8"),
@@ -585,3 +614,135 @@ def _parse_viewbox(svg_string: str) -> tuple[str, str]:
     w = w_match.group(1) if w_match else "100%"
     h = h_match.group(1) if h_match else "100%"
     return w, h
+
+
+def generate_etsy_listing_image(
+    svg_string: str,
+    output_width: int = ETSY_LISTING_WIDTH,
+    output_height: int = ETSY_LISTING_HEIGHT,
+) -> bytes:
+    """Render SVG to a 2700x2025 PNG optimized for Etsy's 4:3 listing grid.
+
+    Etsy displays listing thumbnails at 4:3 ratio. This renders the map
+    at 2700px wide so it looks crisp on retina screens in search results.
+
+    Args:
+        svg_string: The SVG content to render (should be a themed print SVG).
+        output_width: Pixel width for the listing image.
+        output_height: Pixel height for the listing image.
+
+    Returns:
+        PNG image as bytes sized for Etsy listings.
+    """
+    png_bytes = cairosvg.svg2png(
+        bytestring=svg_string.encode("utf-8"),
+        output_width=output_width,
+        output_height=output_height,
+    )
+    return png_bytes
+
+
+def generate_watermarked_preview(
+    svg_string: str,
+    output_width: int = 2000,
+    watermark_text: str = "MAPFORGE PREVIEW",
+) -> bytes:
+    """Render SVG to a PNG with a diagonal watermark overlay.
+
+    Used for social media previews and non-purchasable samples so the
+    design is visible but not usable as a final product.
+
+    Args:
+        svg_string: The SVG content to render.
+        output_width: Pixel width of the output PNG.
+        watermark_text: Text to tile diagonally across the image.
+
+    Returns:
+        Watermarked PNG image as bytes.
+    """
+    watermarked_svg = _add_watermark_to_svg(svg_string, watermark_text)
+    png_bytes = cairosvg.svg2png(
+        bytestring=watermarked_svg.encode("utf-8"),
+        output_width=output_width,
+    )
+    return png_bytes
+
+
+def calculate_print_pixels(
+    width_inches: float,
+    height_inches: float,
+    dpi: int = PRINT_DPI_STANDARD,
+) -> tuple[int, int]:
+    """Calculate pixel dimensions from physical size and DPI.
+
+    Args:
+        width_inches: Print width in inches.
+        height_inches: Print height in inches.
+        dpi: Dots per inch (300 standard, 600 high).
+
+    Returns:
+        Tuple of (width_pixels, height_pixels).
+    """
+    return (int(math.ceil(width_inches * dpi)), int(math.ceil(height_inches * dpi)))
+
+
+def _add_watermark_to_svg(
+    svg_string: str,
+    watermark_text: str = "MAPFORGE PREVIEW",
+) -> str:
+    """Inject tiled diagonal watermark text into an SVG string.
+
+    Creates a repeating pattern of rotated semi-transparent text
+    across the entire SVG canvas, making the output unsuitable for
+    commercial use while keeping the design clearly visible.
+
+    Args:
+        svg_string: The SVG content to watermark.
+        watermark_text: Text to display in the watermark pattern.
+
+    Returns:
+        Modified SVG string with watermark overlay.
+    """
+    vb_width, vb_height = _parse_viewbox(svg_string)
+
+    try:
+        w = float(vb_width)
+        h = float(vb_height)
+    except (ValueError, TypeError):
+        w, h = 400.0, 500.0
+
+    font_size = max(w, h) * 0.06
+    spacing_x = font_size * 5
+    spacing_y = font_size * 3
+
+    watermark_lines = []
+    watermark_lines.append(
+        '  <g id="watermark" opacity="0.15" '
+        'transform="rotate(-30, {cx}, {cy})">'.format(cx=round(w / 2, 2), cy=round(h / 2, 2))
+    )
+
+    # Tile watermark text across a larger area to cover rotation
+    rows = int(math.ceil(h * 2 / spacing_y)) + 4
+    cols = int(math.ceil(w * 2 / spacing_x)) + 4
+
+    for row in range(-2, rows):
+        for col in range(-2, cols):
+            x = round(col * spacing_x - w * 0.5, 2)
+            y = round(row * spacing_y - h * 0.3, 2)
+            watermark_lines.append(
+                f'    <text x="{x}" y="{y}" '
+                f'font-family="Arial, Helvetica, sans-serif" '
+                f'font-size="{round(font_size, 1)}" '
+                f'font-weight="bold" '
+                f'fill="#000000">{watermark_text}</text>'
+            )
+
+    watermark_lines.append("  </g>")
+    watermark_block = "\n".join(watermark_lines)
+
+    # Insert just before </svg>
+    close_idx = svg_string.rfind("</svg>")
+    if close_idx == -1:
+        return svg_string + "\n" + watermark_block
+
+    return svg_string[:close_idx] + "\n" + watermark_block + "\n" + svg_string[close_idx:]

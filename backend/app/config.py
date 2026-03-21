@@ -20,8 +20,8 @@ class Settings:
     # Database
     DATABASE_URL: str = _fixup_db_url(os.getenv("DATABASE_URL", "sqlite+aiosqlite:////tmp/mapforge.db"))
 
-    # Auth
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "mapforge-dev-secret-change-in-production")
+    # Auth — SECRET_KEY must be set in production via environment variable
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
     ALGORITHM: str = "HS256"
 
@@ -66,8 +66,8 @@ class Settings:
     # AI Description Generation (Claude API)
     ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
 
-    # Admin
-    ADMIN_EMAILS: list[str] = ["mathesonashley@hotmail.com"]
+    # Admin — set via ADMIN_EMAILS env var (comma-separated)
+    ADMIN_EMAILS: list[str] = [e.strip() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()]
 
     # Seller payouts
     STRIPE_PAYOUT_DELAY_DAYS: int = 7  # Days before payout to sellers

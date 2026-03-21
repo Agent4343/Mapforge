@@ -9,6 +9,10 @@ try:
     print(f"PORT={os.environ.get('PORT', 'unset')}", flush=True)
     print(f"DATABASE_URL={'set' if os.environ.get('DATABASE_URL') else 'unset'}", flush=True)
 
+    # Warn if SECRET_KEY is not set (required for production JWT security)
+    if not os.environ.get("SECRET_KEY"):
+        print("WARNING: SECRET_KEY not set — using empty key. Set SECRET_KEY in production!", flush=True)
+
     from app.main import app
     print("App import OK", flush=True)
 
