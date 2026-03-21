@@ -103,6 +103,9 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    # Prevent browsers from caching HTML pages so new deploys are picked up
+    if request.url.path == "/" or not request.url.path.startswith(("/api", "/assets")):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     return response
 
 # API Routers
