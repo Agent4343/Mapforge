@@ -494,6 +494,27 @@ def get_poster_theme(theme_name: str) -> dict:
     return theme.get("poster", COLOR_THEMES["classic"]["poster"])
 
 
+def remap_poster_theme(svg_string: str, source_theme: str, target_theme: str) -> str:
+    """Remap a print-mode SVG from one poster theme to another.
+
+    The print SVG has poster theme colors baked in (mat, map_bg, land, water,
+    streets, text). This replaces every source color with the corresponding
+    target color, producing a new themed SVG without re-running geometry.
+    """
+    src = get_poster_theme(source_theme)
+    dst = get_poster_theme(target_theme)
+    result = svg_string
+    for key in ("mat", "map_bg", "land", "land_stroke", "water", "water_stroke",
+                "street_major", "street_minor", "street_label",
+                "text_primary", "text_secondary"):
+        old = src.get(key, "")
+        new = dst.get(key, "")
+        if old and new and old != new:
+            result = result.replace(f'"{old}"', f'"{new}"')
+            result = result.replace(f'"{old.upper()}"', f'"{new}"')
+    return result
+
+
 def remap_svg_colors(svg_string: str, theme_name: str) -> str:
     """Apply a color theme to an SVG string for print preview."""
     colors = get_theme_colors(theme_name)

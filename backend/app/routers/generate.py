@@ -18,6 +18,7 @@ from app.models.schemas import (
     BatchGenerateRequest, BatchGenerateResponse,
     ExportFormat, GenerateRequest, GenerateResponse,
     PinGenerateRequest, PreviewResponse, ProductType, BOARD_DIMENSIONS_INCHES,
+    ThemeVariantsRequest, ThemeVariantResult, ThemeVariantsResponse,
 )
 from app.services.auth import get_current_user, get_optional_user
 from app.services.geo_fetch import fetch_area_around_point, fetch_geometry
@@ -30,6 +31,7 @@ from app.services.file_storage import store_file, retrieve_file
 from app.services.thumbnail_generator import (
     generate_thumbnail, generate_print_image, generate_etsy_listing_image,
     generate_watermarked_preview, calculate_print_pixels,
+    remap_poster_theme,
     COLOR_THEMES, PRINT_SIZE_PIXELS,
 )
 
@@ -815,6 +817,96 @@ async def download_thumbnail(
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
         },
+    )
+
+
+@router.post("/generate/{file_id}/theme-variants", response_model=ThemeVariantsResponse)
+@limiter.limit("5/minute")
+async def generate_theme_variants(
+    request: Request,
+    file_id: str,
+    req: ThemeVariantsRequest,
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate Etsy listing images in multiple color themes from one design.
+
+    Takes an existing generated map and re-renders it in each requested theme,
+    producing both a thumbnail (2000px) and an Etsy listing image (2700x2025)
+    per theme. Reuses the stored SVG — no extra geometry or Overpass API calls.
+    """
+    result = await db.execute(
+        select(GeneratedFile).where(GeneratedFile.id == file_id)
+    )
+    file_record = result.scalar_one_or_none()
+    if not file_record:
+        raise HTTPException(status_code=404, detail="File not found.")
+
+    # Verify ownership
+    if user and file_record.owner_id and file_record.owner_id != user.id:
+        raise HTTPException(status_code=403, detail="You don't own this file.")
+
+    svg_bytes = await retrieve_file(file_record.svg_storage_key)
+    if svg_bytes is None:
+        raise HTTPException(status_code=404, detail="SVG file not found in storage.")
+
+    source_svg = svg_bytes.decode("utf-8")
+    source_theme = req.source_theme
+    variants: list[ThemeVariantResult] = []
+    succeeded = 0
+    failed = 0
+
+    for theme_key in req.themes:
+        if theme_key not in COLOR_THEMES:
+            variants.append(ThemeVariantResult(
+                theme=theme_key,
+                label=theme_key,
+                error=f"Unknown theme: {theme_key}",
+            ))
+            failed += 1
+            continue
+
+        label = COLOR_THEMES[theme_key]["label"]
+        try:
+            # Remap SVG colors from source theme to target theme
+            if theme_key == source_theme:
+                themed_svg = source_svg
+            else:
+                themed_svg = remap_poster_theme(source_svg, source_theme, theme_key)
+
+            # Generate Etsy listing image (2700x2025, 4:3 ratio)
+            etsy_bytes = generate_etsy_listing_image(themed_svg)
+            base_key = file_record.svg_storage_key.replace("svg/", "").replace(".svg", "")
+            etsy_key = f"etsy/{base_key}_{theme_key}.png"
+            await store_file(etsy_key, etsy_bytes, content_type="image/png")
+
+            # Generate thumbnail (2000px)
+            thumb_bytes = generate_thumbnail(themed_svg, background_color=None)
+            thumb_key = f"thumbnails/{base_key}_{theme_key}.png"
+            await store_file(thumb_key, thumb_bytes, content_type="image/png")
+
+            variants.append(ThemeVariantResult(
+                theme=theme_key,
+                label=label,
+                etsy_key=etsy_key,
+                thumbnail_key=thumb_key,
+            ))
+            succeeded += 1
+        except Exception as e:
+            log.warning(f"Theme variant '{theme_key}' failed for {file_id}: {e}")
+            variants.append(ThemeVariantResult(
+                theme=theme_key,
+                label=label,
+                error=str(e),
+            ))
+            failed += 1
+
+    return ThemeVariantsResponse(
+        file_id=file_id,
+        location_name=file_record.location_name,
+        variants=variants,
+        succeeded=succeeded,
+        failed=failed,
     )
 
 

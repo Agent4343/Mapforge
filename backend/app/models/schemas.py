@@ -253,6 +253,34 @@ class BatchGenerateResponse(BaseModel):
     failed: int
 
 
+# --- Theme Variants ---
+
+class ThemeVariantsRequest(BaseModel):
+    """Generate Etsy listing images in multiple color themes from one design."""
+    source_theme: str = Field("classic", description="Theme the original SVG was generated with")
+    themes: list[str] = Field(
+        default_factory=lambda: ["classic", "minimal", "modern_dark"],
+        description="List of theme keys to generate variants for",
+        max_length=15,
+    )
+
+
+class ThemeVariantResult(BaseModel):
+    theme: str
+    label: str
+    etsy_key: str | None = None
+    thumbnail_key: str | None = None
+    error: str | None = None
+
+
+class ThemeVariantsResponse(BaseModel):
+    file_id: str
+    location_name: str
+    variants: list[ThemeVariantResult]
+    succeeded: int
+    failed: int
+
+
 # --- Multi-Size Export ---
 
 class MultiSizeExportRequest(BaseModel):
