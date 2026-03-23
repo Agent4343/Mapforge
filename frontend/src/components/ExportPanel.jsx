@@ -23,8 +23,28 @@ export default function ExportPanel({
   const [listSuccess, setListSuccess] = useState(false);
   const [listing, setListing] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
+  const [downloading, setDownloading] = useState(null); // tracks which button is active
+  const [downloadDone, setDownloadDone] = useState(null); // brief checkmark flash
 
   const isPrint = true; // Always print/poster mode
+
+  async function handleDownloadWithFeedback(fn, key) {
+    setDownloading(key);
+    setDownloadDone(null);
+    try {
+      await fn();
+      setDownloadDone(key);
+      setTimeout(() => setDownloadDone(null), 1500);
+    } finally {
+      setDownloading(null);
+    }
+  }
+
+  function dlLabel(label, key) {
+    if (downloading === key) return <span className="generate-btn-content"><span className="spinner-inline" /> Downloading...</span>;
+    if (downloadDone === key) return `\u2713 ${label}`;
+    return label;
+  }
 
   async function handleList() {
     if (!result) return;
@@ -138,25 +158,25 @@ export default function ExportPanel({
           <div className="export-download-section">
             <div className="export-buttons">
                   {result.print_png_available && (
-                    <button className="btn btn-primary" onClick={onDownloadPrintPNG}>
-                      Download Print PNG ({printDPI || 300} DPI)
+                    <button className="btn btn-primary" disabled={!!downloading} onClick={() => handleDownloadWithFeedback(onDownloadPrintPNG, "print")}>
+                      {dlLabel(`Download Print PNG (${printDPI || 300} DPI)`, "print")}
                     </button>
                   )}
                   {result.etsy_listing_available && (
-                    <button className="btn btn-secondary" onClick={onDownloadEtsyListing}>
-                      Etsy Listing (2700x2025)
+                    <button className="btn btn-secondary" disabled={!!downloading} onClick={() => handleDownloadWithFeedback(onDownloadEtsyListing, "etsy")}>
+                      {dlLabel("Etsy Listing (2700x2025)", "etsy")}
                     </button>
                   )}
                   {result.thumbnail_available && (
-                    <button className="btn btn-secondary" onClick={onDownloadThumbnail}>
-                      Etsy Mockup PNG
+                    <button className="btn btn-secondary" disabled={!!downloading} onClick={() => handleDownloadWithFeedback(onDownloadThumbnail, "mockup")}>
+                      {dlLabel("Etsy Mockup PNG", "mockup")}
                     </button>
                   )}
-                  <button className="btn btn-secondary" onClick={onDownloadPreview}>
-                    Watermarked Preview
+                  <button className="btn btn-secondary" disabled={!!downloading} onClick={() => handleDownloadWithFeedback(onDownloadPreview, "preview")}>
+                    {dlLabel("Watermarked Preview", "preview")}
                   </button>
-                  <button className="btn btn-secondary" onClick={onDownload}>
-                    SVG Source
+                  <button className="btn btn-secondary" disabled={!!downloading} onClick={() => handleDownloadWithFeedback(onDownload, "svg")}>
+                    {dlLabel("SVG Source", "svg")}
                   </button>
             </div>
           </div>

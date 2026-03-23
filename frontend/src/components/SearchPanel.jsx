@@ -59,7 +59,7 @@ export default function SearchPanel({ onSelect, selectedResult, country }) {
         <input
           type="text"
           className="search-input"
-          placeholder="Search location..."
+          placeholder="Search a city, lake, park, or address..."
           value={query}
           onChange={handleInput}
           maxLength={200}

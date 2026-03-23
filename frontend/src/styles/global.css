@@ -1348,8 +1348,17 @@ body {
     gap: 12px;
   }
 
+  .panel-left {
+    transition: max-height 0.3s ease, opacity 0.3s ease, padding 0.3s ease;
+    overflow: hidden;
+  }
+
   .panel-left.collapsed {
-    display: none;
+    max-height: 0;
+    opacity: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    pointer-events: none;
   }
 
   .panel-right {
