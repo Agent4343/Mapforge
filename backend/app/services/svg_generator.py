@@ -1439,8 +1439,8 @@ def _render_heart_marker(
     if hx < 0 or hx > board_w or hy < 0 or hy > board_h:
         return
 
-    # Scale heart to ~4% of the smaller board dimension
-    s = min(board_w, board_h) * 0.04
+    # Scale heart to ~2% of the smaller board dimension
+    s = min(board_w, board_h) * 0.02
     stroke_w = round(s * 0.06, 2)  # proportional stroke
 
     lines.append("  <!-- Layer: heart_marker -->")
