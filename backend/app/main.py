@@ -15,7 +15,7 @@ from slowapi.errors import RateLimitExceeded
 from app.config import settings
 from app.database import init_db
 from app.logging_config import log
-from app.routers import admin, auth, generate, library, marketplace, search, webhooks
+from app.routers import admin, auth, etsy, generate, library, marketplace, search, webhooks
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
@@ -100,6 +100,7 @@ app.include_router(search.router)
 app.include_router(generate.router)
 app.include_router(library.router)
 app.include_router(marketplace.router)
+app.include_router(etsy.router)
 app.include_router(webhooks.router)
 
 

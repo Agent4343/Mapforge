@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { createListing, aiDescribe } from "../services/api.js";
+import { useState, useEffect } from "react";
+import { createListing, aiDescribe, getEtsyStatus, connectEtsy, disconnectEtsy, publishToEtsy } from "../services/api.js";
 
 export default function ExportPanel({
   result,
@@ -24,10 +24,30 @@ export default function ExportPanel({
   const [listSuccess, setListSuccess] = useState(false);
   const [listing, setListing] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
-  const [downloading, setDownloading] = useState(null); // tracks which button is active
-  const [downloadDone, setDownloadDone] = useState(null); // brief checkmark flash
+  const [downloading, setDownloading] = useState(null);
+  const [downloadDone, setDownloadDone] = useState(null);
 
-  const isPrint = true; // Always print/poster mode
+  // Etsy connection state
+  const [etsyStatus, setEtsyStatus] = useState({ connected: false });
+  const [etsyPublishing, setEtsyPublishing] = useState(false);
+  const [etsyResult, setEtsyResult] = useState(null);
+
+  const isPrint = true;
+
+  useEffect(() => {
+    if (user) {
+      getEtsyStatus().then(setEtsyStatus).catch(() => {});
+    }
+  }, [user]);
+
+  // Check for ?etsy_connected=1 in URL (OAuth callback redirect)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("etsy_connected") === "1") {
+      getEtsyStatus().then(setEtsyStatus).catch(() => {});
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
 
   async function handleDownloadWithFeedback(fn, key) {
     setDownloading(key);
@@ -94,6 +114,45 @@ export default function ExportPanel({
       setListError(err.message);
     } finally {
       setAiLoading(false);
+    }
+  }
+
+  async function handleConnectEtsy() {
+    try {
+      const { auth_url } = await connectEtsy();
+      window.location.href = auth_url;
+    } catch (err) {
+      setListError(err.message);
+    }
+  }
+
+  async function handleDisconnectEtsy() {
+    try {
+      await disconnectEtsy();
+      setEtsyStatus({ connected: false });
+    } catch (err) {
+      setListError(err.message);
+    }
+  }
+
+  async function handlePublishToEtsy() {
+    if (!result) return;
+    setEtsyPublishing(true);
+    setListError(null);
+    setEtsyResult(null);
+    try {
+      const res = await publishToEtsy(
+        result.file_id,
+        listTitle || result.location_name,
+        listDesc || `Beautiful CNC-ready map of ${result.location_name}. Digital download includes SVG source file.`,
+        parseFloat(listPrice) || 9.99,
+        listTags,
+      );
+      setEtsyResult(res);
+    } catch (err) {
+      setListError(err.message);
+    } finally {
+      setEtsyPublishing(false);
     }
   }
 
@@ -185,19 +244,40 @@ export default function ExportPanel({
             </div>
           </div>
 
-          {/* AI + Marketplace Section */}
+          {/* Etsy Connection Status */}
+          {user && (
+            <div className="etsy-connection-section">
+              {etsyStatus.connected ? (
+                <div className="etsy-connected">
+                  <span className="etsy-badge">Etsy Connected: {etsyStatus.shop_name || "Your Shop"}</span>
+                  <button className="btn btn-sm btn-secondary" onClick={handleDisconnectEtsy}>
+                    Disconnect
+                  </button>
+                </div>
+              ) : (
+                <button className="btn btn-etsy btn-full" onClick={handleConnectEtsy}>
+                  Connect Etsy Shop
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Sell / Publish Section */}
           {canSell && !showListForm && (
-            <button
-              className="btn btn-marketplace btn-full"
-              onClick={() => {
-                setListTitle(result.location_name);
-                setShowListForm(true);
-                setListSuccess(false);
-                setListError(null);
-              }}
-            >
-              Sell on Marketplace
-            </button>
+            <div className="sell-buttons">
+              <button
+                className="btn btn-marketplace btn-full"
+                onClick={() => {
+                  setListTitle(result.location_name);
+                  setShowListForm(true);
+                  setListSuccess(false);
+                  setListError(null);
+                  setEtsyResult(null);
+                }}
+              >
+                {etsyStatus.connected ? "Sell on Marketplace / Etsy" : "Sell on Marketplace"}
+              </button>
+            </div>
           )}
 
           {showListForm && (
@@ -262,13 +342,42 @@ export default function ExportPanel({
               </div>
               {listError && <div className="error-message">{listError}</div>}
               {listSuccess && <div className="success-message">Listed on Marketplace!</div>}
-              <button
-                className="btn btn-primary btn-full"
-                onClick={handleList}
-                disabled={listing || listSuccess}
-              >
-                {listing ? "Listing..." : listSuccess ? "Listed!" : "Publish Listing"}
-              </button>
+              {etsyResult && (
+                <div className="success-message">
+                  Draft listing created on Etsy!{" "}
+                  <a href={etsyResult.listing_url} target="_blank" rel="noopener noreferrer">
+                    View on Etsy
+                  </a>
+                </div>
+              )}
+
+              <div className="list-form-actions">
+                <button
+                  className="btn btn-primary btn-full"
+                  onClick={handleList}
+                  disabled={listing || listSuccess}
+                >
+                  {listing ? "Listing..." : listSuccess ? "Listed!" : "Publish to Marketplace"}
+                </button>
+
+                {etsyStatus.connected && (
+                  <button
+                    className="btn btn-etsy btn-full"
+                    onClick={handlePublishToEtsy}
+                    disabled={etsyPublishing || !!etsyResult}
+                  >
+                    {etsyPublishing ? (
+                      <span className="generate-btn-content">
+                        <span className="spinner-inline" /> Publishing to Etsy...
+                      </span>
+                    ) : etsyResult ? (
+                      "Published to Etsy!"
+                    ) : (
+                      "Publish to Etsy (Draft)"
+                    )}
+                  </button>
+                )}
+              </div>
             </div>
           )}
 

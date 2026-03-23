@@ -384,6 +384,59 @@ async function aiDescribe(locationName, style, country = "", isCity = false, pro
   return resp.json();
 }
 
+// --- Etsy Integration ---
+
+async function getEtsyStatus() {
+  const resp = await fetchWithTimeout(`${API_BASE}/etsy/status`, {
+    headers: { Authorization: `Bearer ${authToken}` },
+  });
+  if (!resp.ok) return { connected: false };
+  return resp.json();
+}
+
+async function connectEtsy() {
+  const resp = await fetchWithTimeout(`${API_BASE}/etsy/connect`, {
+    headers: { Authorization: `Bearer ${authToken}` },
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Failed to start Etsy connection"));
+  }
+  return resp.json();
+}
+
+async function disconnectEtsy() {
+  const resp = await fetchWithTimeout(`${API_BASE}/etsy/disconnect`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${authToken}` },
+  });
+  if (!resp.ok) throw new Error("Failed to disconnect Etsy");
+  return resp.json();
+}
+
+async function publishToEtsy(fileId, title, description, price, tags) {
+  const resp = await fetchWithTimeout(`${API_BASE}/etsy/publish`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${authToken}`,
+    },
+    body: JSON.stringify({
+      file_id: fileId,
+      title,
+      description,
+      price: parseFloat(price),
+      tags: typeof tags === "string" ? tags.split(",").map((t) => t.trim()).filter(Boolean) : tags,
+    }),
+    timeout: 60000,
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Failed to publish to Etsy"));
+  }
+  return resp.json();
+}
+
 async function getAdminStats() {
   const resp = await fetchWithTimeout(`${API_BASE}/admin/stats`, {
     headers: { Authorization: `Bearer ${authToken}` },
@@ -404,5 +457,7 @@ export {
   browseMarketplace, createListing, purchaseListing,
   getMyPurchases, updateListing, removeListing,
   getSellerDashboard, submitReview, getReviews,
-  aiDescribe, getAdminStats,
+  aiDescribe,
+  getEtsyStatus, connectEtsy, disconnectEtsy, publishToEtsy,
+  getAdminStats,
 };

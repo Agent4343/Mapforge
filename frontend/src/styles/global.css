@@ -1709,6 +1709,49 @@ body {
   border-color: var(--success);
 }
 
+.btn-etsy {
+  background: linear-gradient(135deg, #f1641e, #d35400);
+  color: white;
+  border: none;
+  margin-top: 6px;
+}
+
+.btn-etsy:hover:not(:disabled) {
+  background: linear-gradient(135deg, #d35400, #c0392b);
+}
+
+.btn-etsy:disabled {
+  opacity: 0.6;
+}
+
+.etsy-connection-section {
+  margin-top: 10px;
+  padding: 8px 0;
+}
+
+.etsy-connected {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  background: rgba(241, 100, 30, 0.08);
+  border: 1px solid rgba(241, 100, 30, 0.25);
+  border-radius: 6px;
+}
+
+.etsy-badge {
+  font-size: 0.82rem;
+  color: #f1641e;
+  font-weight: 500;
+}
+
+.list-form-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .btn-ai {
   background: linear-gradient(135deg, #5a3d2b, #8e44ad);
   color: white;
