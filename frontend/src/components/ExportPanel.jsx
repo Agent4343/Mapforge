@@ -8,6 +8,7 @@ export default function ExportPanel({
   onDownloadThumbnail,
   onDownloadPrintPNG,
   onDownloadEtsyListing,
+  onDownloadEtsyPackage,
   onDownloadPreview,
   canGenerate,
   generating,
@@ -167,6 +168,9 @@ export default function ExportPanel({
                       {dlLabel("Etsy Listing (2700x2025)", "etsy")}
                     </button>
                   )}
+                  <button className="btn btn-primary" disabled={!!downloading} onClick={() => handleDownloadWithFeedback(onDownloadEtsyPackage, "etsy-pkg")}>
+                    {dlLabel("Etsy Export Package (ZIP)", "etsy-pkg")}
+                  </button>
                   {result.thumbnail_available && (
                     <button className="btn btn-secondary" disabled={!!downloading} onClick={() => handleDownloadWithFeedback(onDownloadThumbnail, "mockup")}>
                       {dlLabel("Etsy Mockup PNG", "mockup")}

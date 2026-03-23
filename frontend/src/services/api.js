@@ -226,6 +226,14 @@ async function downloadPreview(fileId) {
   return resp.blob();
 }
 
+async function downloadEtsyPackage(fileId) {
+  const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}/etsy-package`, {
+    timeout: 60000,
+  });
+  if (!resp.ok) throw new Error("Etsy package download failed");
+  return resp.blob();
+}
+
 async function getPrintSizes() {
   const resp = await fetchWithTimeout(`${API_BASE}/print-sizes`);
   if (!resp.ok) throw new Error("Failed to load print sizes");
@@ -391,7 +399,7 @@ export {
   setToken, getToken, register, login, logout, getProfile, requestPasswordReset, resetPassword, subscribe,
   searchLocations, generateSVG, generatePin, batchGenerate,
   downloadSVG, downloadThumbnail, downloadPrintPNG,
-  downloadEtsyListing, downloadPreview, getPrintSizes,
+  downloadEtsyListing, downloadEtsyPackage, downloadPreview, getPrintSizes,
   getLibrary, deleteLibraryFile,
   browseMarketplace, createListing, purchaseListing,
   getMyPurchases, updateListing, removeListing,

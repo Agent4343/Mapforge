@@ -1,6 +1,8 @@
 """Print/poster map generation API router — with persistence, auth, and all product types."""
 
 import asyncio
+import io
+import zipfile
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -908,6 +910,97 @@ async def generate_theme_variants(
         variants=variants,
         succeeded=succeeded,
         failed=failed,
+    )
+
+
+@router.get("/download/{file_id}/etsy-package")
+async def download_etsy_package(
+    file_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Download a ZIP bundle with everything needed for an Etsy listing.
+
+    Includes: SVG source, Etsy listing image (2700x2025), print PNG,
+    thumbnail mockup, and a listing.txt with AI-generated title/description/tags.
+    """
+    from app.services.ai_description_generator import generate_full_listing
+
+    result = await db.execute(
+        select(GeneratedFile).where(GeneratedFile.id == file_id)
+    )
+    file_record = result.scalar_one_or_none()
+    if not file_record:
+        raise HTTPException(status_code=404, detail="File not found.")
+
+    location = file_record.location_name
+    seo_name = _seo_filename(location, "").rstrip(".")  # base name without extension
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        # 1. SVG source
+        svg_bytes = await retrieve_file(file_record.svg_storage_key)
+        if svg_bytes:
+            zf.writestr(f"{seo_name}.svg", svg_bytes)
+
+        # 2. Print PNG
+        if file_record.print_png_key:
+            png_bytes = await retrieve_file(file_record.print_png_key)
+            if png_bytes:
+                zf.writestr(f"{seo_name}-print.png", png_bytes)
+
+        # 3. Etsy listing image (2700x2025)
+        etsy_key = file_record.svg_storage_key.replace("svg/", "etsy/").replace(".svg", "_etsy.png")
+        etsy_bytes = await retrieve_file(etsy_key)
+        if etsy_bytes:
+            zf.writestr(f"{seo_name}-etsy-listing-2700x2025.png", etsy_bytes)
+
+        # 4. Thumbnail / mockup
+        if file_record.thumbnail_key:
+            thumb_bytes = await retrieve_file(file_record.thumbnail_key)
+            if thumb_bytes:
+                zf.writestr(f"{seo_name}-mockup.png", thumb_bytes)
+
+        # 5. AI-generated listing text (title, description, tags)
+        is_city = file_record.product_type == "city"
+        try:
+            ai = await generate_full_listing(
+                location_name=location,
+                style=file_record.style,
+                country="",
+                province=file_record.province or "",
+                is_city=is_city,
+            )
+        except Exception:
+            ai = {"title": None, "description": None, "tags": None}
+
+        listing_lines = [
+            f"=== MapForge Etsy Listing — {location} ===",
+            "",
+            f"TITLE: {ai.get('title') or location + ' Map SVG — CNC Laser Cut File — Digital Download'}",
+            "",
+            f"TAGS: {ai.get('tags') or 'map svg, cnc file, laser cut, wall art, digital download'}",
+            "",
+            "DESCRIPTION:",
+            ai.get("description") or f"Beautiful CNC-ready map of {location}. Digital download includes SVG source file. Compatible with VCarve Pro, Fusion 360, Carbide Create, and LightBurn.",
+            "",
+            "---",
+            "Files included in this package:",
+            f"  - {seo_name}.svg (CNC-ready vector source)",
+            f"  - {seo_name}-print.png (high-res print)",
+            f"  - {seo_name}-etsy-listing-2700x2025.png (listing image)",
+            f"  - {seo_name}-mockup.png (product mockup)",
+        ]
+        zf.writestr("listing.txt", "\n".join(listing_lines))
+
+    zip_bytes = buf.getvalue()
+    zip_filename = _seo_filename(location, "zip", suffix="etsy-package")
+
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{zip_filename}"',
+        },
     )
 
 

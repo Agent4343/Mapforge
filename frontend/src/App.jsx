@@ -16,7 +16,7 @@ import PricingModal from "./components/PricingModal.jsx";
 import PurchasesView from "./components/PurchasesView.jsx";
 import {
   generateSVG, generatePin, downloadSVG, downloadThumbnail, downloadPrintPNG,
-  downloadEtsyListing, downloadPreview,
+  downloadEtsyListing, downloadEtsyPackage, downloadPreview,
   getProfile, logout, getToken, subscribe,
 } from "./services/api.js";
 
@@ -374,6 +374,16 @@ export default function App() {
     }
   }, [result, config.text]);
 
+  const handleDownloadEtsyPackage = useCallback(async () => {
+    if (!result) return;
+    try {
+      const blob = await downloadEtsyPackage(result.file_id);
+      _triggerDownload(blob, config.text + "_etsy_package", "zip");
+    } catch (err) {
+      setError(err.message);
+    }
+  }, [result, config.text]);
+
   const handleDownloadPreview = useCallback(async () => {
     if (!result) return;
     try {
@@ -583,6 +593,7 @@ export default function App() {
             onDownloadThumbnail={handleDownloadThumbnail}
             onDownloadPrintPNG={handleDownloadPrintPNG}
             onDownloadEtsyListing={handleDownloadEtsyListing}
+            onDownloadEtsyPackage={handleDownloadEtsyPackage}
             onDownloadPreview={handleDownloadPreview}
             canGenerate={!!selectedResult || (config.productType === "name_sign" && !!pinCoords)}
             generating={generating}
