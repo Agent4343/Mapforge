@@ -1,9 +1,15 @@
-"""Stripe webhook handler for subscription, payment, and payout events."""
+"""Stripe and Etsy webhook handlers for subscription, payment, and order events."""
+
+import base64
+import hashlib
+import hmac
+import time
 
 from fastapi import APIRouter, Request, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import async_session
 from app.logging_config import log
 from app.models.db_models import User, Purchase, MarketplaceListing
@@ -219,3 +225,133 @@ async def _handle_account_updated(db: AsyncSession, data: dict):
     user.stripe_payouts_enabled = payouts_enabled
     await db.commit()
     log.info(f"Account {account_id} updated: payouts={payouts_enabled}, charges={charges_enabled}")
+
+
+# =============================================================================
+# Etsy Webhooks
+# =============================================================================
+
+def _verify_etsy_signature(payload: bytes, headers: dict) -> bool:
+    """Verify Etsy webhook signature using HMAC-SHA256.
+
+    Per Etsy docs:
+      signed_content = webhook-id + "." + webhook-timestamp + "." + raw_body
+      secret_bytes = base64_decode(secret.split("_")[1])
+      expected_sig = base64_encode(HMAC_SHA256(secret_bytes, signed_content))
+    """
+    secret = settings.ETSY_WEBHOOK_SECRET
+    if not secret:
+        log.warning("ETSY_WEBHOOK_SECRET not set — skipping signature verification")
+        return True
+
+    webhook_id = headers.get("webhook-id", "")
+    webhook_timestamp = headers.get("webhook-timestamp", "")
+    webhook_signature = headers.get("webhook-signature", "")
+
+    if not webhook_id or not webhook_timestamp or not webhook_signature:
+        return False
+
+    # Reject stale timestamps (>5 min drift)
+    try:
+        ts = int(webhook_timestamp)
+        if abs(time.time() - ts) > 300:
+            log.warning("Etsy webhook rejected: stale timestamp (%d vs %d)", ts, int(time.time()))
+            return False
+    except ValueError:
+        return False
+
+    # Derive secret key: remove "whsec_" prefix, base64-decode
+    secret_part = secret.split("_", 1)[-1] if "_" in secret else secret
+    try:
+        secret_bytes = base64.b64decode(secret_part)
+    except Exception:
+        log.error("Failed to decode ETSY_WEBHOOK_SECRET")
+        return False
+
+    # Compute expected signature
+    signed_content = f"{webhook_id}.{webhook_timestamp}.{payload.decode('utf-8')}"
+    expected = base64.b64encode(
+        hmac.new(secret_bytes, signed_content.encode("utf-8"), hashlib.sha256).digest()
+    ).decode("ascii")
+
+    # Compare against all signatures in the header (space-separated)
+    for sig in webhook_signature.split(" "):
+        # Signatures may have a version prefix like "v1,"
+        sig_value = sig.split(",", 1)[-1] if "," in sig else sig
+        if hmac.compare_digest(expected, sig_value):
+            return True
+
+    return False
+
+
+@router.post("/etsy")
+async def etsy_webhook(request: Request):
+    """Handle Etsy webhook events (order.paid, order.shipped, etc.).
+
+    Etsy sends real-time notifications when orders are placed, shipped,
+    or cancelled. We sync these events back to the seller's dashboard.
+    """
+    payload = await request.body()
+    headers = dict(request.headers)
+
+    if not _verify_etsy_signature(payload, headers):
+        raise HTTPException(status_code=400, detail="Invalid Etsy webhook signature")
+
+    import json
+    try:
+        event = json.loads(payload)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    event_type = event.get("event_type", "")
+    data = event.get("data", event)
+    shop_id = str(data.get("shop_id", ""))
+
+    log.info(f"Etsy webhook: {event_type} for shop {shop_id}")
+
+    async with async_session() as db:
+        if event_type == "order.paid":
+            await _handle_etsy_order_paid(db, data, shop_id)
+        elif event_type == "order.canceled":
+            await _handle_etsy_order_canceled(db, data, shop_id)
+        elif event_type == "order.shipped":
+            log.info(f"Etsy order shipped for shop {shop_id}")
+        elif event_type == "order.delivered":
+            log.info(f"Etsy order delivered for shop {shop_id}")
+        else:
+            log.info(f"Unhandled Etsy event: {event_type}")
+
+    return {"status": "ok"}
+
+
+async def _handle_etsy_order_paid(db: AsyncSession, data: dict, shop_id: str):
+    """Handle Etsy order.paid — log the sale for the connected user's dashboard."""
+    # Find the user who owns this Etsy shop
+    result = await db.execute(
+        select(User).where(User.etsy_shop_id == shop_id)
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        log.warning(f"Etsy order.paid: no user found for shop {shop_id}")
+        return
+
+    # The resource_url contains the receipt endpoint — we could fetch details
+    # but for now we just log the event for the dashboard
+    resource_url = data.get("resource_url", "")
+    log.info(f"Etsy sale for user {user.username} (shop {shop_id}): {resource_url}")
+
+    # Note: To sync full order details, you'd fetch the receipt from:
+    #   GET {resource_url} with the user's access token
+    # For now we log the event — full receipt sync can be added later.
+
+
+async def _handle_etsy_order_canceled(db: AsyncSession, data: dict, shop_id: str):
+    """Handle Etsy order.canceled — log the cancellation."""
+    result = await db.execute(
+        select(User).where(User.etsy_shop_id == shop_id)
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        return
+
+    log.info(f"Etsy order canceled for user {user.username} (shop {shop_id})")

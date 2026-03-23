@@ -15,7 +15,8 @@ import LandingPage from "./components/LandingPage.jsx";
 import PricingModal from "./components/PricingModal.jsx";
 import PurchasesView from "./components/PurchasesView.jsx";
 import {
-  generateSVG, generatePin, downloadSVG, downloadThumbnail, downloadPrintPNG,
+  generateSVG, generatePin, downloadSVG, downloadDXF, downloadSTL,
+  downloadThumbnail, downloadPrintPNG,
   downloadEtsyListing, downloadEtsyPackage, downloadPreview,
   getProfile, logout, getToken, subscribe,
 } from "./services/api.js";
@@ -364,6 +365,26 @@ export default function App() {
     }
   }, [result, config.text]);
 
+  const handleDownloadDXF = useCallback(async () => {
+    if (!result) return;
+    try {
+      const blob = await downloadDXF(result.file_id);
+      _triggerDownload(blob, config.text + "_cnc", "dxf");
+    } catch (err) {
+      setError(err.message);
+    }
+  }, [result, config.text]);
+
+  const handleDownloadSTL = useCallback(async () => {
+    if (!result) return;
+    try {
+      const blob = await downloadSTL(result.file_id);
+      _triggerDownload(blob, config.text + "_3d", "stl");
+    } catch (err) {
+      setError(err.message);
+    }
+  }, [result, config.text]);
+
   const handleDownloadEtsyListing = useCallback(async () => {
     if (!result) return;
     try {
@@ -590,6 +611,8 @@ export default function App() {
             result={result}
             onGenerate={handleGenerate}
             onDownload={handleDownload}
+            onDownloadDXF={handleDownloadDXF}
+            onDownloadSTL={handleDownloadSTL}
             onDownloadThumbnail={handleDownloadThumbnail}
             onDownloadPrintPNG={handleDownloadPrintPNG}
             onDownloadEtsyListing={handleDownloadEtsyListing}

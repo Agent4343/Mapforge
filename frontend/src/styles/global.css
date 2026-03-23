@@ -1716,6 +1716,15 @@ body {
   margin-top: 6px;
 }
 
+.btn-3d {
+  border-color: #3498db;
+  color: #3498db;
+}
+
+.btn-3d:hover:not(:disabled) {
+  background: rgba(52, 152, 219, 0.1);
+}
+
 .btn-etsy:hover:not(:disabled) {
   background: linear-gradient(135deg, #d35400, #c0392b);
 }

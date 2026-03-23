@@ -23,6 +23,8 @@ from app.models.schemas import (
     ThemeVariantsRequest, ThemeVariantResult, ThemeVariantsResponse,
 )
 from app.services.auth import get_current_user, get_optional_user
+from app.services.dxf_generator import generate_dxf
+from app.services.stl_generator import generate_stl
 from app.services.geo_fetch import fetch_area_around_point, fetch_geometry
 from app.services.geometry_processor import process_geometry, transform_wgs84_to_board
 from app.services.svg_generator import generate_svg
@@ -280,6 +282,37 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         log.error(f"Failed to store SVG: {e}")
         raise HTTPException(status_code=500, detail="Failed to save generated file. Please try again.")
 
+    # Generate DXF (CNC-ready vector) alongside SVG
+    dxf_key = None
+    try:
+        dxf_bytes = generate_dxf(
+            processed=processed,
+            location_name=location_name,
+            show_coordinates=req.show_coordinates,
+            font_size_mm=req.font_size_mm,
+            center_latlon=processed.get("center_latlon"),
+            streets_data=streets_data,
+            markers=board_markers,
+        )
+        dxf_key = svg_key.replace("svg/", "dxf/").replace(".svg", ".dxf")
+        await store_file(dxf_key, dxf_bytes)
+    except Exception as e:
+        log.warning(f"DXF generation failed (non-fatal): {e}")
+
+    # Generate STL 3D mesh when contours are available (bathymetric/topo)
+    stl_key = None
+    if contour_data:
+        try:
+            stl_bytes = generate_stl(
+                processed=processed,
+                contour_data=contour_data,
+            )
+            stl_key = svg_key.replace("svg/", "stl/").replace(".svg", ".stl")
+            await store_file(stl_key, stl_bytes)
+            log.info(f"STL generated: {len(stl_bytes)} bytes")
+        except Exception as e:
+            log.warning(f"STL generation failed (non-fatal): {e}")
+
     # Generate PNG thumbnail for Etsy product mockups
     thumbnail_key = None
     try:
@@ -347,7 +380,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         path_count=result["path_count"],
         layer_count=result["layer_count"],
         svg_storage_key=svg_key,
-        dxf_storage_key=None,
+        dxf_storage_key=dxf_key,
         thumbnail_key=thumbnail_key,
         print_png_key=print_png_key,
         province=province,
@@ -378,6 +411,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         thumbnail_available=thumbnail_key is not None,
         print_png_available=print_png_key is not None,
         etsy_listing_available=etsy_key is not None,
+        dxf_available=dxf_key is not None,
+        stl_available=stl_key is not None,
         file_id=file_id,
         location_name=location_name,
         dimensions_mm=(board_w, board_h),
@@ -660,7 +695,7 @@ async def download(
     format: ExportFormat = ExportFormat.svg,
     db: AsyncSession = Depends(get_db),
 ):
-    """Download a generated SVG or PNG file."""
+    """Download a generated SVG, PNG, DXF, or STL file."""
     result = await db.execute(
         select(GeneratedFile).where(GeneratedFile.id == file_id)
     )
@@ -674,6 +709,19 @@ async def download(
         content = await retrieve_file(file_record.print_png_key)
         media_type = "image/png"
         ext = "png"
+    elif format == ExportFormat.dxf:
+        if not file_record.dxf_storage_key:
+            raise HTTPException(status_code=404, detail="DXF not available. Regenerate the map to create a DXF file.")
+        content = await retrieve_file(file_record.dxf_storage_key)
+        media_type = "application/dxf"
+        ext = "dxf"
+    elif format == ExportFormat.stl:
+        stl_key = file_record.svg_storage_key.replace("svg/", "stl/").replace(".svg", ".stl")
+        content = await retrieve_file(stl_key)
+        if content is None:
+            raise HTTPException(status_code=404, detail="STL not available. Generate with contours enabled for 3D export.")
+        media_type = "model/stl"
+        ext = "stl"
     else:
         content = await retrieve_file(file_record.svg_storage_key)
         media_type = "image/svg+xml"
@@ -942,7 +990,13 @@ async def download_etsy_package(
         if svg_bytes:
             zf.writestr(f"{seo_name}.svg", svg_bytes)
 
-        # 2. Print PNG
+        # 2. DXF source (CNC-ready)
+        if file_record.dxf_storage_key:
+            dxf_bytes = await retrieve_file(file_record.dxf_storage_key)
+            if dxf_bytes:
+                zf.writestr(f"{seo_name}.dxf", dxf_bytes)
+
+        # 3. Print PNG
         if file_record.print_png_key:
             png_bytes = await retrieve_file(file_record.print_png_key)
             if png_bytes:
@@ -986,6 +1040,7 @@ async def download_etsy_package(
             "---",
             "Files included in this package:",
             f"  - {seo_name}.svg (CNC-ready vector source)",
+            f"  - {seo_name}.dxf (VCarve Pro / CAM import)",
             f"  - {seo_name}-print.png (high-res print)",
             f"  - {seo_name}-etsy-listing-2700x2025.png (listing image)",
             f"  - {seo_name}-mockup.png (product mockup)",

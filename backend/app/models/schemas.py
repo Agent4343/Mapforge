@@ -24,6 +24,8 @@ class CutStyle(str, Enum):
 class ExportFormat(str, Enum):
     svg = "svg"
     png = "png"
+    dxf = "dxf"
+    stl = "stl"
 
 
 class BoardSize(str, Enum):
@@ -223,6 +225,8 @@ class GenerateResponse(BaseModel):
     thumbnail_available: bool = False
     print_png_available: bool = False
     etsy_listing_available: bool = False
+    dxf_available: bool = False
+    stl_available: bool = False
     file_id: str
     location_name: str
     dimensions_mm: tuple[float, float]

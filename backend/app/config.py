@@ -70,6 +70,7 @@ class Settings:
     ETSY_API_KEY: str = os.getenv("ETSY_API_KEY", "")
     ETSY_API_SECRET: str = os.getenv("ETSY_API_SECRET", "")
     ETSY_REDIRECT_URI: str = os.getenv("ETSY_REDIRECT_URI", "http://localhost:8000/api/v1/etsy/callback")
+    ETSY_WEBHOOK_SECRET: str = os.getenv("ETSY_WEBHOOK_SECRET", "")
 
     # Admin — set via ADMIN_EMAILS env var (comma-separated)
     ADMIN_EMAILS: list[str] = [e.strip() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()]

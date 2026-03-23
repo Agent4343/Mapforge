@@ -5,6 +5,8 @@ export default function ExportPanel({
   result,
   onGenerate,
   onDownload,
+  onDownloadDXF,
+  onDownloadSTL,
   onDownloadThumbnail,
   onDownloadPrintPNG,
   onDownloadEtsyListing,
@@ -241,6 +243,16 @@ export default function ExportPanel({
                   <button className="btn btn-secondary" disabled={!!downloading} onClick={() => handleDownloadWithFeedback(onDownload, "svg")}>
                     {dlLabel("SVG Source", "svg")}
                   </button>
+                  {result.dxf_available && (
+                    <button className="btn btn-secondary" disabled={!!downloading} onClick={() => handleDownloadWithFeedback(onDownloadDXF, "dxf")}>
+                      {dlLabel("DXF (VCarve/CAM)", "dxf")}
+                    </button>
+                  )}
+                  {result.stl_available && (
+                    <button className="btn btn-secondary btn-3d" disabled={!!downloading} onClick={() => handleDownloadWithFeedback(onDownloadSTL, "stl")}>
+                      {dlLabel("3D STL (Bathymetric)", "stl")}
+                    </button>
+                  )}
             </div>
           </div>
 

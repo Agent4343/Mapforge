@@ -202,6 +202,18 @@ async function downloadSVG(fileId) {
   return resp.blob();
 }
 
+async function downloadDXF(fileId) {
+  const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}?format=dxf`);
+  if (!resp.ok) throw new Error("DXF download failed");
+  return resp.blob();
+}
+
+async function downloadSTL(fileId) {
+  const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}?format=stl`);
+  if (!resp.ok) throw new Error("STL download failed");
+  return resp.blob();
+}
+
 async function downloadThumbnail(fileId) {
   const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}/thumbnail`);
   if (!resp.ok) throw new Error("Thumbnail download failed");
@@ -451,7 +463,7 @@ async function getAdminStats() {
 export {
   setToken, getToken, register, login, logout, getProfile, requestPasswordReset, resetPassword, subscribe,
   searchLocations, generateSVG, generatePin, batchGenerate,
-  downloadSVG, downloadThumbnail, downloadPrintPNG,
+  downloadSVG, downloadDXF, downloadSTL, downloadThumbnail, downloadPrintPNG,
   downloadEtsyListing, downloadEtsyPackage, downloadPreview, getPrintSizes,
   getLibrary, deleteLibraryFile,
   browseMarketplace, createListing, purchaseListing,
