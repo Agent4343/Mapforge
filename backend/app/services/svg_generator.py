@@ -1308,23 +1308,25 @@ def _render_pin_icon(lines: list[str], cx: float, cy: float, r: float):
 
 
 def _render_heart_icon(lines: list[str], cx: float, cy: float, r: float):
-    """CNC-friendly heart shape built from straight lines (no curves)."""
-    # Heart approximated with line segments for CNC compatibility
+    """Heart shape using smooth SVG cubic bezier curves."""
     s = r * 1.2
-    pts = [
-        (cx, cy + s * 0.9),           # bottom point
-        (cx - s * 1.0, cy - s * 0.1),  # left
-        (cx - s * 0.8, cy - s * 0.7),  # upper left
-        (cx - s * 0.3, cy - s * 0.9),  # top left indent
-        (cx, cy - s * 0.5),            # top center dip
-        (cx + s * 0.3, cy - s * 0.9),  # top right indent
-        (cx + s * 0.8, cy - s * 0.7),  # upper right
-        (cx + s * 1.0, cy - s * 0.1),  # right
-    ]
-    d = f"M{round(pts[0][0], 2)},{round(pts[0][1], 2)}"
-    for px, py in pts[1:]:
-        d += f" L{round(px, 2)},{round(py, 2)}"
-    d += " Z"
+    # Smooth heart using cubic Bezier curves
+    # Start at bottom tip, draw left lobe then right lobe
+    d = (
+        f"M{round(cx, 2)},{round(cy + s * 0.85, 2)} "
+        f"C{round(cx - s * 0.1, 2)},{round(cy + s * 0.6, 2)} "
+        f" {round(cx - s * 1.0, 2)},{round(cy + s * 0.2, 2)} "
+        f" {round(cx - s * 1.0, 2)},{round(cy - s * 0.2, 2)} "
+        f"C{round(cx - s * 1.0, 2)},{round(cy - s * 0.7, 2)} "
+        f" {round(cx - s * 0.55, 2)},{round(cy - s * 0.95, 2)} "
+        f" {round(cx, 2)},{round(cy - s * 0.5, 2)} "
+        f"C{round(cx + s * 0.55, 2)},{round(cy - s * 0.95, 2)} "
+        f" {round(cx + s * 1.0, 2)},{round(cy - s * 0.7, 2)} "
+        f" {round(cx + s * 1.0, 2)},{round(cy - s * 0.2, 2)} "
+        f"C{round(cx + s * 1.0, 2)},{round(cy + s * 0.2, 2)} "
+        f" {round(cx + s * 0.1, 2)},{round(cy + s * 0.6, 2)} "
+        f" {round(cx, 2)},{round(cy + s * 0.85, 2)} Z"
+    )
     lines.append(
         f'      <path d="{d}"'
         f' fill="#e74c3c" stroke="#1a1a1a" stroke-width="0.35"'
@@ -1415,35 +1417,42 @@ def _render_heart_marker(
     board_h: float,
     font_size_mm: float,
 ):
-    """Render a heart icon at a specific board location (for romantic/gift maps)."""
+    """Render a heart icon at a specific board location (for romantic/gift maps).
+
+    Heart size scales proportionally to the smaller board dimension so it
+    looks balanced on any print size (8x10 through 24x36).
+    """
     hx, hy = heart_mm
     # Skip if outside board
     if hx < 0 or hx > board_w or hy < 0 or hy > board_h:
         return
 
-    r = font_size_mm * 0.4  # heart size
+    # Scale heart to ~3% of the smaller board dimension
+    s = min(board_w, board_h) * 0.03
+    stroke_w = round(s * 0.06, 2)  # proportional stroke
+
     lines.append("  <!-- Layer: heart_marker -->")
     lines.append('  <g id="heart_marker">')
 
-    # Heart shape (same as heart icon but larger and filled red)
-    s = r * 1.5
-    pts = [
-        (hx, hy + s * 0.9),
-        (hx - s * 1.0, hy - s * 0.1),
-        (hx - s * 0.8, hy - s * 0.7),
-        (hx - s * 0.3, hy - s * 0.9),
-        (hx, hy - s * 0.5),
-        (hx + s * 0.3, hy - s * 0.9),
-        (hx + s * 0.8, hy - s * 0.7),
-        (hx + s * 1.0, hy - s * 0.1),
-    ]
-    d = f"M{round(pts[0][0], 2)},{round(pts[0][1], 2)}"
-    for px, py in pts[1:]:
-        d += f" L{round(px, 2)},{round(py, 2)}"
-    d += " Z"
+    # Smooth heart using cubic Bezier curves
+    d = (
+        f"M{round(hx, 2)},{round(hy + s * 0.85, 2)} "
+        f"C{round(hx - s * 0.1, 2)},{round(hy + s * 0.6, 2)} "
+        f" {round(hx - s * 1.0, 2)},{round(hy + s * 0.2, 2)} "
+        f" {round(hx - s * 1.0, 2)},{round(hy - s * 0.2, 2)} "
+        f"C{round(hx - s * 1.0, 2)},{round(hy - s * 0.7, 2)} "
+        f" {round(hx - s * 0.55, 2)},{round(hy - s * 0.95, 2)} "
+        f" {round(hx, 2)},{round(hy - s * 0.5, 2)} "
+        f"C{round(hx + s * 0.55, 2)},{round(hy - s * 0.95, 2)} "
+        f" {round(hx + s * 1.0, 2)},{round(hy - s * 0.7, 2)} "
+        f" {round(hx + s * 1.0, 2)},{round(hy - s * 0.2, 2)} "
+        f"C{round(hx + s * 1.0, 2)},{round(hy + s * 0.2, 2)} "
+        f" {round(hx + s * 0.1, 2)},{round(hy + s * 0.6, 2)} "
+        f" {round(hx, 2)},{round(hy + s * 0.85, 2)} Z"
+    )
     lines.append(
         f'    <path d="{d}"'
-        f' fill="#e74c3c" stroke="#c0392b" stroke-width="0.5"'
+        f' fill="#e74c3c" stroke="#c0392b" stroke-width="{stroke_w}"'
         f' stroke-linejoin="round"/>'
     )
 
