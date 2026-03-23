@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 ETSY_AUTH_URL = "https://www.etsy.com/oauth/connect"
 ETSY_TOKEN_URL = "https://api.etsy.com/v3/public/oauth/token"
-ETSY_API_BASE = "https://openapi.etsy.com/v3"
+ETSY_API_BASE = "https://api.etsy.com/v3"
 
 # PKCE verifiers stored temporarily (keyed by user ID)
 _pkce_store: dict[str, str] = {}
@@ -34,6 +34,11 @@ _pkce_store: dict[str, str] = {}
 def is_configured() -> bool:
     """Check if Etsy API credentials are set."""
     return bool(settings.ETSY_API_KEY and settings.ETSY_API_SECRET)
+
+
+def _api_key_header() -> str:
+    """Build the x-api-key header value: keystring:shared_secret."""
+    return f"{settings.ETSY_API_KEY}:{settings.ETSY_API_SECRET}"
 
 
 def generate_auth_url(user_id: str) -> str:
@@ -142,7 +147,7 @@ async def get_shop(access_token: str) -> dict:
     """Get the user's Etsy shop info. Returns first shop found."""
     headers = {
         "Authorization": f"Bearer {access_token}",
-        "x-api-key": settings.ETSY_API_KEY,
+        "x-api-key": _api_key_header(),
     }
 
     async with httpx.AsyncClient() as client:
@@ -174,28 +179,32 @@ async def create_draft_listing(
     """
     headers = {
         "Authorization": f"Bearer {access_token}",
-        "x-api-key": settings.ETSY_API_KEY,
+        "x-api-key": _api_key_header(),
     }
+
+    # Etsy v3 expects application/x-www-form-urlencoded for listing creation.
+    # Tags are sent as comma-separated values; price as a float string.
+    tag_list = [t[:20] for t in tags[:13]]  # Etsy: max 13 tags, 20 chars each
 
     payload = {
         "title": title[:140],
         "description": description,
-        "price": price,
-        "quantity": quantity,
-        "tags": tags[:13],
+        "price": str(price),
+        "quantity": str(quantity),
+        "tags": ",".join(tag_list),
         "who_made": "i_did",
         "when_made": "made_to_order",
-        "taxonomy_id": 69150433,  # Craft Supplies & Tools > Digital Downloads
+        "taxonomy_id": "69150433",  # Craft Supplies & Tools > Digital Downloads
         "type": "download",
-        "is_digital": True,
-        "should_auto_renew": True,
+        "is_digital": "true",
+        "should_auto_renew": "true",
     }
 
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             f"{ETSY_API_BASE}/application/shops/{shop_id}/listings",
             headers=headers,
-            json=payload,
+            data=payload,
             timeout=20.0,
         )
 
@@ -217,7 +226,7 @@ async def upload_listing_image(
     """Upload an image to an Etsy listing."""
     headers = {
         "Authorization": f"Bearer {access_token}",
-        "x-api-key": settings.ETSY_API_KEY,
+        "x-api-key": _api_key_header(),
     }
 
     files = {
@@ -252,7 +261,7 @@ async def upload_listing_file(
     """Upload a digital file to an Etsy listing (the file buyers download)."""
     headers = {
         "Authorization": f"Bearer {access_token}",
-        "x-api-key": settings.ETSY_API_KEY,
+        "x-api-key": _api_key_header(),
     }
 
     files = {
