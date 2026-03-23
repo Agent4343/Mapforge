@@ -20,6 +20,7 @@ from app.services.etsy_client import (
     get_shop,
     get_valid_token,
     is_configured,
+    update_listing_type,
     upload_listing_file,
     upload_listing_image,
 )
@@ -218,7 +219,8 @@ async def etsy_publish(
             except ValueError as e:
                 log.warning("Etsy thumbnail upload failed: %s", e)
 
-    # 4. Upload SVG as the digital download file
+    # 4. Upload SVG as the digital download file, then set type to "download".
+    #    Per Etsy docs: create draft → upload file → PATCH type=download.
     svg_bytes = await retrieve_file(file_record.svg_storage_key)
     if svg_bytes:
         try:
@@ -229,8 +231,15 @@ async def etsy_publish(
                 file_bytes=svg_bytes,
                 filename=f"{file_record.location_name.replace(' ', '_')}_mapforge.svg",
             )
+            # Now mark the listing as a digital download
+            await update_listing_type(
+                access_token=access_token,
+                shop_id=shop_id,
+                listing_id=listing_id,
+                listing_type="download",
+            )
         except ValueError as e:
-            log.warning("Etsy SVG file upload failed: %s", e)
+            log.warning("Etsy digital file upload/type-update failed: %s", e)
 
     listing_url = f"https://www.etsy.com/listing/{listing_id}"
     log.info("Published Etsy draft listing %d for user %s: %s", listing_id, user.id, file_record.location_name)
