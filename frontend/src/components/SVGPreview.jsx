@@ -193,16 +193,19 @@ export default function SVGPreview({ svgContent, loading, error, colorTheme }) {
   if (!svgContent) {
     return (
       <div className="preview-empty">
-        <div className="preview-empty-icon">&#9670;</div>
+        <div className="preview-empty-icon" style={{ fontSize: "36px", opacity: 0.2 }}>
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+            <circle cx="12" cy="10" r="3"/>
+          </svg>
+        </div>
         <p>
           Search for a location and click
           <br />
-          <strong>{isPrint ? "Generate Map" : "Generate SVG"}</strong> to preview
+          <strong>Generate Map</strong> to preview
         </p>
         <p style={{ fontSize: "10px", color: "var(--text-muted)", marginTop: "4px" }}>
-          {isPrint
-            ? "Generate colorful street maps for Etsy & print shops"
-            : "Canada, US, and Global locations supported"}
+          Street maps for Etsy, print shops &amp; wall art
         </p>
       </div>
     );

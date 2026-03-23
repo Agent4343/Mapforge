@@ -70,7 +70,7 @@ export default function ExportPanel({
       if (ai.description) setListDesc(ai.description);
       if (ai.tags) setListTags(ai.tags);
     } catch (err) {
-      setListError("AI: " + err.message);
+      setListError(err.message);
     } finally {
       setAiLoading(false);
     }

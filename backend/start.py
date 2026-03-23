@@ -1,25 +1,33 @@
 """Startup wrapper — catches import/startup errors and prints them to logs."""
 
+import logging
 import os
 import sys
 import traceback
 
-try:
-    print(f"Python {sys.version}", flush=True)
-    print(f"PORT={os.environ.get('PORT', 'unset')}", flush=True)
-    print(f"DATABASE_URL={'set' if os.environ.get('DATABASE_URL') else 'unset'}", flush=True)
+log = logging.getLogger("mapforge.startup")
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
-    # Warn if SECRET_KEY is not set (required for production JWT security)
+try:
+    log.info("Python %s", sys.version)
+    log.info("PORT=%s", os.environ.get("PORT", "unset"))
+    log.info("DATABASE_URL=%s", "set" if os.environ.get("DATABASE_URL") else "unset")
+
+    # Refuse to start without SECRET_KEY in production (Railway sets RAILWAY_PUBLIC_DOMAIN)
     if not os.environ.get("SECRET_KEY"):
-        print("WARNING: SECRET_KEY not set — using empty key. Set SECRET_KEY in production!", flush=True)
+        if os.environ.get("RAILWAY_PUBLIC_DOMAIN"):
+            log.critical("SECRET_KEY not set — refusing to start in production. Set SECRET_KEY in your environment.")
+            sys.exit(1)
+        else:
+            log.warning("SECRET_KEY not set — using empty key. Set SECRET_KEY before deploying!")
 
     from app.main import app
-    print("App import OK", flush=True)
+    log.info("App import OK")
 
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
 except Exception as e:
-    print(f"FATAL STARTUP ERROR: {e}", flush=True)
+    log.critical("FATAL STARTUP ERROR: %s", e)
     traceback.print_exc()
     sys.exit(1)

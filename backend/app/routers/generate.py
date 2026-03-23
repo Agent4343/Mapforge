@@ -144,7 +144,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         )
     except (ValueError, Exception) as e:
         log.error(f"Geometry processing error for {req.osm_type}/{req.osm_id}: {type(e).__name__}: {e}")
-        raise HTTPException(status_code=422, detail=f"Geometry processing failed: {e}")
+        raise HTTPException(status_code=422, detail="Geometry processing failed. This location may not have sufficient map data. Please try a different location.")
 
     # Fetch streets and water concurrently for faster generation
     streets_data = None
@@ -434,7 +434,8 @@ async def generate_pin(
             board_height_inches=h_in,
         )
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=f"Geometry processing failed: {e}")
+        log.error(f"Pin geometry processing error: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=422, detail="Geometry processing failed. Please check the coordinates and try again.")
 
     # The pin should be at the center of the board area
     # Transform the pin lat/lon to board mm coordinates

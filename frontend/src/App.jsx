@@ -69,6 +69,32 @@ const COUNTRIES = [
   { code: "", label: "Global" },
 ];
 
+// Toast notification system
+function Toast({ message, type, onDismiss }) {
+  useEffect(() => {
+    const timer = setTimeout(onDismiss, 4000);
+    return () => clearTimeout(timer);
+  }, [onDismiss]);
+
+  return (
+    <div className={`toast toast-${type}`} onClick={onDismiss}>
+      {message}
+    </div>
+  );
+}
+
+function ToastContainer({ toasts, onDismiss }) {
+  return (
+    <div className="toast-container">
+      {toasts.map((t) => (
+        <Toast key={t.id} message={t.message} type={t.type} onDismiss={() => onDismiss(t.id)} />
+      ))}
+    </div>
+  );
+}
+
+let toastId = 0;
+
 export default function App() {
   const [user, setUser] = useState(null);
   const [showAuth, setShowAuth] = useState(false);
@@ -76,6 +102,7 @@ export default function App() {
   const [showPricing, setShowPricing] = useState(false);
   const [showLanding, setShowLanding] = useState(!getToken());
   const [view, setView] = useState("main"); // main, library, marketplace, dashboard
+  const [toasts, setToasts] = useState([]);
 
   const [selectedResult, setSelectedResult] = useState(null);
   const [config, setConfig] = useState(loadSavedConfig);
@@ -93,6 +120,15 @@ export default function App() {
   const [configHistory, setConfigHistory] = useState([config]);
   const [historyIndex, setHistoryIndex] = useState(0);
   const skipHistory = useRef(false);
+
+  const addToast = useCallback((message, type = "error") => {
+    const id = ++toastId;
+    setToasts((prev) => [...prev.slice(-4), { id, message, type }]);
+  }, []);
+
+  const dismissToast = useCallback((id) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
 
   // Load user profile if token exists; clear stale tokens on failure
   useEffect(() => {
@@ -168,7 +204,7 @@ export default function App() {
         window.location.href = data.checkout_url;
       }
     } catch (err) {
-      alert(err.message);
+      addToast(err.message, "error");
     }
   }
 
@@ -598,6 +634,7 @@ export default function App() {
       {showAuth && <AuthModal onAuth={handleAuth} onClose={() => setShowAuth(false)} />}
       {showBatch && <BatchPanel config={config} onClose={() => setShowBatch(false)} />}
       {showPricing && <PricingModal user={user} onClose={() => setShowPricing(false)} onSubscribe={handleSubscribe} />}
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }
