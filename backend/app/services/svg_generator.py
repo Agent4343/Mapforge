@@ -606,6 +606,18 @@ def _generate_print_svg(
     subtitle_size = round(font_size_mm * 0.65, 2)
     coord_size = round(font_size_mm * 0.45, 2)
 
+    # Auto-scale title if it would overflow the board width.
+    # Approximate character width: ~0.65 * font_size for uppercase bold + letter-spacing.
+    title_text = location_name.upper()
+    char_width_factor = 0.75  # avg uppercase bold char width as fraction of font size
+    title_tracking = title_size * 0.2
+    est_title_width = len(title_text) * (title_size * char_width_factor + title_tracking)
+    available_width = board_w * 0.85  # 85% of board width (leave margin)
+    if est_title_width > available_width and len(title_text) > 0:
+        scale = available_width / est_title_width
+        title_size = round(title_size * scale, 2)
+        title_tracking = title_size * 0.2
+
     lines.append('  <g id="poster_text">')
 
     # City name (large, bold, uppercase, wide tracking)
@@ -613,8 +625,8 @@ def _generate_print_svg(
         f'    <text x="{text_center_x}" y="{round(text_start_y, 2)}"'
         f' text-anchor="middle" font-family="{ff}"'
         f' font-size="{title_size}" font-weight="bold"'
-        f' letter-spacing="{round(title_size * 0.2, 2)}"'
-        f' fill="{theme["text_primary"]}">{_escape_xml(location_name.upper())}</text>'
+        f' letter-spacing="{round(title_tracking, 2)}"'
+        f' fill="{theme["text_primary"]}">{_escape_xml(title_text)}</text>'
     )
 
     next_y = text_start_y + title_size * 1.1
@@ -1427,8 +1439,8 @@ def _render_heart_marker(
     if hx < 0 or hx > board_w or hy < 0 or hy > board_h:
         return
 
-    # Scale heart to ~3% of the smaller board dimension
-    s = min(board_w, board_h) * 0.03
+    # Scale heart to ~5% of the smaller board dimension
+    s = min(board_w, board_h) * 0.05
     stroke_w = round(s * 0.06, 2)  # proportional stroke
 
     lines.append("  <!-- Layer: heart_marker -->")
