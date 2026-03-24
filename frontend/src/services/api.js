@@ -460,6 +460,45 @@ async function getAdminStats() {
   return resp.json();
 }
 
+// --- Admin Etsy Settings ---
+
+async function getEtsySettings() {
+  const resp = await fetchWithTimeout(`${API_BASE}/admin/etsy-settings`);
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Failed to load Etsy settings"));
+  }
+  return resp.json();
+}
+
+async function saveEtsySettings(apiKey, apiSecret, redirectUri) {
+  const resp = await fetchWithTimeout(`${API_BASE}/admin/etsy-settings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      api_key: apiKey,
+      api_secret: apiSecret,
+      redirect_uri: redirectUri,
+    }),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Failed to save Etsy settings"));
+  }
+  return resp.json();
+}
+
+async function clearEtsySettings() {
+  const resp = await fetchWithTimeout(`${API_BASE}/admin/etsy-settings`, {
+    method: "DELETE",
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Failed to clear Etsy settings"));
+  }
+  return resp.json();
+}
+
 // --- Design Credits (Etsy-paid customers) ---
 
 async function redeemCredit(token) {
@@ -513,6 +552,6 @@ export {
   getSellerDashboard, submitReview, getReviews,
   aiDescribe,
   getEtsyStatus, connectEtsy, disconnectEtsy, publishToEtsy,
-  getAdminStats,
+  getAdminStats, getEtsySettings, saveEtsySettings, clearEtsySettings,
   redeemCredit, generateForCredit, getCreditStatus, downloadCreditFile,
 };

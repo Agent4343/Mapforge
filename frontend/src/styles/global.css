@@ -1962,6 +1962,59 @@ body {
   white-space: nowrap;
 }
 
+/* Etsy Settings (Admin) */
+.etsy-settings-status {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.etsy-settings-connected {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.etsy-settings-detail {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.etsy-settings-label {
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  min-width: 60px;
+}
+
+.etsy-settings-value {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+.etsy-settings-unconfigured {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.etsy-settings-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.etsy-settings-form {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
 .empty-state {
   font-family: var(--font-mono);
   font-size: 12px;

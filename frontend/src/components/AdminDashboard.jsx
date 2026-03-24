@@ -1,10 +1,19 @@
 import { useState, useEffect } from "react";
-import { getAdminStats } from "../services/api.js";
+import { getAdminStats, getEtsySettings, saveEtsySettings, clearEtsySettings } from "../services/api.js";
 
 export default function AdminDashboard({ onBack }) {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  // Etsy settings state
+  const [etsySettings, setEtsySettings] = useState(null);
+  const [etsyApiKey, setEtsyApiKey] = useState("");
+  const [etsyApiSecret, setEtsyApiSecret] = useState("");
+  const [etsyRedirectUri, setEtsyRedirectUri] = useState("");
+  const [etsySaving, setEtsySaving] = useState(false);
+  const [etsyMsg, setEtsyMsg] = useState(null);
+  const [showEtsyForm, setShowEtsyForm] = useState(false);
 
   useEffect(() => {
     async function loadStats() {
@@ -17,7 +26,45 @@ export default function AdminDashboard({ onBack }) {
       }
     }
     loadStats();
+    loadEtsySettings();
   }, []);
+
+  async function loadEtsySettings() {
+    try {
+      const s = await getEtsySettings();
+      setEtsySettings(s);
+    } catch {
+      // Not critical
+    }
+  }
+
+  async function handleSaveEtsy() {
+    setEtsySaving(true);
+    setEtsyMsg(null);
+    try {
+      await saveEtsySettings(etsyApiKey, etsyApiSecret, etsyRedirectUri);
+      setEtsyMsg({ type: "success", text: "Etsy API credentials saved!" });
+      setEtsyApiKey("");
+      setEtsyApiSecret("");
+      setEtsyRedirectUri("");
+      await loadEtsySettings();
+    } catch (err) {
+      setEtsyMsg({ type: "error", text: err.message });
+    } finally {
+      setEtsySaving(false);
+    }
+  }
+
+  async function handleClearEtsy() {
+    if (!confirm("Clear all Etsy API credentials from the database?")) return;
+    try {
+      await clearEtsySettings();
+      setEtsySettings(null);
+      setEtsyMsg({ type: "success", text: "Etsy credentials cleared." });
+    } catch (err) {
+      setEtsyMsg({ type: "error", text: err.message });
+    }
+  }
 
   if (loading) {
     return (
@@ -74,6 +121,93 @@ export default function AdminDashboard({ onBack }) {
           <div className="admin-stat-value">${(stats.revenue_cents / 100).toFixed(2)}</div>
           <div className="admin-stat-label">Total Revenue</div>
         </div>
+      </div>
+
+      {/* Etsy API Settings */}
+      <div className="admin-section">
+        <h3>Etsy API Settings</h3>
+        {etsySettings?.configured ? (
+          <div className="etsy-settings-status">
+            <div className="etsy-settings-connected">
+              <span className="etsy-badge">Etsy API Connected</span>
+              <div className="etsy-settings-detail">
+                <span className="etsy-settings-label">API Key:</span>
+                <span className="etsy-settings-value">{etsySettings.api_key}</span>
+              </div>
+              <div className="etsy-settings-detail">
+                <span className="etsy-settings-label">Secret:</span>
+                <span className="etsy-settings-value">{etsySettings.api_secret}</span>
+              </div>
+              {etsySettings.redirect_uri && (
+                <div className="etsy-settings-detail">
+                  <span className="etsy-settings-label">Callback:</span>
+                  <span className="etsy-settings-value">{etsySettings.redirect_uri}</span>
+                </div>
+              )}
+            </div>
+            <div className="etsy-settings-actions">
+              <button className="btn btn-secondary btn-sm" onClick={() => setShowEtsyForm(!showEtsyForm)}>
+                {showEtsyForm ? "Cancel" : "Update Credentials"}
+              </button>
+              <button className="btn btn-secondary btn-sm" onClick={handleClearEtsy}>
+                Clear Credentials
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="etsy-settings-status">
+            <p className="etsy-settings-unconfigured">Etsy API not configured. Enter your credentials below.</p>
+            {!showEtsyForm && (
+              <button className="btn btn-etsy" onClick={() => setShowEtsyForm(true)}>
+                Configure Etsy API
+              </button>
+            )}
+          </div>
+        )}
+
+        {showEtsyForm && (
+          <div className="etsy-settings-form">
+            <div className="control-group">
+              <label>API Key (Keystring)</label>
+              <input
+                type="text"
+                value={etsyApiKey}
+                onChange={(e) => setEtsyApiKey(e.target.value)}
+                placeholder="Your Etsy API keystring"
+              />
+            </div>
+            <div className="control-group">
+              <label>Shared Secret</label>
+              <input
+                type="password"
+                value={etsyApiSecret}
+                onChange={(e) => setEtsyApiSecret(e.target.value)}
+                placeholder="Your Etsy shared secret"
+              />
+            </div>
+            <div className="control-group">
+              <label>Redirect URI (Callback URL)</label>
+              <input
+                type="text"
+                value={etsyRedirectUri}
+                onChange={(e) => setEtsyRedirectUri(e.target.value)}
+                placeholder="https://your-domain.com/api/v1/etsy/callback"
+              />
+            </div>
+            {etsyMsg && (
+              <div className={etsyMsg.type === "error" ? "error-message" : "success-message"}>
+                {etsyMsg.text}
+              </div>
+            )}
+            <button
+              className="btn btn-primary btn-full"
+              onClick={handleSaveEtsy}
+              disabled={etsySaving || (!etsyApiKey && !etsyApiSecret && !etsyRedirectUri)}
+            >
+              {etsySaving ? "Saving..." : "Save Etsy Credentials"}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Users by Tier */}
