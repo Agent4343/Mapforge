@@ -193,7 +193,7 @@ export default function ExportPanel({
             <h3>Love your design?</h3>
             <p>Get your print-ready files — high-resolution PNG, SVG source, and mockup image.</p>
             <a
-              href={etsyShopUrl || "https://www.etsy.com"}
+              href={etsyShopUrl || "https://mapforgedesign.etsy.com"}
               target="_blank"
               rel="noopener noreferrer"
               className="btn btn-etsy btn-full etsy-buy-btn"

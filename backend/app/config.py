@@ -52,7 +52,7 @@ class Settings:
     FRONTEND_URL: str = os.getenv("FRONTEND_URL", "")
 
     # Etsy shop URL (shown to customers as the purchase link)
-    ETSY_SHOP_URL: str = os.getenv("ETSY_SHOP_URL", "")
+    ETSY_SHOP_URL: str = os.getenv("ETSY_SHOP_URL", "https://mapforgedesign.etsy.com")
 
     # Redis (optional caching layer)
     REDIS_URL: str = os.getenv("REDIS_URL", "")
