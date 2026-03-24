@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import async_session
 from app.logging_config import log
-from app.models.db_models import User, Purchase, MarketplaceListing
+from app.models.db_models import User, Purchase, MarketplaceListing, Order
 from app.services.payments import verify_webhook_signature, create_transfer
 
 router = APIRouter(prefix="/api/v1/webhooks", tags=["webhooks"])
@@ -44,7 +44,12 @@ async def stripe_webhook(request: Request):
 
     async with async_session() as db:
         if event_type == "checkout.session.completed":
-            await _handle_checkout_completed(db, data)
+            # Check if this is a map order (pay-per-design) or subscription
+            metadata = data.get("metadata", {})
+            if metadata.get("order_type") == "map_design":
+                await _handle_order_checkout_completed(db, data, metadata)
+            else:
+                await _handle_checkout_completed(db, data)
         elif event_type == "customer.subscription.updated":
             await _handle_subscription_updated(db, data)
         elif event_type == "customer.subscription.deleted":
@@ -90,6 +95,76 @@ async def _handle_checkout_completed(db: AsyncSession, data: dict):
     user.stripe_subscription_id = subscription_id
     await db.commit()
     log.info(f"User {user.username} upgraded to {tier}")
+
+
+async def _handle_order_checkout_completed(db: AsyncSession, data: dict, metadata: dict):
+    """Handle pay-per-design checkout completion — generate the map files."""
+    import json
+    import asyncio
+    from datetime import datetime, timezone
+
+    order_id = metadata.get("order_id")
+    if not order_id:
+        log.warning("Order checkout completed but no order_id in metadata")
+        return
+
+    result = await db.execute(select(Order).where(Order.id == order_id))
+    order = result.scalar_one_or_none()
+    if not order:
+        log.warning(f"Order {order_id} not found for checkout completion")
+        return
+
+    order.status = "paid"
+    order.paid_at = datetime.now(timezone.utc)
+    order.stripe_payment_intent_id = data.get("payment_intent")
+    await db.commit()
+    log.info(f"Order {order_id} marked as paid — starting generation")
+
+    # Trigger async generation (fire-and-forget within the webhook)
+    asyncio.create_task(_fulfill_order(order_id))
+
+
+async def _fulfill_order(order_id: str):
+    """Generate map files for a paid order."""
+    import json
+    from datetime import datetime, timezone
+    from app.routers.generate import _do_generate
+    from app.models.schemas import GenerateRequest
+
+    async with async_session() as db:
+        result = await db.execute(select(Order).where(Order.id == order_id))
+        order = result.scalar_one_or_none()
+        if not order or order.status not in ("paid",):
+            return
+
+        order.status = "generating"
+        await db.commit()
+
+    try:
+        design = json.loads(order.design_config)
+
+        # Build a proper GenerateRequest from the stored config
+        req = GenerateRequest(**design)
+
+        async with async_session() as db:
+            gen_response = await _do_generate(req, user=None, db=db)
+
+        async with async_session() as db:
+            result = await db.execute(select(Order).where(Order.id == order_id))
+            order = result.scalar_one()
+            order.file_id = gen_response.file_id
+            order.status = "completed"
+            order.completed_at = datetime.now(timezone.utc)
+            await db.commit()
+
+        log.info(f"Order {order_id} fulfilled — file_id={gen_response.file_id}")
+    except Exception as e:
+        log.error(f"Order {order_id} generation failed: {e}")
+        async with async_session() as db:
+            result = await db.execute(select(Order).where(Order.id == order_id))
+            order = result.scalar_one()
+            order.status = "failed"
+            await db.commit()
 
 
 async def _handle_subscription_updated(db: AsyncSession, data: dict):

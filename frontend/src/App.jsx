@@ -14,6 +14,9 @@ import MarkersPanel from "./components/MarkersPanel.jsx";
 import LandingPage from "./components/LandingPage.jsx";
 import PricingModal from "./components/PricingModal.jsx";
 import PurchasesView from "./components/PurchasesView.jsx";
+import PriceDisplay from "./components/PriceDisplay.jsx";
+import CheckoutModal from "./components/CheckoutModal.jsx";
+import OrderStatus from "./components/OrderStatus.jsx";
 import {
   generateSVG, generatePin, downloadSVG, downloadDXF, downloadSTL,
   downloadThumbnail, downloadPrintPNG,
@@ -116,6 +119,9 @@ export default function App() {
   const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [pinCoords, setPinCoords] = useState(null); // {lat, lon} for name_sign pin drop
   const [markers, setMarkers] = useState([]); // custom markers [{lat, lon, label, icon}]
+  const [showCheckout, setShowCheckout] = useState(false);
+  const [orderToken, setOrderToken] = useState(null); // download token after payment
+  const [isEtsyReferral, setIsEtsyReferral] = useState(false);
 
   // Undo/redo state
   const [configHistory, setConfigHistory] = useState([config]);
@@ -137,6 +143,32 @@ export default function App() {
       getProfile()
         .then((p) => { if (p) setUser(p); else { logout(); } })
         .catch(() => { logout(); });
+    }
+  }, []);
+
+  // Handle URL params: Etsy referrals (?ref=etsy) and Stripe callbacks (?order_token=xxx)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    // Stripe success callback — show order status
+    const token = params.get("order_token");
+    if (token) {
+      setOrderToken(token);
+      setShowLanding(false);
+      window.history.replaceState({}, "", window.location.pathname);
+      return;
+    }
+    // Etsy referral — skip landing, pre-fill config
+    if (params.get("ref") === "etsy") {
+      setIsEtsyReferral(true);
+      setShowLanding(false);
+      const updates = {};
+      if (params.get("product_type")) updates.productType = params.get("product_type");
+      if (params.get("board_size")) updates.boardSize = params.get("board_size");
+      if (params.get("color_theme")) updates.colorTheme = params.get("color_theme");
+      if (Object.keys(updates).length > 0) {
+        setConfig((prev) => ({ ...prev, ...updates }));
+      }
+      window.history.replaceState({}, "", window.location.pathname);
     }
   }, []);
 
@@ -426,8 +458,30 @@ export default function App() {
     URL.revokeObjectURL(url);
   }
 
-  // Landing page for new visitors
-  if (showLanding && !user) {
+  // Order status page (after payment)
+  if (orderToken) {
+    return (
+      <div className="app">
+        <header className="header">
+          <div className="header-brand">
+            <div>
+              <h1>Map<span>Forge</span></h1>
+              <div className="subtitle">Custom Map Art</div>
+            </div>
+          </div>
+        </header>
+        <div className="order-status-page">
+          <OrderStatus
+            downloadToken={orderToken}
+            onBack={() => { setOrderToken(null); setShowLanding(false); }}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // Landing page for new visitors (unless they came from Etsy)
+  if (showLanding && !user && !isEtsyReferral) {
     return (
       <>
         <LandingPage
@@ -455,7 +509,7 @@ export default function App() {
         <div className="header-brand">
           <div>
             <h1>Map<span>Forge</span></h1>
-            <div className="subtitle">Custom Street Map Prints for Etsy & Wall Art</div>
+            <div className="subtitle">Custom Map Art — Design Yours</div>
           </div>
         </div>
         <nav className="header-nav">
@@ -607,6 +661,20 @@ export default function App() {
             </div>
           )}
 
+          {/* Live Price Display — always visible for customer flow */}
+          <PriceDisplay config={config} markers={markers} />
+
+          {/* Customer checkout button (no login required) */}
+          {(!!selectedResult || (config.productType === "name_sign" && !!pinCoords)) && (
+            <button
+              className="btn btn-primary btn-full checkout-cta"
+              onClick={() => setShowCheckout(true)}
+              style={{ marginBottom: "12px", fontSize: "16px", padding: "14px" }}
+            >
+              Order My Custom Map
+            </button>
+          )}
+
           <ExportPanel
             result={result}
             onGenerate={handleGenerate}
@@ -668,6 +736,19 @@ export default function App() {
       {showAuth && <AuthModal onAuth={handleAuth} onClose={() => setShowAuth(false)} />}
       {showBatch && <BatchPanel config={config} onClose={() => setShowBatch(false)} />}
       {showPricing && <PricingModal user={user} onClose={() => setShowPricing(false)} onSubscribe={handleSubscribe} />}
+      {showCheckout && (
+        <CheckoutModal
+          config={config}
+          selectedResult={selectedResult}
+          pinCoords={pinCoords}
+          markers={markers}
+          onClose={() => setShowCheckout(false)}
+          onDevComplete={(token) => {
+            setShowCheckout(false);
+            setOrderToken(token);
+          }}
+        />
+      )}
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );

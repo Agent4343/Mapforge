@@ -134,6 +134,36 @@ class PasswordResetToken(Base):
     created_at = Column(DateTime(timezone=True), default=_utcnow)
 
 
+class Order(Base):
+    """Customer order for a custom map design (pay-per-design model)."""
+    __tablename__ = "orders"
+
+    id = Column(String(16), primary_key=True, default=_uuid)
+    email = Column(String(255), nullable=False, index=True)
+    stripe_payment_intent_id = Column(String(255), nullable=True)
+    stripe_checkout_session_id = Column(String(255), nullable=True, index=True)
+    status = Column(String(20), default="pending")  # pending, paid, generating, completed, failed
+    # Design configuration (JSON blob)
+    design_config = Column(Text, nullable=False)  # full GenerateRequest as JSON
+    product_type = Column(String(20), nullable=False)
+    board_size = Column(String(20), nullable=False)
+    location_name = Column(String(255), nullable=False)
+    # Pricing
+    price_cents = Column(Integer, nullable=False)
+    price_breakdown = Column(Text, nullable=True)  # JSON pricing breakdown
+    # Generated file (populated after payment)
+    file_id = Column(String(16), ForeignKey("generated_files.id"), nullable=True)
+    # Download tracking
+    download_token = Column(String(64), nullable=True, unique=True, index=True)
+    download_count = Column(Integer, default=0)
+    max_downloads = Column(Integer, default=5)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    paid_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    file = relationship("GeneratedFile", foreign_keys=[file_id])
+
+
 class Review(Base):
     __tablename__ = "reviews"
 

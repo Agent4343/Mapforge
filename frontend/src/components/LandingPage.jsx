@@ -2,8 +2,8 @@ import { useState } from "react";
 
 const FEATURES = [
   {
-    title: "Print-Ready Output",
-    desc: "High-resolution PNG and SVG files at 300 or 600 DPI. Ready for professional printing, Etsy digital downloads, and wall art.",
+    title: "Print-Ready Files",
+    desc: "High-resolution PNG and SVG files at 300 or 600 DPI. Ready for professional printing and wall art.",
   },
   {
     title: "15 Color Themes",
@@ -14,24 +14,24 @@ const FEATURES = [
     desc: "Lakes, provinces, cities, parks, communities. Search by name or drop a pin on your family cabin, cottage, or favorite spot.",
   },
   {
-    title: "Product Mockups",
-    desc: "Auto-generated PNG thumbnails with warm wood-tone backgrounds. Perfect for Etsy listings and social media.",
+    title: "Personalize It",
+    desc: "Add custom text, a meaningful subtitle like \"Where We Met\", heart markers, and coordinates. Make it truly yours.",
   },
   {
-    title: "Seller Marketplace",
-    desc: "List your designs for sale. Stripe-powered payments with automatic seller payouts. Build a map print business.",
+    title: "Multiple Sizes",
+    desc: "From 8x10\" desk prints to 24x36\" statement pieces. Choose the perfect size for your space.",
   },
   {
-    title: "Batch Generation",
-    desc: "Pro users can generate up to 50 designs at once. Scale your production with one click.",
+    title: "Instant Delivery",
+    desc: "Your custom map is generated and ready to download within seconds of ordering. No waiting.",
   },
 ];
 
 const SHOWCASE = [
-  { name: "Lake Muskoka", type: "Lake", size: "16x20\"" },
-  { name: "Banff National Park", type: "Park", size: "24x36\"" },
-  { name: "Toronto", type: "City", size: "18x24\"" },
-  { name: "Nova Scotia", type: "Province", size: "24x36\"" },
+  { name: "Lake Muskoka", type: "Lake", size: '16x20"', price: "$15.99" },
+  { name: "Banff National Park", type: "Park", size: '24x36"', price: "$19.99" },
+  { name: "Toronto", type: "City", size: '18x24"', price: "$15.99" },
+  { name: "Nova Scotia", type: "Province", size: '24x36"', price: "$15.99" },
 ];
 
 export default function LandingPage({ onGetStarted, onSignIn }) {
@@ -41,24 +41,24 @@ export default function LandingPage({ onGetStarted, onSignIn }) {
       <section className="landing-hero">
         <div className="landing-hero-content">
           <h1>
-            Turn Any Location Into a<br />
-            <span className="text-crimson">Beautiful</span> Map Print
+            Design Your Own<br />
+            <span className="text-crimson">Custom</span> Map Print
           </h1>
           <p className="landing-hero-sub">
-            Generate stunning print-ready map posters from real geographic data.
-            Lakes, cities, provinces, parks — or drop a pin on your family's special place.
-            Perfect for Etsy shops, wall art, and personalized gifts.
+            Create a one-of-a-kind map poster of the place that means the most to you.
+            Your lake, your city, your family's cabin — beautifully designed and
+            ready to print. Starting at $7.99.
           </p>
           <div className="landing-hero-actions">
             <button className="btn btn-primary btn-lg" onClick={onGetStarted}>
-              Start Creating — Free
+              Start Designing
             </button>
             <button className="btn btn-secondary btn-lg" onClick={onSignIn}>
               Sign In
             </button>
           </div>
           <p className="landing-hero-note">
-            No credit card required. Generate your first map in under 60 seconds.
+            Design for free. Only pay when you love it.
           </p>
         </div>
       </section>
@@ -69,25 +69,43 @@ export default function LandingPage({ onGetStarted, onSignIn }) {
         <div className="landing-steps">
           <div className="landing-step">
             <div className="landing-step-num">1</div>
-            <h3>Search or Pin</h3>
-            <p>Search any lake, city, province, or park. Or drop a pin on your cottage, cabin, or favorite place.</p>
+            <h3>Search Your Place</h3>
+            <p>Find any lake, city, province, or park. Or drop a pin on your cottage, cabin, or the place where it all began.</p>
           </div>
           <div className="landing-step">
             <div className="landing-step-num">2</div>
-            <h3>Customize</h3>
-            <p>Choose print size, color theme, typography, and border style. Add a subtitle and heart marker for gifts.</p>
+            <h3>Make It Yours</h3>
+            <p>Pick your size, color theme, font, and border. Add a subtitle like "Where We Met" and a heart marker.</p>
           </div>
           <div className="landing-step">
             <div className="landing-step-num">3</div>
-            <h3>Download & Sell</h3>
-            <p>Download print-ready PNG at 300 or 600 DPI. List on Etsy, print at home, or send to a print shop.</p>
+            <h3>Order & Download</h3>
+            <p>Pay securely and instantly download your print-ready files. Print at home or send to a print shop.</p>
           </div>
         </div>
       </section>
 
-      {/* Features */}
+      {/* Pricing Examples */}
       <section className="landing-section landing-section-dark">
-        <h2>Built for Print Sellers</h2>
+        <h2>Popular Designs</h2>
+        <div className="landing-showcase">
+          {SHOWCASE.map((s, i) => (
+            <div key={i} className="landing-showcase-card">
+              <div className="landing-showcase-icon">&#9670;</div>
+              <div className="landing-showcase-name">{s.name}</div>
+              <div className="landing-showcase-meta">{s.type} &middot; {s.size}</div>
+              <div className="landing-showcase-price">{s.price}</div>
+            </div>
+          ))}
+        </div>
+        <p className="landing-showcase-note">
+          Price depends on map type, size, and add-ons. The price updates live as you customize.
+        </p>
+      </section>
+
+      {/* Features */}
+      <section className="landing-section">
+        <h2>What You Get</h2>
         <div className="landing-features">
           {FEATURES.map((f, i) => (
             <div key={i} className="landing-feature">
@@ -98,29 +116,12 @@ export default function LandingPage({ onGetStarted, onSignIn }) {
         </div>
       </section>
 
-      {/* Showcase */}
-      <section className="landing-section">
-        <h2>What You Can Make</h2>
-        <div className="landing-showcase">
-          {SHOWCASE.map((s, i) => (
-            <div key={i} className="landing-showcase-card">
-              <div className="landing-showcase-icon">&#9670;</div>
-              <div className="landing-showcase-name">{s.name}</div>
-              <div className="landing-showcase-meta">{s.type} &middot; {s.size}</div>
-            </div>
-          ))}
-        </div>
-        <p className="landing-showcase-note">
-          Every design includes professional typography, themed colors, and print-ready resolution.
-        </p>
-      </section>
-
       {/* CTA */}
       <section className="landing-section landing-cta">
         <h2>Ready to Create?</h2>
-        <p>Join sellers offering custom map prints on Etsy, at craft fairs, and in their shops.</p>
+        <p>Design a custom map print of the place that matters most. Perfect for gifts, wall art, and keepsakes.</p>
         <button className="btn btn-primary btn-lg" onClick={onGetStarted}>
-          Create Your First Map — Free
+          Start Designing Your Map
         </button>
       </section>
 
@@ -128,7 +129,7 @@ export default function LandingPage({ onGetStarted, onSignIn }) {
       <footer className="landing-footer">
         <div className="landing-footer-brand">
           <strong>Map<span className="text-crimson">Forge</span></strong>
-          <span>Custom Map Prints for Etsy & Wall Art</span>
+          <span>Custom Map Art</span>
         </div>
         <div className="landing-footer-links">
           <span>Geographic data: OpenStreetMap (ODbL)</span>

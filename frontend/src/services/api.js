@@ -460,6 +460,48 @@ async function getAdminStats() {
   return resp.json();
 }
 
+// --- Orders (pay-per-design) ---
+
+async function calculatePrice(params) {
+  const resp = await fetchWithTimeout(`${API_BASE}/orders/price`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!resp.ok) throw new Error("Price calculation failed");
+  return resp.json();
+}
+
+async function createCheckout(params) {
+  const resp = await fetchWithTimeout(`${API_BASE}/orders/checkout`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Checkout failed"));
+  }
+  return resp.json();
+}
+
+async function getOrderStatus(downloadToken) {
+  const resp = await fetchWithTimeout(`${API_BASE}/orders/status/${downloadToken}`);
+  if (!resp.ok) throw new Error("Order not found");
+  return resp.json();
+}
+
+async function downloadOrderFile(downloadToken, format = "png") {
+  const resp = await fetchWithTimeout(`${API_BASE}/orders/download/${downloadToken}?format=${format}`, {
+    timeout: 60000,
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Download failed"));
+  }
+  return resp.blob();
+}
+
 export {
   setToken, getToken, register, login, logout, getProfile, requestPasswordReset, resetPassword, subscribe,
   searchLocations, generateSVG, generatePin, batchGenerate,
@@ -472,4 +514,5 @@ export {
   aiDescribe,
   getEtsyStatus, connectEtsy, disconnectEtsy, publishToEtsy,
   getAdminStats,
+  calculatePrice, createCheckout, getOrderStatus, downloadOrderFile,
 };
