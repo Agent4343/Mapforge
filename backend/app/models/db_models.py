@@ -175,6 +175,19 @@ class DesignCredit(Base):
     seller = relationship("User", foreign_keys=[seller_id])
 
 
+class AppSettings(Base):
+    """Key-value store for application settings (Etsy API keys, etc.).
+
+    Stored in the database so admin can configure via UI without redeploying.
+    Falls back to environment variables if not set in DB.
+    """
+    __tablename__ = "app_settings"
+
+    key = Column(String(100), primary_key=True)
+    value = Column(Text, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+
 class Review(Base):
     __tablename__ = "reviews"
 

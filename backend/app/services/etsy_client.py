@@ -10,6 +10,9 @@ This service handles:
   - Uploading listing images and digital download files
   - Correct digital listing workflow: create draft → upload file → PATCH type=download
   - Rate limit handling (429 with retry-after + exponential backoff)
+
+Credentials are loaded from the database (app_settings table) first,
+falling back to environment variables.
 """
 
 import asyncio
@@ -37,14 +40,36 @@ MAX_RETRIES = 3
 _pkce_store: dict[str, str] = {}
 
 
-def is_configured() -> bool:
-    """Check if Etsy API credentials are set."""
-    return bool(settings.ETSY_API_KEY and settings.ETSY_API_SECRET)
+# --- Credential helpers ---
+# Functions accept an optional `creds` dict with keys: api_key, api_secret, redirect_uri.
+# When creds is None, falls back to env var settings (for backward compatibility).
+
+def _get_api_key(creds: Optional[dict] = None) -> str:
+    if creds and creds.get("api_key"):
+        return creds["api_key"]
+    return settings.ETSY_API_KEY
 
 
-def _api_key_header() -> str:
-    """Build the x-api-key header value: keystring:shared_secret."""
-    return f"{settings.ETSY_API_KEY}:{settings.ETSY_API_SECRET}"
+def _get_api_secret(creds: Optional[dict] = None) -> str:
+    if creds and creds.get("api_secret"):
+        return creds["api_secret"]
+    return settings.ETSY_API_SECRET
+
+
+def _get_redirect_uri(creds: Optional[dict] = None) -> str:
+    if creds and creds.get("redirect_uri"):
+        return creds["redirect_uri"]
+    return settings.ETSY_REDIRECT_URI
+
+
+def is_configured(creds: Optional[dict] = None) -> bool:
+    """Check if Etsy API credentials are set (DB or env vars)."""
+    return bool(_get_api_key(creds) and _get_api_secret(creds))
+
+
+def _api_key_header(creds: Optional[dict] = None) -> str:
+    """Build the x-api-key header value: keystring."""
+    return _get_api_key(creds)
 
 
 def extract_etsy_user_id(access_token: str) -> str:
@@ -89,7 +114,7 @@ async def _request_with_retry(
     return resp  # unreachable but satisfies type checker
 
 
-def generate_auth_url(user_id: str) -> str:
+def generate_auth_url(user_id: str, creds: Optional[dict] = None) -> str:
     """Generate the Etsy OAuth 2.0 authorization URL with PKCE.
 
     Returns the URL the user should be redirected to for granting access.
@@ -103,8 +128,8 @@ def generate_auth_url(user_id: str) -> str:
 
     params = {
         "response_type": "code",
-        "client_id": settings.ETSY_API_KEY,
-        "redirect_uri": settings.ETSY_REDIRECT_URI,
+        "client_id": _get_api_key(creds),
+        "redirect_uri": _get_redirect_uri(creds),
         "scope": "listings_w listings_r shops_r images_w listings_d",
         "state": user_id,
         "code_challenge": code_challenge,
@@ -114,7 +139,7 @@ def generate_auth_url(user_id: str) -> str:
     return f"{ETSY_AUTH_URL}?{qs}"
 
 
-async def exchange_code(user_id: str, code: str) -> dict:
+async def exchange_code(user_id: str, code: str, creds: Optional[dict] = None) -> dict:
     """Exchange the authorization code for access + refresh tokens.
 
     Per the Etsy Quick Start tutorial, the token endpoint accepts
@@ -129,8 +154,8 @@ async def exchange_code(user_id: str, code: str) -> dict:
 
     payload = {
         "grant_type": "authorization_code",
-        "client_id": settings.ETSY_API_KEY,
-        "redirect_uri": settings.ETSY_REDIRECT_URI,
+        "client_id": _get_api_key(creds),
+        "redirect_uri": _get_redirect_uri(creds),
         "code": code,
         "code_verifier": code_verifier,
     }
@@ -150,14 +175,14 @@ async def exchange_code(user_id: str, code: str) -> dict:
     return resp.json()
 
 
-async def refresh_access_token(refresh_token: str) -> dict:
+async def refresh_access_token(refresh_token: str, creds: Optional[dict] = None) -> dict:
     """Refresh an expired access token using the refresh token.
 
     Returns dict with new: access_token, refresh_token, expires_in.
     """
     payload = {
         "grant_type": "refresh_token",
-        "client_id": settings.ETSY_API_KEY,
+        "client_id": _get_api_key(creds),
         "refresh_token": refresh_token,
     }
 
@@ -183,7 +208,7 @@ def _is_token_expired(expires_at: Optional[datetime]) -> bool:
     return datetime.now(timezone.utc) >= expires_at - timedelta(minutes=5)
 
 
-async def get_valid_token(user) -> str:
+async def get_valid_token(user, creds: Optional[dict] = None) -> str:
     """Get a valid access token, refreshing if needed. Updates user in place."""
     if not user.etsy_access_token:
         raise ValueError("Etsy not connected. Please connect your Etsy shop first.")
@@ -194,25 +219,25 @@ async def get_valid_token(user) -> str:
     if not user.etsy_refresh_token:
         raise ValueError("Etsy refresh token missing. Please reconnect your Etsy shop.")
 
-    tokens = await refresh_access_token(user.etsy_refresh_token)
+    tokens = await refresh_access_token(user.etsy_refresh_token, creds=creds)
     user.etsy_access_token = tokens["access_token"]
     user.etsy_refresh_token = tokens.get("refresh_token", user.etsy_refresh_token)
     user.etsy_token_expires_at = datetime.now(timezone.utc) + timedelta(seconds=tokens["expires_in"])
     return tokens["access_token"]
 
 
-def _auth_headers(access_token: str) -> dict:
+def _auth_headers(access_token: str, creds: Optional[dict] = None) -> dict:
     """Build standard auth headers for Etsy API requests."""
     return {
-        "x-api-key": _api_key_header(),
+        "x-api-key": _api_key_header(creds),
         "Authorization": f"Bearer {access_token}",
     }
 
 
-async def get_shop(access_token: str) -> dict:
+async def get_shop(access_token: str, creds: Optional[dict] = None) -> dict:
     """Get the user's Etsy shop info using their user ID from the access token."""
     user_id = extract_etsy_user_id(access_token)
-    headers = _auth_headers(access_token)
+    headers = _auth_headers(access_token, creds)
 
     async with httpx.AsyncClient() as client:
         # First get the user to confirm the token works
@@ -245,6 +270,7 @@ async def create_draft_listing(
     price: float,
     tags: list[str],
     quantity: int = 999,
+    creds: Optional[dict] = None,
 ) -> dict:
     """Create a draft listing on Etsy.
 
@@ -255,7 +281,7 @@ async def create_draft_listing(
     The type is set to "download" separately via update_listing_type()
     AFTER uploading the digital file with upload_listing_file().
     """
-    headers = _auth_headers(access_token)
+    headers = _auth_headers(access_token, creds)
 
     tag_list = [t.strip()[:20] for t in tags[:13] if t.strip()]
 
@@ -293,13 +319,14 @@ async def update_listing_type(
     shop_id: str,
     listing_id: int,
     listing_type: str = "download",
+    creds: Optional[dict] = None,
 ) -> dict:
     """Update a listing's type via PATCH (e.g., set to 'download' for digital).
 
     Per the Listings Tutorial, after uploading a digital file you must
     PATCH the listing to set type='download'.
     """
-    headers = _auth_headers(access_token)
+    headers = _auth_headers(access_token, creds)
 
     payload = {"type": listing_type}
 
@@ -326,9 +353,10 @@ async def upload_listing_image(
     image_bytes: bytes,
     filename: str = "listing.png",
     rank: int = 1,
+    creds: Optional[dict] = None,
 ) -> dict:
     """Upload an image to an Etsy listing (multipart/form-data)."""
-    headers = _auth_headers(access_token)
+    headers = _auth_headers(access_token, creds)
 
     files = {
         "image": (filename, image_bytes, "image/png"),
@@ -359,9 +387,10 @@ async def upload_listing_file(
     file_bytes: bytes,
     filename: str,
     rank: int = 1,
+    creds: Optional[dict] = None,
 ) -> dict:
     """Upload a digital file to an Etsy listing (the file buyers download)."""
-    headers = _auth_headers(access_token)
+    headers = _auth_headers(access_token, creds)
 
     files = {
         "file": (filename, file_bytes, "application/octet-stream"),

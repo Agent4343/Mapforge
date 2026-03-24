@@ -12,6 +12,7 @@ from app.config import settings
 from app.database import get_db
 from app.logging_config import log
 from app.models.db_models import GeneratedFile, User
+from app.services.app_settings import get_etsy_credentials
 from app.services.auth import get_current_user
 from app.services.etsy_client import (
     create_draft_listing,
@@ -54,9 +55,13 @@ class EtsyStatusResponse(BaseModel):
 # --- Endpoints ---
 
 @router.get("/status", response_model=EtsyStatusResponse)
-async def etsy_status(user: User = Depends(get_current_user)):
+async def etsy_status(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Check if the user has connected their Etsy shop."""
-    if not is_configured():
+    creds = await get_etsy_credentials(db)
+    if not is_configured(creds):
         return EtsyStatusResponse(connected=False)
 
     return EtsyStatusResponse(
@@ -69,12 +74,14 @@ async def etsy_status(user: User = Depends(get_current_user)):
 @router.get("/connect")
 async def etsy_connect(
     user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Start the Etsy OAuth 2.0 flow. Redirects user to Etsy for authorization."""
-    if not is_configured():
+    creds = await get_etsy_credentials(db)
+    if not is_configured(creds):
         raise HTTPException(status_code=503, detail="Etsy integration is not configured. Set ETSY_API_KEY and ETSY_API_SECRET.")
 
-    auth_url = generate_auth_url(user.id)
+    auth_url = generate_auth_url(user.id, creds=creds)
     return {"auth_url": auth_url}
 
 
@@ -92,8 +99,10 @@ async def etsy_callback(
     if not user:
         raise HTTPException(status_code=400, detail="Invalid state — user not found.")
 
+    creds = await get_etsy_credentials(db)
+
     try:
-        tokens = await exchange_code(user_id, code)
+        tokens = await exchange_code(user_id, code, creds=creds)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -104,7 +113,7 @@ async def etsy_callback(
 
     # Fetch shop info
     try:
-        shop = await get_shop(tokens["access_token"])
+        shop = await get_shop(tokens["access_token"], creds=creds)
         user.etsy_shop_id = str(shop["shop_id"])
         user.etsy_shop_name = shop.get("shop_name", "")
     except Exception as e:
@@ -144,7 +153,9 @@ async def etsy_publish(
     the SVG as a digital download file. The listing is created as a
     draft — you can review and activate it on Etsy.
     """
-    if not is_configured():
+    creds = await get_etsy_credentials(db)
+
+    if not is_configured(creds):
         raise HTTPException(status_code=503, detail="Etsy integration is not configured.")
 
     if not user.etsy_access_token:
@@ -166,7 +177,7 @@ async def etsy_publish(
 
     # Get a valid access token (refreshes if expired)
     try:
-        access_token = await get_valid_token(user)
+        access_token = await get_valid_token(user, creds=creds)
         await db.commit()  # persist any refreshed tokens
     except ValueError as e:
         raise HTTPException(status_code=401, detail=str(e))
@@ -182,6 +193,7 @@ async def etsy_publish(
             description=req.description,
             price=req.price,
             tags=req.tags,
+            creds=creds,
         )
     except ValueError as e:
         raise HTTPException(status_code=502, detail=f"Etsy API error: {e}")
@@ -199,6 +211,7 @@ async def etsy_publish(
                 listing_id=listing_id,
                 image_bytes=etsy_img,
                 filename=f"{file_record.location_name.replace(' ', '_')}_listing.png",
+                creds=creds,
             )
         except ValueError as e:
             log.warning("Etsy image upload failed (listing still created): %s", e)
@@ -215,6 +228,7 @@ async def etsy_publish(
                     image_bytes=thumb_bytes,
                     filename=f"{file_record.location_name.replace(' ', '_')}_mockup.png",
                     rank=2,
+                    creds=creds,
                 )
             except ValueError as e:
                 log.warning("Etsy thumbnail upload failed: %s", e)
@@ -230,6 +244,7 @@ async def etsy_publish(
                 listing_id=listing_id,
                 file_bytes=svg_bytes,
                 filename=f"{file_record.location_name.replace(' ', '_')}_mapforge.svg",
+                creds=creds,
             )
             # Now mark the listing as a digital download
             await update_listing_type(
@@ -237,6 +252,7 @@ async def etsy_publish(
                 shop_id=shop_id,
                 listing_id=listing_id,
                 listing_type="download",
+                creds=creds,
             )
         except ValueError as e:
             log.warning("Etsy digital file upload/type-update failed: %s", e)
