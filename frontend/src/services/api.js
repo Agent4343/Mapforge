@@ -460,39 +460,39 @@ async function getAdminStats() {
   return resp.json();
 }
 
-// --- Orders (pay-per-design) ---
+// --- Design Credits (Etsy-paid customers) ---
 
-async function calculatePrice(params) {
-  const resp = await fetchWithTimeout(`${API_BASE}/orders/price`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(params),
-  });
-  if (!resp.ok) throw new Error("Price calculation failed");
-  return resp.json();
-}
-
-async function createCheckout(params) {
-  const resp = await fetchWithTimeout(`${API_BASE}/orders/checkout`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(params),
-  });
+async function redeemCredit(token) {
+  const resp = await fetchWithTimeout(`${API_BASE}/orders/redeem/${token}`);
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-    throw new Error(extractErrorMessage(err.detail, "Checkout failed"));
+    throw new Error(extractErrorMessage(err.detail, "Invalid design credit"));
   }
   return resp.json();
 }
 
-async function getOrderStatus(downloadToken) {
-  const resp = await fetchWithTimeout(`${API_BASE}/orders/status/${downloadToken}`);
-  if (!resp.ok) throw new Error("Order not found");
+async function generateForCredit(token, designConfig) {
+  const resp = await fetchWithTimeout(`${API_BASE}/orders/generate/${token}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ design_config: designConfig }),
+    timeout: 120000,
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Generation failed"));
+  }
   return resp.json();
 }
 
-async function downloadOrderFile(downloadToken, format = "png") {
-  const resp = await fetchWithTimeout(`${API_BASE}/orders/download/${downloadToken}?format=${format}`, {
+async function getCreditStatus(token) {
+  const resp = await fetchWithTimeout(`${API_BASE}/orders/status/${token}`);
+  if (!resp.ok) throw new Error("Credit not found");
+  return resp.json();
+}
+
+async function downloadCreditFile(token, format = "png") {
+  const resp = await fetchWithTimeout(`${API_BASE}/orders/download/${token}?format=${format}`, {
     timeout: 60000,
   });
   if (!resp.ok) {
@@ -514,5 +514,5 @@ export {
   aiDescribe,
   getEtsyStatus, connectEtsy, disconnectEtsy, publishToEtsy,
   getAdminStats,
-  calculatePrice, createCheckout, getOrderStatus, downloadOrderFile,
+  redeemCredit, generateForCredit, getCreditStatus, downloadCreditFile,
 };

@@ -1,23 +1,23 @@
 import { useState, useEffect } from "react";
-import { getOrderStatus, downloadOrderFile } from "../services/api.js";
+import { getCreditStatus, downloadCreditFile } from "../services/api.js";
 
-export default function OrderStatus({ downloadToken, onBack }) {
-  const [order, setOrder] = useState(null);
+export default function OrderStatus({ creditToken, onBack }) {
+  const [credit, setCredit] = useState(null);
   const [error, setError] = useState(null);
   const [downloading, setDownloading] = useState(null);
   const [pollCount, setPollCount] = useState(0);
 
   useEffect(() => {
-    if (!downloadToken) return;
+    if (!creditToken) return;
 
     let cancelled = false;
     async function poll() {
       try {
-        const data = await getOrderStatus(downloadToken);
-        if (!cancelled) setOrder(data);
+        const data = await getCreditStatus(creditToken);
+        if (!cancelled) setCredit(data);
 
-        // Keep polling if not yet completed (generating state)
-        if (data.status === "pending" || data.status === "paid" || data.status === "generating") {
+        // Keep polling if still generating
+        if (data.status === "generating") {
           setTimeout(() => {
             if (!cancelled) setPollCount((c) => c + 1);
           }, 3000);
@@ -28,24 +28,24 @@ export default function OrderStatus({ downloadToken, onBack }) {
     }
     poll();
     return () => { cancelled = true; };
-  }, [downloadToken, pollCount]);
+  }, [creditToken, pollCount]);
 
   async function handleDownload(format) {
     setDownloading(format);
     try {
-      const blob = await downloadOrderFile(downloadToken, format);
+      const blob = await downloadCreditFile(creditToken, format);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      const name = (order?.location_name || "mapforge").replace(/\s+/g, "_").toLowerCase();
+      const name = (credit?.location_name || "mapforge").replace(/\s+/g, "_").toLowerCase();
       a.download = `${name}.${format === "thumbnail" ? "png" : format}`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-      // Refresh order to update download count
-      const data = await getOrderStatus(downloadToken);
-      setOrder(data);
+      // Refresh to update download count
+      const data = await getCreditStatus(creditToken);
+      setCredit(data);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -62,60 +62,52 @@ export default function OrderStatus({ downloadToken, onBack }) {
     );
   }
 
-  if (!order) {
+  if (!credit) {
     return (
       <div className="order-status">
         <div className="order-loading">
-          <span className="spinner-inline" /> Loading your order...
+          <span className="spinner-inline" /> Loading...
         </div>
       </div>
     );
   }
 
-  const isReady = order.status === "completed";
-  const isFailed = order.status === "failed";
-  const isProcessing = order.status === "generating" || order.status === "paid" || order.status === "pending";
+  const isReady = credit.status === "completed";
+  const isGenerating = credit.status === "generating";
 
   return (
     <div className="order-status">
-      <h2>Your Order</h2>
+      <h2>Your Custom Map</h2>
 
       <div className="order-info-card">
-        <div className="order-info-row">
-          <span>Location</span>
-          <strong>{order.location_name}</strong>
-        </div>
-        <div className="order-info-row">
-          <span>Type</span>
-          <span>{order.product_type.replace("_", " ")}</span>
-        </div>
-        <div className="order-info-row">
-          <span>Price</span>
-          <span>{order.price_display}</span>
-        </div>
+        {credit.location_name && (
+          <div className="order-info-row">
+            <span>Location</span>
+            <strong>{credit.location_name}</strong>
+          </div>
+        )}
+        {credit.product_type && (
+          <div className="order-info-row">
+            <span>Type</span>
+            <span>{credit.product_type.replace("_", " ")}</span>
+          </div>
+        )}
         <div className="order-info-row">
           <span>Status</span>
-          <span className={`order-status-badge order-status-${order.status}`}>
-            {order.status === "completed" ? "Ready to Download" :
-             order.status === "generating" ? "Generating Your Map..." :
-             order.status === "paid" ? "Payment Received" :
-             order.status === "failed" ? "Generation Failed" :
-             "Pending Payment"}
+          <span className={`order-status-badge order-status-${credit.status}`}>
+            {credit.status === "completed" ? "Ready to Download" :
+             credit.status === "generating" ? "Generating Your Map..." :
+             credit.status === "unused" ? "Ready to Design" :
+             credit.status === "designing" ? "Designing" :
+             credit.status}
           </span>
         </div>
       </div>
 
-      {isProcessing && (
+      {isGenerating && (
         <div className="order-processing">
           <span className="spinner-inline" />
           <p>Your custom map is being generated. This usually takes 30-60 seconds.</p>
-        </div>
-      )}
-
-      {isFailed && (
-        <div className="order-failed">
-          <p>Something went wrong generating your map. Please contact support with your order token:</p>
-          <code>{downloadToken}</code>
         </div>
       )}
 
@@ -123,7 +115,7 @@ export default function OrderStatus({ downloadToken, onBack }) {
         <div className="order-downloads">
           <h3>Download Your Files</h3>
           <p className="order-download-note">
-            {order.download_count} of {order.max_downloads} downloads used
+            {credit.download_count} of {credit.max_downloads} downloads used
           </p>
 
           <div className="order-download-buttons">
@@ -154,7 +146,7 @@ export default function OrderStatus({ downloadToken, onBack }) {
 
       {onBack && (
         <button className="btn btn-secondary" onClick={onBack} style={{ marginTop: "16px" }}>
-          Design Another Map
+          {credit.status === "unused" ? "Start Designing" : "Design Another Map"}
         </button>
       )}
     </div>

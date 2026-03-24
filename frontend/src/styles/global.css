@@ -2493,6 +2493,21 @@ body {
   gap: 8px;
 }
 
+/* Credit banner for Etsy customers */
+.credit-banner {
+  background: linear-gradient(135deg, #1a3a1a, #1a2a1a);
+  border: 1px solid var(--success);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+}
+
+.credit-banner-text {
+  font-size: 13px;
+  color: var(--success);
+  font-weight: 500;
+}
+
 /* Landing page showcase price */
 .landing-showcase-price {
   font-size: 18px;

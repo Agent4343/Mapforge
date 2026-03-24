@@ -1,25 +1,20 @@
 import { useState } from "react";
-import { createCheckout } from "../services/api.js";
-import { quickPrice } from "./PriceDisplay.jsx";
+import { generateForCredit } from "../services/api.js";
 
-export default function CheckoutModal({ config, selectedResult, pinCoords, markers, onClose, onDevComplete }) {
-  const [email, setEmail] = useState("");
+/**
+ * GenerateModal — shown when an Etsy customer with a valid credit clicks
+ * "Generate My Map". Submits their design config and starts generation.
+ */
+export default function GenerateModal({ config, selectedResult, pinCoords, markers, creditToken, onClose, onGenerating }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  const { total, addons } = quickPrice(config, markers);
-
-  async function handleCheckout() {
-    if (!email || !email.includes("@")) {
-      setError("Please enter a valid email address.");
-      return;
-    }
-
+  async function handleGenerate() {
     setLoading(true);
     setError(null);
 
     try {
-      // Build the full design config to save with the order
+      // Build the full design config
       const isPinMode = config.productType === "name_sign" && pinCoords;
       let designConfig;
 
@@ -92,30 +87,8 @@ export default function CheckoutModal({ config, selectedResult, pinCoords, marke
         }
       }
 
-      const result = await createCheckout({
-        email,
-        design_config: designConfig,
-        product_type: config.productType,
-        board_size: config.boardSize,
-        include_streets: config.includeStreets || false,
-        include_contours: config.includeContours || false,
-        num_markers: (markers || []).filter((m) => m.lat && m.lon).length,
-        has_heart: config.heartLat != null && config.heartLon != null,
-        print_dpi: config.printDPI || 300,
-        border_style: config.borderStyle || "none",
-        include_dxf: false,
-        include_stl: false,
-        success_url: window.location.origin,
-        cancel_url: window.location.origin,
-      });
-
-      if (result.checkout_url) {
-        // Redirect to Stripe
-        window.location.href = result.checkout_url;
-      } else if (result.dev_mode) {
-        // Dev mode — no Stripe, go directly to order status
-        onDevComplete(result.download_token);
-      }
+      await generateForCredit(creditToken, designConfig);
+      onGenerating();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -127,67 +100,47 @@ export default function CheckoutModal({ config, selectedResult, pinCoords, marke
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal checkout-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <h2>Complete Your Order</h2>
+          <h2>Generate Your Custom Map</h2>
           <button className="modal-close" onClick={onClose}>&times;</button>
         </div>
 
         <div className="checkout-summary">
           <div className="checkout-item-name">
-            Custom Map — {config.text || "Your Location"}
+            {config.text || "Your Custom Map"}
           </div>
-          <div className="checkout-price-breakdown">
-            {addons.length > 0 && addons.map((a, i) => (
-              <div key={i} className="checkout-addon-row">
-                <span>{a.label}</span>
-                <span>+${(a.cents / 100).toFixed(2)}</span>
-              </div>
-            ))}
-          </div>
-          <div className="checkout-total">
-            <span>Total</span>
-            <span className="checkout-total-amount">${(total / 100).toFixed(2)}</span>
-          </div>
+          <p style={{ fontSize: "13px", color: "var(--text-secondary)", margin: "8px 0 0" }}>
+            Your Etsy purchase includes this custom map design. Click below to generate your print-ready files.
+          </p>
         </div>
 
         <div className="checkout-includes">
           <h4>You'll receive:</h4>
           <ul>
-            <li>Print-ready PNG (300{config.printDPI >= 600 ? " & 600" : ""} DPI)</li>
+            <li>Print-ready PNG ({config.printDPI || 300} DPI)</li>
             <li>SVG vector source file</li>
-            <li>Etsy listing mockup image</li>
+            <li>Product mockup image</li>
             <li>Up to 5 downloads</li>
           </ul>
-        </div>
-
-        <div className="control-group">
-          <label>Email (for delivery)</label>
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="your@email.com"
-            autoFocus
-          />
         </div>
 
         {error && <div className="error-message">{error}</div>}
 
         <button
           className="btn btn-primary btn-full checkout-pay-btn"
-          onClick={handleCheckout}
-          disabled={loading || !email}
+          onClick={handleGenerate}
+          disabled={loading}
         >
           {loading ? (
             <span className="generate-btn-content">
-              <span className="spinner-inline" /> Processing...
+              <span className="spinner-inline" /> Generating...
             </span>
           ) : (
-            `Pay $${(total / 100).toFixed(2)} — Get Your Map`
+            "Generate My Map"
           )}
         </button>
 
         <p className="checkout-secure-note">
-          Secure payment via Stripe. Your files are generated instantly after payment.
+          Already paid via Etsy. Your files will be ready in about 30-60 seconds.
         </p>
       </div>
     </div>

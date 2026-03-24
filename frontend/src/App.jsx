@@ -15,13 +15,14 @@ import LandingPage from "./components/LandingPage.jsx";
 import PricingModal from "./components/PricingModal.jsx";
 import PurchasesView from "./components/PurchasesView.jsx";
 import PriceDisplay from "./components/PriceDisplay.jsx";
-import CheckoutModal from "./components/CheckoutModal.jsx";
+import GenerateModal from "./components/CheckoutModal.jsx";
 import OrderStatus from "./components/OrderStatus.jsx";
 import {
   generateSVG, generatePin, downloadSVG, downloadDXF, downloadSTL,
   downloadThumbnail, downloadPrintPNG,
   downloadEtsyListing, downloadEtsyPackage, downloadPreview,
   getProfile, logout, getToken, subscribe,
+  redeemCredit,
 } from "./services/api.js";
 
 const DEFAULT_CONFIG = {
@@ -119,8 +120,10 @@ export default function App() {
   const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [pinCoords, setPinCoords] = useState(null); // {lat, lon} for name_sign pin drop
   const [markers, setMarkers] = useState([]); // custom markers [{lat, lon, label, icon}]
-  const [showCheckout, setShowCheckout] = useState(false);
-  const [orderToken, setOrderToken] = useState(null); // download token after payment
+  const [showGenerateModal, setShowGenerateModal] = useState(false);
+  const [creditToken, setCreditToken] = useState(null); // design credit token from Etsy purchase
+  const [creditData, setCreditData] = useState(null); // credit info from API
+  const [creditView, setCreditView] = useState(null); // "status" to show order status page
   const [isEtsyReferral, setIsEtsyReferral] = useState(false);
 
   // Undo/redo state
@@ -146,18 +149,38 @@ export default function App() {
     }
   }, []);
 
-  // Handle URL params: Etsy referrals (?ref=etsy) and Stripe callbacks (?order_token=xxx)
+  // Handle URL params: Etsy design credits (?credit=TOKEN) and referrals (?ref=etsy)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    // Stripe success callback — show order status
-    const token = params.get("order_token");
-    if (token) {
-      setOrderToken(token);
+
+    // Etsy purchase credit — customer bought on Etsy, has a design token
+    const creditParam = params.get("credit");
+    if (creditParam) {
+      setCreditToken(creditParam);
       setShowLanding(false);
+      setIsEtsyReferral(true);
       window.history.replaceState({}, "", window.location.pathname);
+      // Validate the token
+      redeemCredit(creditParam)
+        .then((data) => {
+          setCreditData(data);
+          // If already completed, show the download page
+          if (data.status === "completed" || data.status === "generating") {
+            setCreditView("status");
+          }
+          // Pre-fill product type from the Etsy listing
+          if (data.product_type) {
+            setConfig((prev) => ({ ...prev, productType: data.product_type }));
+          }
+        })
+        .catch(() => {
+          setCreditToken(null);
+          setCreditData(null);
+        });
       return;
     }
-    // Etsy referral — skip landing, pre-fill config
+
+    // Etsy referral (no credit yet — just browsing from listing description)
     if (params.get("ref") === "etsy") {
       setIsEtsyReferral(true);
       setShowLanding(false);
@@ -458,8 +481,8 @@ export default function App() {
     URL.revokeObjectURL(url);
   }
 
-  // Order status page (after payment)
-  if (orderToken) {
+  // Order status page (after generation started or already completed)
+  if (creditView === "status" && creditToken) {
     return (
       <div className="app">
         <header className="header">
@@ -472,8 +495,8 @@ export default function App() {
         </header>
         <div className="order-status-page">
           <OrderStatus
-            downloadToken={orderToken}
-            onBack={() => { setOrderToken(null); setShowLanding(false); }}
+            creditToken={creditToken}
+            onBack={() => { setCreditView(null); }}
           />
         </div>
       </div>
@@ -661,18 +684,30 @@ export default function App() {
             </div>
           )}
 
-          {/* Live Price Display — always visible for customer flow */}
-          <PriceDisplay config={config} markers={markers} />
+          {/* Etsy credit banner — show when customer has a valid design credit */}
+          {creditToken && creditData && creditData.status === "unused" && (
+            <div className="credit-banner">
+              <div className="credit-banner-text">
+                Etsy purchase confirmed — design your custom map below, then click Generate.
+              </div>
+            </div>
+          )}
 
-          {/* Customer checkout button (no login required) */}
-          {(!!selectedResult || (config.productType === "name_sign" && !!pinCoords)) && (
+          {/* Generate button for Etsy customers with a credit */}
+          {creditToken && creditData && creditData.status === "unused" &&
+           (!!selectedResult || (config.productType === "name_sign" && !!pinCoords)) && (
             <button
               className="btn btn-primary btn-full checkout-cta"
-              onClick={() => setShowCheckout(true)}
+              onClick={() => setShowGenerateModal(true)}
               style={{ marginBottom: "12px", fontSize: "16px", padding: "14px" }}
             >
-              Order My Custom Map
+              Generate My Map — Included with Etsy Purchase
             </button>
+          )}
+
+          {/* Price display for browsing customers (no credit yet) */}
+          {!creditToken && (
+            <PriceDisplay config={config} markers={markers} />
           )}
 
           <ExportPanel
@@ -736,16 +771,17 @@ export default function App() {
       {showAuth && <AuthModal onAuth={handleAuth} onClose={() => setShowAuth(false)} />}
       {showBatch && <BatchPanel config={config} onClose={() => setShowBatch(false)} />}
       {showPricing && <PricingModal user={user} onClose={() => setShowPricing(false)} onSubscribe={handleSubscribe} />}
-      {showCheckout && (
-        <CheckoutModal
+      {showGenerateModal && creditToken && (
+        <GenerateModal
           config={config}
           selectedResult={selectedResult}
           pinCoords={pinCoords}
           markers={markers}
-          onClose={() => setShowCheckout(false)}
-          onDevComplete={(token) => {
-            setShowCheckout(false);
-            setOrderToken(token);
+          creditToken={creditToken}
+          onClose={() => setShowGenerateModal(false)}
+          onGenerating={() => {
+            setShowGenerateModal(false);
+            setCreditView("status");
           }}
         />
       )}

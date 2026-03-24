@@ -1,30 +1,29 @@
-"""Customer order endpoints — pricing, checkout, fulfillment, and download.
+"""Customer design credit endpoints — redeem Etsy purchase, design, generate, download.
 
 Flow:
-  1. Customer designs map (no auth required)
-  2. GET  /api/v1/orders/price  → live price calculation
-  3. POST /api/v1/orders/checkout → creates Stripe Checkout Session, returns URL
-  4. Stripe webhook (checkout.session.completed) → triggers generation + email
-  5. GET  /api/v1/orders/{token}/download → download files with token
+  1. Customer buys a map product on your Etsy shop
+  2. Etsy webhook (order.paid) auto-creates a DesignCredit with a unique token
+  3. Customer receives a link (in Etsy digital download) to your app with the token
+  4. GET  /api/v1/orders/redeem/{token}  → validates token, returns credit info
+  5. POST /api/v1/orders/generate/{token} → customer submits design, files are generated
+  6. GET  /api/v1/orders/download/{token} → download generated files
+  7. GET  /api/v1/orders/status/{token}   → check generation progress
+
+No second payment — customer already paid on Etsy.
 """
 
 import json
 import secrets
 from datetime import datetime, timezone
 
-import stripe
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import async_session
 from app.logging_config import log
-from app.models.db_models import Order
-from app.services.pricing import calculate_price
-
-stripe.api_key = settings.STRIPE_SECRET_KEY
+from app.models.db_models import DesignCredit, GeneratedFile
 
 router = APIRouter(prefix="/api/v1/orders", tags=["orders"])
 
@@ -33,47 +32,28 @@ router = APIRouter(prefix="/api/v1/orders", tags=["orders"])
 # Schemas
 # ---------------------------------------------------------------------------
 
-class PriceRequest(BaseModel):
-    product_type: str = "city"
-    board_size: str = "print_16x20"
-    include_streets: bool = False
-    include_contours: bool = False
-    num_markers: int = Field(0, ge=0, le=10)
-    has_heart: bool = False
-    print_dpi: int = 300
-    border_style: str = "none"
-    include_dxf: bool = False
-    include_stl: bool = False
-
-
-class CheckoutRequest(BaseModel):
-    """Everything needed to create an order + redirect to Stripe."""
-    email: str = Field(..., min_length=5, max_length=255)
-    # Full design config (same as GenerateRequest fields)
-    design_config: dict
-    # Price inputs (for server-side re-calculation)
-    product_type: str = "city"
-    board_size: str = "print_16x20"
-    include_streets: bool = False
-    include_contours: bool = False
-    num_markers: int = 0
-    has_heart: bool = False
-    print_dpi: int = 300
-    border_style: str = "none"
-    include_dxf: bool = False
-    include_stl: bool = False
-    # Redirect URLs
-    success_url: str
-    cancel_url: str
-
-
-class OrderStatusResponse(BaseModel):
-    order_id: str
+class RedeemResponse(BaseModel):
+    token: str
     status: str
-    location_name: str
-    product_type: str
-    price_display: str
-    download_token: str | None = None
+    product_type: str | None = None
+    product_tier: str = "standard"
+    etsy_listing_title: str | None = None
+    location_name: str | None = None
+    file_id: str | None = None
+    download_count: int = 0
+    max_downloads: int = 5
+
+
+class GenerateDesignRequest(BaseModel):
+    """Design configuration submitted by the customer after designing their map."""
+    design_config: dict  # Full GenerateRequest fields as dict
+
+
+class CreditStatusResponse(BaseModel):
+    token: str
+    status: str
+    location_name: str | None = None
+    product_type: str | None = None
     file_id: str | None = None
     download_count: int = 0
     max_downloads: int = 5
@@ -83,175 +63,152 @@ class OrderStatusResponse(BaseModel):
 # Endpoints
 # ---------------------------------------------------------------------------
 
-@router.post("/price")
-async def get_price(req: PriceRequest):
-    """Calculate price for a design (no auth required)."""
-    return calculate_price(
-        product_type=req.product_type,
-        board_size=req.board_size,
-        include_streets=req.include_streets,
-        include_contours=req.include_contours,
-        num_markers=req.num_markers,
-        has_heart=req.has_heart,
-        print_dpi=req.print_dpi,
-        border_style=req.border_style,
-        include_dxf=req.include_dxf,
-        include_stl=req.include_stl,
+@router.get("/redeem/{token}")
+async def redeem_credit(token: str):
+    """Validate a design credit token and return its details.
+
+    This is the first thing the customer's browser calls when they click the
+    link from Etsy. If the token is valid and unused, the customer can proceed
+    to design their map.
+    """
+    async with async_session() as db:
+        result = await db.execute(
+            select(DesignCredit).where(DesignCredit.redeem_token == token)
+        )
+        credit = result.scalar_one_or_none()
+
+    if not credit:
+        raise HTTPException(status_code=404, detail="Invalid or expired design credit. Please check your Etsy purchase confirmation for the correct link.")
+
+    if credit.status == "expired":
+        raise HTTPException(status_code=410, detail="This design credit has expired. Please contact the seller.")
+
+    return RedeemResponse(
+        token=credit.redeem_token,
+        status=credit.status,
+        product_type=credit.product_type,
+        product_tier=credit.product_tier,
+        etsy_listing_title=credit.etsy_listing_title,
+        location_name=credit.location_name,
+        file_id=credit.file_id if credit.status == "completed" else None,
+        download_count=credit.download_count,
+        max_downloads=credit.max_downloads,
     )
 
 
-@router.post("/checkout")
-async def create_checkout(req: CheckoutRequest):
-    """Create a Stripe Checkout Session and an Order record. Returns checkout URL."""
-    # Server-side price calculation (never trust the client)
-    pricing = calculate_price(
-        product_type=req.product_type,
-        board_size=req.board_size,
-        include_streets=req.include_streets,
-        include_contours=req.include_contours,
-        num_markers=req.num_markers,
-        has_heart=req.has_heart,
-        print_dpi=req.print_dpi,
-        border_style=req.border_style,
-        include_dxf=req.include_dxf,
-        include_stl=req.include_stl,
-    )
+@router.post("/generate/{token}")
+async def generate_design(token: str, req: GenerateDesignRequest):
+    """Submit a design configuration and generate the map files.
+
+    The customer designs their map in the frontend, then hits this endpoint.
+    The design is saved and files are generated immediately.
+    """
+    import asyncio
+
+    async with async_session() as db:
+        result = await db.execute(
+            select(DesignCredit).where(DesignCredit.redeem_token == token)
+        )
+        credit = result.scalar_one_or_none()
+
+    if not credit:
+        raise HTTPException(status_code=404, detail="Invalid design credit")
+
+    if credit.status == "completed":
+        # Already generated — just return the existing result
+        return CreditStatusResponse(
+            token=credit.redeem_token,
+            status="completed",
+            location_name=credit.location_name,
+            product_type=credit.product_type,
+            file_id=credit.file_id,
+            download_count=credit.download_count,
+            max_downloads=credit.max_downloads,
+        )
+
+    if credit.status == "generating":
+        raise HTTPException(status_code=409, detail="Your map is already being generated. Please wait.")
+
+    if credit.status not in ("unused", "designing"):
+        raise HTTPException(status_code=400, detail=f"Credit cannot be used (status: {credit.status})")
 
     location_name = req.design_config.get("text") or req.design_config.get("label") or "Custom Map"
 
-    # Create order in DB
-    download_token = secrets.token_urlsafe(32)
-
-    async with async_session() as db:
-        order = Order(
-            email=req.email,
-            status="pending",
-            design_config=json.dumps(req.design_config),
-            product_type=req.product_type,
-            board_size=req.board_size,
-            location_name=location_name,
-            price_cents=pricing["total_cents"],
-            price_breakdown=json.dumps(pricing),
-            download_token=download_token,
-        )
-        db.add(order)
-        await db.commit()
-        await db.refresh(order)
-        order_id = order.id
-
-    # Create Stripe Checkout Session
-    if not settings.STRIPE_SECRET_KEY:
-        # Dev mode — skip Stripe, mark as paid immediately
-        log.warning("Stripe not configured — auto-completing order for dev mode")
-        async with async_session() as db:
-            result = await db.execute(select(Order).where(Order.id == order_id))
-            order = result.scalar_one()
-            order.status = "paid"
-            order.paid_at = datetime.now(timezone.utc)
-            await db.commit()
-        return {
-            "checkout_url": None,
-            "order_id": order_id,
-            "download_token": download_token,
-            "dev_mode": True,
-            "price": pricing,
-        }
-
-    try:
-        session = stripe.checkout.Session.create(
-            mode="payment",
-            customer_email=req.email,
-            line_items=[{
-                "price_data": {
-                    "currency": "usd",
-                    "unit_amount": pricing["total_cents"],
-                    "product_data": {
-                        "name": f"Custom Map Print — {location_name}",
-                        "description": f"{pricing['size_label']} {req.product_type.replace('_', ' ').title()} Map",
-                    },
-                },
-                "quantity": 1,
-            }],
-            metadata={
-                "order_id": order_id,
-                "order_type": "map_design",
-            },
-            success_url=req.success_url + "?order_token=" + download_token,
-            cancel_url=req.cancel_url,
-        )
-    except stripe.error.StripeError as e:
-        raise HTTPException(status_code=502, detail=f"Payment error: {str(e)}")
-
-    # Save checkout session ID
-    async with async_session() as db:
-        result = await db.execute(select(Order).where(Order.id == order_id))
-        order = result.scalar_one()
-        order.stripe_checkout_session_id = session.id
-        await db.commit()
-
-    return {
-        "checkout_url": session.url,
-        "order_id": order_id,
-        "price": pricing,
-    }
-
-
-@router.get("/status/{download_token}")
-async def get_order_status(download_token: str):
-    """Check order status by download token (no auth required)."""
+    # Save design config and start generating
     async with async_session() as db:
         result = await db.execute(
-            select(Order).where(Order.download_token == download_token)
+            select(DesignCredit).where(DesignCredit.redeem_token == token)
         )
-        order = result.scalar_one_or_none()
+        credit = result.scalar_one()
+        credit.design_config = json.dumps(req.design_config)
+        credit.location_name = location_name
+        credit.status = "generating"
+        credit.redeemed_at = datetime.now(timezone.utc)
+        await db.commit()
+        credit_id = credit.id
 
-    if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
+    # Run generation (may take 30-60s)
+    asyncio.create_task(_fulfill_credit(credit_id))
 
-    breakdown = json.loads(order.price_breakdown) if order.price_breakdown else {}
-
-    return OrderStatusResponse(
-        order_id=order.id,
-        status=order.status,
-        location_name=order.location_name,
-        product_type=order.product_type,
-        price_display=breakdown.get("total_display", f"${order.price_cents / 100:.2f}"),
-        download_token=order.download_token if order.status == "completed" else None,
-        file_id=order.file_id if order.status == "completed" else None,
-        download_count=order.download_count,
-        max_downloads=order.max_downloads,
+    return CreditStatusResponse(
+        token=token,
+        status="generating",
+        location_name=location_name,
+        product_type=credit.product_type,
     )
 
 
-@router.get("/download/{download_token}")
-async def download_order_files(download_token: str, format: str = Query("png")):
-    """Download generated files using the order's download token."""
+@router.get("/status/{token}")
+async def get_credit_status(token: str):
+    """Check the generation status of a design credit."""
+    async with async_session() as db:
+        result = await db.execute(
+            select(DesignCredit).where(DesignCredit.redeem_token == token)
+        )
+        credit = result.scalar_one_or_none()
+
+    if not credit:
+        raise HTTPException(status_code=404, detail="Credit not found")
+
+    return CreditStatusResponse(
+        token=credit.redeem_token,
+        status=credit.status,
+        location_name=credit.location_name,
+        product_type=credit.product_type,
+        file_id=credit.file_id if credit.status == "completed" else None,
+        download_count=credit.download_count,
+        max_downloads=credit.max_downloads,
+    )
+
+
+@router.get("/download/{token}")
+async def download_files(token: str, format: str = Query("png")):
+    """Download generated files using the design credit token."""
     from fastapi.responses import StreamingResponse
     from app.services.file_storage import get_file
 
     async with async_session() as db:
         result = await db.execute(
-            select(Order).where(Order.download_token == download_token)
+            select(DesignCredit).where(DesignCredit.redeem_token == token)
         )
-        order = result.scalar_one_or_none()
+        credit = result.scalar_one_or_none()
 
-    if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
+    if not credit:
+        raise HTTPException(status_code=404, detail="Invalid credit token")
 
-    if order.status != "completed":
-        raise HTTPException(status_code=400, detail=f"Order is not ready yet (status: {order.status})")
+    if credit.status != "completed":
+        raise HTTPException(status_code=400, detail=f"Files are not ready yet (status: {credit.status})")
 
-    if not order.file_id:
+    if not credit.file_id:
         raise HTTPException(status_code=400, detail="Files have not been generated yet")
 
-    if order.download_count >= order.max_downloads:
-        raise HTTPException(status_code=403, detail="Download limit reached. Contact support for help.")
+    if credit.download_count >= credit.max_downloads:
+        raise HTTPException(status_code=403, detail="Download limit reached. Contact the seller for help.")
 
     # Get the generated file record
-    from app.models.db_models import GeneratedFile
     async with async_session() as db:
         file_result = await db.execute(
-            select(GeneratedFile).where(GeneratedFile.id == order.file_id)
+            select(GeneratedFile).where(GeneratedFile.id == credit.file_id)
         )
         gen_file = file_result.scalar_one_or_none()
 
@@ -276,7 +233,7 @@ async def download_order_files(download_token: str, format: str = Query("png")):
         content_type = "image/png"
         filename_ext = "png"
     else:
-        raise HTTPException(status_code=400, detail=f"Format '{format}' not available for this order")
+        raise HTTPException(status_code=400, detail=f"Format '{format}' not available")
 
     file_data = await get_file(key)
     if not file_data:
@@ -284,38 +241,128 @@ async def download_order_files(download_token: str, format: str = Query("png")):
 
     # Increment download count
     async with async_session() as db:
-        result = await db.execute(select(Order).where(Order.id == order.id))
-        o = result.scalar_one()
-        o.download_count += 1
+        result = await db.execute(select(DesignCredit).where(DesignCredit.id == credit.id))
+        c = result.scalar_one()
+        c.download_count += 1
         await db.commit()
 
-    safe_name = order.location_name.replace(" ", "_").lower()[:50]
+    safe_name = (credit.location_name or "mapforge").replace(" ", "_").lower()[:50]
     return StreamingResponse(
         iter([file_data]),
         media_type=content_type,
         headers={
-            "Content-Disposition": f'attachment; filename="{safe_name}_{format}.{filename_ext}"'
+            "Content-Disposition": f'attachment; filename="{safe_name}.{filename_ext}"'
         },
     )
 
 
-@router.get("/link")
+# ---------------------------------------------------------------------------
+# Etsy link generation (for listing descriptions)
+# ---------------------------------------------------------------------------
+
+@router.get("/etsy-link")
 async def generate_etsy_link(
     product_type: str = "lake",
-    board_size: str = "print_16x20",
-    color_theme: str = "classic",
+    product_tier: str = "standard",
 ):
-    """Generate a link-back URL for Etsy listings.
+    """Generate a link template for your Etsy listing description.
 
-    Put this URL in your Etsy listing description:
-      "Design your custom map at: {url}"
+    You don't put the token in the Etsy listing — the token is auto-generated
+    when a customer buys. Instead, the Etsy digital download PDF will contain
+    the unique design link.
 
-    When customers click it, they land on your app with pre-filled settings.
+    This endpoint gives you the marketing link for the listing description.
     """
     frontend_url = settings.FRONTEND_URL or "http://localhost:5173"
-    params = f"?ref=etsy&product_type={product_type}&board_size={board_size}&color_theme={color_theme}"
+    link = f"{frontend_url}?ref=etsy&product_type={product_type}&tier={product_tier}"
     return {
-        "url": frontend_url + params,
-        "markdown": f"[Design Your Custom Map]({frontend_url}{params})",
-        "html": f'<a href="{frontend_url}{params}">Design Your Custom Map</a>',
+        "listing_description_link": link,
+        "note": "This is the preview link for your listing description. The actual design link with the unique token is sent to the customer after purchase via the Etsy digital download.",
     }
+
+
+# ---------------------------------------------------------------------------
+# Admin: manually create design credits (for testing or non-Etsy sales)
+# ---------------------------------------------------------------------------
+
+@router.post("/credits/create")
+async def create_credit_manually(
+    product_type: str = "lake",
+    product_tier: str = "standard",
+    etsy_buyer_email: str | None = None,
+    max_downloads: int = 5,
+):
+    """Manually create a design credit (admin/testing use).
+
+    Returns the unique design link that you can share with a customer.
+    """
+    token = secrets.token_urlsafe(32)
+    frontend_url = settings.FRONTEND_URL or "http://localhost:5173"
+
+    async with async_session() as db:
+        credit = DesignCredit(
+            product_type=product_type,
+            product_tier=product_tier,
+            etsy_buyer_email=etsy_buyer_email,
+            redeem_token=token,
+            max_downloads=max_downloads,
+        )
+        db.add(credit)
+        await db.commit()
+
+    design_url = f"{frontend_url}?credit={token}"
+
+    return {
+        "credit_id": credit.id,
+        "token": token,
+        "design_url": design_url,
+        "product_type": product_type,
+        "product_tier": product_tier,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Background: generate files for a credit
+# ---------------------------------------------------------------------------
+
+async def _fulfill_credit(credit_id: str):
+    """Generate map files for a redeemed design credit."""
+    from app.routers.generate import _do_generate
+    from app.models.schemas import GenerateRequest
+
+    async with async_session() as db:
+        result = await db.execute(
+            select(DesignCredit).where(DesignCredit.id == credit_id)
+        )
+        credit = result.scalar_one_or_none()
+        if not credit or credit.status != "generating":
+            return
+
+    try:
+        design = json.loads(credit.design_config)
+        req = GenerateRequest(**design)
+
+        async with async_session() as db:
+            gen_response = await _do_generate(req, user=None, db=db)
+
+        async with async_session() as db:
+            result = await db.execute(
+                select(DesignCredit).where(DesignCredit.id == credit_id)
+            )
+            credit = result.scalar_one()
+            credit.file_id = gen_response.file_id
+            credit.status = "completed"
+            credit.completed_at = datetime.now(timezone.utc)
+            await db.commit()
+
+        log.info(f"Design credit {credit_id} fulfilled — file_id={gen_response.file_id}")
+
+    except Exception as e:
+        log.error(f"Design credit {credit_id} generation failed: {e}")
+        async with async_session() as db:
+            result = await db.execute(
+                select(DesignCredit).where(DesignCredit.id == credit_id)
+            )
+            credit = result.scalar_one()
+            credit.status = "unused"  # Reset so customer can try again
+            await db.commit()

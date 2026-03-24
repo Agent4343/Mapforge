@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import async_session
 from app.logging_config import log
-from app.models.db_models import User, Purchase, MarketplaceListing, Order
+from app.models.db_models import User, Purchase, MarketplaceListing, DesignCredit
 from app.services.payments import verify_webhook_signature, create_transfer
 
 router = APIRouter(prefix="/api/v1/webhooks", tags=["webhooks"])
@@ -44,12 +44,7 @@ async def stripe_webhook(request: Request):
 
     async with async_session() as db:
         if event_type == "checkout.session.completed":
-            # Check if this is a map order (pay-per-design) or subscription
-            metadata = data.get("metadata", {})
-            if metadata.get("order_type") == "map_design":
-                await _handle_order_checkout_completed(db, data, metadata)
-            else:
-                await _handle_checkout_completed(db, data)
+            await _handle_checkout_completed(db, data)
         elif event_type == "customer.subscription.updated":
             await _handle_subscription_updated(db, data)
         elif event_type == "customer.subscription.deleted":
@@ -95,76 +90,6 @@ async def _handle_checkout_completed(db: AsyncSession, data: dict):
     user.stripe_subscription_id = subscription_id
     await db.commit()
     log.info(f"User {user.username} upgraded to {tier}")
-
-
-async def _handle_order_checkout_completed(db: AsyncSession, data: dict, metadata: dict):
-    """Handle pay-per-design checkout completion — generate the map files."""
-    import json
-    import asyncio
-    from datetime import datetime, timezone
-
-    order_id = metadata.get("order_id")
-    if not order_id:
-        log.warning("Order checkout completed but no order_id in metadata")
-        return
-
-    result = await db.execute(select(Order).where(Order.id == order_id))
-    order = result.scalar_one_or_none()
-    if not order:
-        log.warning(f"Order {order_id} not found for checkout completion")
-        return
-
-    order.status = "paid"
-    order.paid_at = datetime.now(timezone.utc)
-    order.stripe_payment_intent_id = data.get("payment_intent")
-    await db.commit()
-    log.info(f"Order {order_id} marked as paid — starting generation")
-
-    # Trigger async generation (fire-and-forget within the webhook)
-    asyncio.create_task(_fulfill_order(order_id))
-
-
-async def _fulfill_order(order_id: str):
-    """Generate map files for a paid order."""
-    import json
-    from datetime import datetime, timezone
-    from app.routers.generate import _do_generate
-    from app.models.schemas import GenerateRequest
-
-    async with async_session() as db:
-        result = await db.execute(select(Order).where(Order.id == order_id))
-        order = result.scalar_one_or_none()
-        if not order or order.status not in ("paid",):
-            return
-
-        order.status = "generating"
-        await db.commit()
-
-    try:
-        design = json.loads(order.design_config)
-
-        # Build a proper GenerateRequest from the stored config
-        req = GenerateRequest(**design)
-
-        async with async_session() as db:
-            gen_response = await _do_generate(req, user=None, db=db)
-
-        async with async_session() as db:
-            result = await db.execute(select(Order).where(Order.id == order_id))
-            order = result.scalar_one()
-            order.file_id = gen_response.file_id
-            order.status = "completed"
-            order.completed_at = datetime.now(timezone.utc)
-            await db.commit()
-
-        log.info(f"Order {order_id} fulfilled — file_id={gen_response.file_id}")
-    except Exception as e:
-        log.error(f"Order {order_id} generation failed: {e}")
-        async with async_session() as db:
-            result = await db.execute(select(Order).where(Order.id == order_id))
-            order = result.scalar_one()
-            order.status = "failed"
-            await db.commit()
 
 
 async def _handle_subscription_updated(db: AsyncSession, data: dict):
@@ -400,24 +325,72 @@ async def etsy_webhook(request: Request):
 
 
 async def _handle_etsy_order_paid(db: AsyncSession, data: dict, shop_id: str):
-    """Handle Etsy order.paid — log the sale for the connected user's dashboard."""
-    # Find the user who owns this Etsy shop
+    """Handle Etsy order.paid — create a design credit for the customer.
+
+    When a customer buys on Etsy, we auto-create a DesignCredit with a unique
+    token. The token is included in the Etsy digital download file so the
+    customer can access the design tool and download their custom map.
+    """
+    import secrets
+
+    # Find the seller (your account) who owns this Etsy shop
     result = await db.execute(
         select(User).where(User.etsy_shop_id == shop_id)
     )
-    user = result.scalar_one_or_none()
-    if not user:
+    seller = result.scalar_one_or_none()
+    if not seller:
         log.warning(f"Etsy order.paid: no user found for shop {shop_id}")
         return
 
-    # The resource_url contains the receipt endpoint — we could fetch details
-    # but for now we just log the event for the dashboard
-    resource_url = data.get("resource_url", "")
-    log.info(f"Etsy sale for user {user.username} (shop {shop_id}): {resource_url}")
+    # Extract order details from the webhook payload
+    receipt_id = str(data.get("receipt_id", data.get("resource_id", "")))
+    buyer_email = data.get("buyer_email", "")
+    listing_title = data.get("title", "")
+    price_raw = data.get("grandtotal", data.get("subtotal", {}))
+    price_cents = 0
+    if isinstance(price_raw, dict):
+        # Etsy sends price as {"amount": 1299, "divisor": 100, "currency_code": "USD"}
+        price_cents = int(price_raw.get("amount", 0))
+    elif isinstance(price_raw, (int, float)):
+        price_cents = int(price_raw * 100)
 
-    # Note: To sync full order details, you'd fetch the receipt from:
-    #   GET {resource_url} with the user's access token
-    # For now we log the event — full receipt sync can be added later.
+    # Determine product type from listing title (basic heuristic)
+    title_lower = (listing_title or "").lower()
+    product_type = "lake"  # default
+    for pt in ("province", "city", "park", "community", "name_sign"):
+        if pt.replace("_", " ") in title_lower:
+            product_type = pt
+            break
+
+    # Create the design credit
+    token = secrets.token_urlsafe(32)
+    credit = DesignCredit(
+        etsy_receipt_id=receipt_id,
+        etsy_shop_id=shop_id,
+        etsy_buyer_email=buyer_email,
+        seller_id=seller.id,
+        product_type=product_type,
+        etsy_listing_title=listing_title,
+        price_cents=price_cents,
+        redeem_token=token,
+        status="unused",
+    )
+    db.add(credit)
+    await db.commit()
+
+    frontend_url = settings.FRONTEND_URL or "http://localhost:5173"
+    design_url = f"{frontend_url}?credit={token}"
+
+    log.info(
+        f"Design credit created for Etsy order {receipt_id} "
+        f"(shop {shop_id}, buyer {buyer_email}): {design_url}"
+    )
+
+    # NOTE: The design_url needs to be delivered to the customer. Options:
+    #   1. Include it in the Etsy digital download file (PDF/text)
+    #   2. Send via Etsy Message API (if available)
+    #   3. Send via email (requires email service integration)
+    # For now it's logged — the seller can also find it in the admin dashboard.
 
 
 async def _handle_etsy_order_canceled(db: AsyncSession, data: dict, shop_id: str):
