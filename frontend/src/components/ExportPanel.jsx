@@ -16,6 +16,7 @@ export default function ExportPanel({
   generating,
   user,
   printDPI,
+  etsyShopUrl,
 }) {
   const [showListForm, setShowListForm] = useState(false);
   const [listTitle, setListTitle] = useState("");
@@ -166,37 +167,49 @@ export default function ExportPanel({
     <div className="export-section">
       <h2>Generate & Download</h2>
 
-      {isAdmin && (
-        <button
-          className="btn btn-primary btn-full generate-btn"
-          onClick={onGenerate}
-          disabled={!canGenerate || generating}
-        >
-          {generating ? (
-            <span className="generate-btn-content">
-              <span className="spinner-inline" /> Generating...
-            </span>
-          ) : (
-            "Generate Map"
-          )}
-        </button>
-      )}
+      {/* Generate button — available to everyone for previewing */}
+      <button
+        className="btn btn-primary btn-full generate-btn"
+        onClick={onGenerate}
+        disabled={!canGenerate || generating}
+      >
+        {generating ? (
+          <span className="generate-btn-content">
+            <span className="spinner-inline" /> Generating...
+          </span>
+        ) : (
+          "Generate Map"
+        )}
+      </button>
 
       {!canGenerate && !result && (
-        <p className="export-hint">Select a location above to generate</p>
+        <p className="export-hint">Select a location above to generate a preview</p>
       )}
 
-      {/* Non-admin users see a message directing them to Etsy */}
-      {result && (!user || user.tier !== "admin") && (
-        <div className="export-hint" style={{ padding: "16px", textAlign: "center" }}>
-          <p>Like what you see? Purchase this design from our Etsy shop to get your print-ready files.</p>
+      {/* Non-admin visitors: show "Buy on Etsy" CTA after they generate a preview */}
+      {result && !isAdmin && (
+        <div className="etsy-cta-section">
+          <div className="etsy-cta-card">
+            <h3>Love your design?</h3>
+            <p>Get your print-ready files — high-resolution PNG, SVG source, and mockup image.</p>
+            <a
+              href={etsyShopUrl || "https://www.etsy.com"}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn-etsy btn-full etsy-buy-btn"
+            >
+              Buy on Etsy — Get Your Files
+            </a>
+            <p className="etsy-cta-note">
+              After purchase, you'll receive a unique link to download your custom print-ready files.
+            </p>
+          </div>
         </div>
       )}
 
-      {result && user?.tier === "admin" && (
-        <>
-          {/* File Stats */}
-          <div className="file-stats-grid">
+      {/* File stats — visible to everyone after generating a preview */}
+      {result && (
+        <div className="file-stats-grid">
             <div className="file-stat">
               <span className="file-stat-label">Size</span>
               <span className="file-stat-value">{result.dimensions_mm[0]}&times;{result.dimensions_mm[1]}mm</span>
@@ -225,9 +238,12 @@ export default function ExportPanel({
                 <span className="file-stat-value">{result.print_dpi}</span>
               </div>
             )}
-          </div>
+        </div>
+      )}
 
-          {/* Download Buttons */}
+      {/* Download buttons + Etsy tools — admin only */}
+      {result && isAdmin && (
+        <>
           <div className="export-download-section">
             <div className="export-buttons">
                   {result.print_png_available && (

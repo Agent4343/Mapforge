@@ -105,6 +105,15 @@ app.include_router(orders.router)
 app.include_router(webhooks.router)
 
 
+@app.get("/api/v1/config")
+async def get_public_config():
+    """Public config for the frontend (no auth required)."""
+    from app.config import settings
+    return {
+        "etsy_shop_url": settings.ETSY_SHOP_URL or None,
+    }
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}

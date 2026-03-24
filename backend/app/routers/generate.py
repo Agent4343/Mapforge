@@ -74,25 +74,15 @@ async def _maybe_reset_monthly_counter(user: User, db: AsyncSession):
 
 
 def _check_tier_limits(user: User | None, req: GenerateRequest):
-    """Enforce access: only admin users can generate directly.
+    """Allow all users to generate previews.
 
-    All customer map generation goes through Etsy → design credit → /orders/generate/{token}.
-    This endpoint is reserved for admin use (testing, shop owner's own designs).
+    The generate endpoint creates the SVG preview that customers see while
+    designing their map. This must be open so customers can try before they
+    buy on Etsy. The actual print-ready file downloads are locked behind
+    admin auth or a valid Etsy design credit token.
     """
-    if user is None:
-        raise HTTPException(
-            status_code=403,
-            detail="Please purchase a custom map from our Etsy shop to get started. You'll receive a unique design link after purchase.",
-        )
-
-    if user.tier == "admin":
-        return  # Admin bypasses all limits
-
-    # All non-admin users must use design credits from Etsy purchases
-    raise HTTPException(
-        status_code=403,
-        detail="Map generation is available through our Etsy shop. Purchase a listing to receive your custom design link.",
-    )
+    # Everyone can preview — downloads are locked separately
+    return
 
 
 async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession) -> GenerateResponse:

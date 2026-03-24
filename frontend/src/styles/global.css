@@ -2493,6 +2493,45 @@ body {
   gap: 8px;
 }
 
+/* Etsy "Buy" CTA for visitors who preview a map */
+.etsy-cta-section {
+  margin: 12px 0;
+}
+
+.etsy-cta-card {
+  background: linear-gradient(135deg, #1a1a2a, #1a1a20);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+  text-align: center;
+}
+
+.etsy-cta-card h3 {
+  margin: 0 0 8px;
+  font-size: 18px;
+  color: var(--text-primary);
+}
+
+.etsy-cta-card > p {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 0 0 16px;
+}
+
+.etsy-buy-btn {
+  font-size: 16px !important;
+  padding: 14px !important;
+  text-decoration: none;
+  display: block;
+  text-align: center;
+}
+
+.etsy-cta-note {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 10px 0 0 !important;
+}
+
 /* Credit banner for Etsy customers */
 .credit-banner {
   background: linear-gradient(135deg, #1a3a1a, #1a2a1a);

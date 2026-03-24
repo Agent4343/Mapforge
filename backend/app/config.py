@@ -51,6 +51,9 @@ class Settings:
     # CORS
     FRONTEND_URL: str = os.getenv("FRONTEND_URL", "")
 
+    # Etsy shop URL (shown to customers as the purchase link)
+    ETSY_SHOP_URL: str = os.getenv("ETSY_SHOP_URL", "")
+
     # Redis (optional caching layer)
     REDIS_URL: str = os.getenv("REDIS_URL", "")
     CACHE_TTL_SEARCH: int = 3600  # 1 hour

@@ -149,6 +149,15 @@ export default function App() {
     }
   }, []);
 
+  // Fetch public config (Etsy shop URL, etc.)
+  const [etsyShopUrl, setEtsyShopUrl] = useState(null);
+  useEffect(() => {
+    fetch(`${import.meta.env.VITE_API_URL || ""}/api/v1/config`)
+      .then((r) => r.json())
+      .then((c) => { if (c.etsy_shop_url) setEtsyShopUrl(c.etsy_shop_url); })
+      .catch(() => {});
+  }, []);
+
   // Handle URL params: Etsy design credits (?credit=TOKEN) and referrals (?ref=etsy)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -725,6 +734,7 @@ export default function App() {
             generating={generating}
             user={user}
             printDPI={config.printDPI}
+            etsyShopUrl={etsyShopUrl}
           />
         </div>
         <div className="panel-right">
