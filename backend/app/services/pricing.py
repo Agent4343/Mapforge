@@ -8,12 +8,12 @@ Price is calculated based on:
 
 # Base prices in cents by product type
 BASE_PRICE_CENTS = {
-    "province": 799,     # $7.99
-    "city": 999,         # $9.99
-    "lake": 1199,        # $11.99
-    "park": 999,         # $9.99
-    "community": 899,    # $8.99
-    "name_sign": 1299,   # $12.99
+    "province": 499,     # $4.99
+    "city": 699,         # $6.99
+    "lake": 799,         # $7.99
+    "park": 699,         # $6.99
+    "community": 599,    # $5.99
+    "name_sign": 899,    # $8.99
 }
 
 # Size multiplier (relative to base price)
@@ -34,11 +34,11 @@ SIZE_MULTIPLIER = {
 
 # Add-on fees in cents
 ADDON_FEES = {
-    "include_streets": 200,      # +$2.00
-    "include_contours": 400,     # +$4.00
-    "markers": 100,              # +$1.00 per marker
-    "heart_marker": 100,         # +$1.00
-    "high_dpi": 200,             # +$2.00 (600 DPI vs 300)
+    "include_streets": 100,      # +$1.00
+    "include_contours": 200,     # +$2.00
+    "markers": 50,               # +$0.50 per marker
+    "heart_marker": 0,           # free
+    "high_dpi": 100,             # +$1.00 (600 DPI vs 300)
     "border_thin": 0,
     "border_double": 100,        # +$1.00
     "border_ornate": 200,        # +$2.00

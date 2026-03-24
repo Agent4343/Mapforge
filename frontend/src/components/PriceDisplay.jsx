@@ -3,15 +3,15 @@ import { calculatePrice } from "../services/api.js";
 
 // Client-side price table (mirrors backend for instant updates)
 const BASE_PRICE_CENTS = {
-  province: 799, city: 999, lake: 1199, park: 999, community: 899, name_sign: 1299,
+  province: 499, city: 699, lake: 799, park: 699, community: 599, name_sign: 899,
 };
 const SIZE_MULTIPLIER = {
   print_8x10: 1.0, print_11x14: 1.2, print_16x20: 1.4, print_18x24: 1.6, print_24x36: 2.0,
   small: 1.0, medium: 1.3, large: 1.6, xl: 2.0, max: 2.5, custom: 1.5,
 };
 const ADDON_FEES = {
-  include_streets: 200, include_contours: 400, markers: 100, heart_marker: 100,
-  high_dpi: 200, border_double: 100, border_ornate: 200,
+  include_streets: 100, include_contours: 200, markers: 50, heart_marker: 0,
+  high_dpi: 100, border_double: 100, border_ornate: 200,
 };
 
 function quickPrice(config, markers = []) {
