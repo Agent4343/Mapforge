@@ -415,7 +415,13 @@ async def generate(
     if user:
         await _maybe_reset_monthly_counter(user, db)
     _check_tier_limits(user, req)
-    return await _do_generate(req, user, db)
+    try:
+        return await _do_generate(req, user, db)
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Unhandled error in generate (user={'admin' if user else 'visitor'}): {type(e).__name__}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Generation failed: {type(e).__name__}: {e}")
 
 
 @router.post("/generate/pin", response_model=GenerateResponse)
