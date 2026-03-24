@@ -160,29 +160,40 @@ export default function ExportPanel({
 
   const canSell = user && (user.tier === "maker" || user.tier === "pro" || user.tier === "admin");
 
+  const isAdmin = user?.tier === "admin";
+
   return (
     <div className="export-section">
       <h2>Generate & Download</h2>
 
-      <button
-        className="btn btn-primary btn-full generate-btn"
-        onClick={onGenerate}
-        disabled={!canGenerate || generating}
-      >
-        {generating ? (
-          <span className="generate-btn-content">
-            <span className="spinner-inline" /> Generating...
-          </span>
-        ) : (
-          "Generate Map"
-        )}
-      </button>
+      {isAdmin && (
+        <button
+          className="btn btn-primary btn-full generate-btn"
+          onClick={onGenerate}
+          disabled={!canGenerate || generating}
+        >
+          {generating ? (
+            <span className="generate-btn-content">
+              <span className="spinner-inline" /> Generating...
+            </span>
+          ) : (
+            "Generate Map"
+          )}
+        </button>
+      )}
 
       {!canGenerate && !result && (
         <p className="export-hint">Select a location above to generate</p>
       )}
 
-      {result && (
+      {/* Non-admin users see a message directing them to Etsy */}
+      {result && (!user || user.tier !== "admin") && (
+        <div className="export-hint" style={{ padding: "16px", textAlign: "center" }}>
+          <p>Like what you see? Purchase this design from our Etsy shop to get your print-ready files.</p>
+        </div>
+      )}
+
+      {result && user?.tier === "admin" && (
         <>
           {/* File Stats */}
           <div className="file-stats-grid">
@@ -393,11 +404,6 @@ export default function ExportPanel({
             </div>
           )}
 
-          {!canSell && user && user.tier === "free" && (
-            <p className="export-hint">
-              Upgrade to Maker to sell on the marketplace.
-            </p>
-          )}
         </>
       )}
     </div>

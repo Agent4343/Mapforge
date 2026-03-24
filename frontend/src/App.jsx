@@ -547,11 +547,11 @@ export default function App() {
               <option key={c.code} value={c.code}>{c.label}</option>
             ))}
           </select>
-          <button className="nav-btn" onClick={() => setShowPricing(true)}>Pricing</button>
-          <button className="nav-btn" onClick={() => setView("marketplace")}>Marketplace</button>
-          {user && <button className="nav-btn" onClick={() => setView("library")}>Library</button>}
-          {user && <button className="nav-btn" onClick={() => setView("purchases")}>Purchases</button>}
-          {user && (user.tier === "maker" || user.tier === "pro" || user.tier === "admin") && (
+          {user?.tier === "admin" && <button className="nav-btn" onClick={() => setShowPricing(true)}>Pricing</button>}
+          {user?.tier === "admin" && <button className="nav-btn" onClick={() => setView("marketplace")}>Marketplace</button>}
+          {user?.tier === "admin" && <button className="nav-btn" onClick={() => setView("library")}>Library</button>}
+          {user?.tier === "admin" && <button className="nav-btn" onClick={() => setView("purchases")}>Purchases</button>}
+          {user?.tier === "admin" && (
             <button className="nav-btn" onClick={() => setView("dashboard")}>Seller</button>
           )}
           {user && (user.tier === "pro" || user.tier === "admin") && (

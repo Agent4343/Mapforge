@@ -74,43 +74,25 @@ async def _maybe_reset_monthly_counter(user: User, db: AsyncSession):
 
 
 def _check_tier_limits(user: User | None, req: GenerateRequest):
-    """Enforce subscription tier limits per Product Bible pricing matrix.
+    """Enforce access: only admin users can generate directly.
 
-    Free: province silhouettes only, 3/month, no contours
-    Maker: unlimited provinces + 20 lake/city/park/community per month, no contours
-    Pro: unlimited everything including contours and batch
+    All customer map generation goes through Etsy → design credit → /orders/generate/{token}.
+    This endpoint is reserved for admin use (testing, shop owner's own designs).
     """
-    is_province = req.product_type.value == "province"
-
     if user is None:
-        # Anonymous — only allow province silhouettes so users can try the app
-        if not is_province:
-            raise HTTPException(status_code=403, detail="Lake, city, park, and community maps require a Maker or Pro subscription. Sign up free to generate province silhouettes.")
-        if req.include_contours:
-            raise HTTPException(status_code=403, detail="Contour layers require a Pro subscription. Sign up free to get started.")
-        return
+        raise HTTPException(
+            status_code=403,
+            detail="Please purchase a custom map from our Etsy shop to get started. You'll receive a unique design link after purchase.",
+        )
 
-    tier = user.tier
-    if tier == "admin":
+    if user.tier == "admin":
         return  # Admin bypasses all limits
 
-    if tier == "free":
-        # Free tier: province silhouettes only, capped at FREE_PROVINCE_LIMIT/month
-        if not is_province:
-            raise HTTPException(status_code=403, detail="Free tier can only generate province/state silhouettes. Upgrade to Maker for lake, city, park, and community maps.")
-        if user.generation_count_this_month >= settings.FREE_PROVINCE_LIMIT:
-            raise HTTPException(status_code=403, detail=f"Free tier limit reached ({settings.FREE_PROVINCE_LIMIT} province maps/month). Upgrade to Maker for more.")
-        if req.include_contours:
-            raise HTTPException(status_code=403, detail="Bathymetric/topo layers require Pro subscription.")
-
-    elif tier == "maker":
-        # Maker: unlimited provinces, 20 lake/city/park/community per month
-        if not is_province and user.generation_count_this_month >= settings.MAKER_MONTHLY_LIMIT:
-            raise HTTPException(status_code=403, detail=f"Maker tier limit reached ({settings.MAKER_MONTHLY_LIMIT} non-province maps/month). Upgrade to Pro for unlimited.")
-        if req.include_contours:
-            raise HTTPException(status_code=403, detail="Bathymetric/topo layers require Pro subscription.")
-
-    # Pro: unlimited
+    # All non-admin users must use design credits from Etsy purchases
+    raise HTTPException(
+        status_code=403,
+        detail="Map generation is available through our Etsy shop. Purchase a listing to receive your custom design link.",
+    )
 
 
 async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession) -> GenerateResponse:
@@ -638,9 +620,9 @@ async def batch_generate(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Batch generate multiple print poster maps (Pro tier only)."""
-    if user.tier not in ("pro", "admin"):
-        raise HTTPException(status_code=403, detail="Batch generation requires Pro subscription.")
+    """Batch generate multiple print poster maps (admin only)."""
+    if user.tier != "admin":
+        raise HTTPException(status_code=403, detail="Batch generation is admin-only.")
 
     if len(req.items) > settings.PRO_BATCH_LIMIT:
         raise HTTPException(status_code=400, detail=f"Maximum {settings.PRO_BATCH_LIMIT} items per batch.")
@@ -693,9 +675,15 @@ async def preview(file_id: str, db: AsyncSession = Depends(get_db)):
 async def download(
     file_id: str,
     format: ExportFormat = ExportFormat.svg,
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Download a generated SVG, PNG, DXF, or STL file."""
+    """Download a generated SVG, PNG, DXF, or STL file (admin only).
+
+    Customer downloads go through /api/v1/orders/download/{token} using their credit token.
+    """
+    if user.tier != "admin":
+        raise HTTPException(status_code=403, detail="Downloads are available through your Etsy design credit link.")
     result = await db.execute(
         select(GeneratedFile).where(GeneratedFile.id == file_id)
     )
@@ -745,9 +733,12 @@ async def download(
 @router.get("/download/{file_id}/etsy")
 async def download_etsy_listing(
     file_id: str,
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Download the Etsy-optimized listing image (2700x2025 PNG, 4:3 ratio)."""
+    """Download the Etsy-optimized listing image (admin only)."""
+    if user.tier != "admin":
+        raise HTTPException(status_code=403, detail="Admin only.")
     result = await db.execute(
         select(GeneratedFile).where(GeneratedFile.id == file_id)
     )
@@ -844,9 +835,12 @@ def _seo_filename(location_name: str, ext: str, suffix: str = "") -> str:
 @router.get("/download/{file_id}/thumbnail")
 async def download_thumbnail(
     file_id: str,
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Download a PNG thumbnail image for Etsy/product listings."""
+    """Download a PNG thumbnail image (admin only)."""
+    if user.tier != "admin":
+        raise HTTPException(status_code=403, detail="Admin only.")
     result = await db.execute(
         select(GeneratedFile).where(GeneratedFile.id == file_id)
     )
@@ -877,15 +871,12 @@ async def generate_theme_variants(
     request: Request,
     file_id: str,
     req: ThemeVariantsRequest,
-    user: User | None = Depends(get_optional_user),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Generate Etsy listing images in multiple color themes from one design.
-
-    Takes an existing generated map and re-renders it in each requested theme,
-    producing both a thumbnail (2000px) and an Etsy listing image (2700x2025)
-    per theme. Reuses the stored SVG — no extra geometry or Overpass API calls.
-    """
+    """Generate Etsy listing images in multiple color themes (admin only)."""
+    if user.tier != "admin":
+        raise HTTPException(status_code=403, detail="Admin only.")
     result = await db.execute(
         select(GeneratedFile).where(GeneratedFile.id == file_id)
     )
@@ -964,13 +955,12 @@ async def generate_theme_variants(
 @router.get("/download/{file_id}/etsy-package")
 async def download_etsy_package(
     file_id: str,
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Download a ZIP bundle with everything needed for an Etsy listing.
-
-    Includes: SVG source, Etsy listing image (2700x2025), print PNG,
-    thumbnail mockup, and a listing.txt with AI-generated title/description/tags.
-    """
+    """Download a ZIP bundle with everything needed for an Etsy listing (admin only)."""
+    if user.tier != "admin":
+        raise HTTPException(status_code=403, detail="Admin only.")
     from app.services.ai_description_generator import generate_full_listing
 
     result = await db.execute(
