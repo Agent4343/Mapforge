@@ -245,81 +245,85 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         include_crop_marks=req.include_crop_marks,
     )
 
-    # Store SVG
+    # Store files + generate derivatives (only for authenticated users)
+    # Visitors just get the SVG preview — no file storage needed
     board_w, board_h = processed["board_mm"]
-    svg_key = f"svg/{req.osm_type}_{req.osm_id}_{req.style.value}_{int(board_w)}x{int(board_h)}.svg"
-    try:
-        await store_file(svg_key, result["svg"].encode("utf-8"))
-    except Exception as e:
-        log.error(f"Failed to store SVG: {e}")
-        raise HTTPException(status_code=500, detail="Failed to save generated file. Please try again.")
-
-    # Generate DXF (CNC-ready vector) alongside SVG
+    svg_key = None
     dxf_key = None
-    try:
-        dxf_bytes = generate_dxf(
-            processed=processed,
-            location_name=location_name,
-            show_coordinates=req.show_coordinates,
-            font_size_mm=req.font_size_mm,
-            center_latlon=processed.get("center_latlon"),
-            streets_data=streets_data,
-            markers=board_markers,
-        )
-        dxf_key = svg_key.replace("svg/", "dxf/").replace(".svg", ".dxf")
-        await store_file(dxf_key, dxf_bytes)
-    except Exception as e:
-        log.warning(f"DXF generation failed (non-fatal): {e}")
-
-    # Generate STL 3D mesh when contours are available (bathymetric/topo)
     stl_key = None
-    if contour_data:
-        try:
-            stl_bytes = generate_stl(
-                processed=processed,
-                contour_data=contour_data,
-            )
-            stl_key = svg_key.replace("svg/", "stl/").replace(".svg", ".stl")
-            await store_file(stl_key, stl_bytes)
-            log.info(f"STL generated: {len(stl_bytes)} bytes")
-        except Exception as e:
-            log.warning(f"STL generation failed (non-fatal): {e}")
-
-    # Generate PNG thumbnail for Etsy product mockups
     thumbnail_key = None
-    try:
-        png_bytes = generate_thumbnail(
-            result["svg"],
-            background_color=None,  # Print SVG already has mat + background
-        )
-        thumbnail_key = svg_key.replace("svg/", "thumbnails/").replace(".svg", ".png")
-        await store_file(thumbnail_key, png_bytes, content_type="image/png")
-    except Exception as e:
-        log.warning(f"Thumbnail generation failed (non-fatal): {e}")
-
-    # Generate high-res print PNG from poster SVG (themed, with proper layout)
     print_png_key = None
-    try:
-        print_bytes = generate_print_image(
-            result["svg"],
-            color_theme=req.color_theme,
-            skip_remap=True,
-            board_size=req.board_size.value,
-            dpi=req.print_dpi,
-        )
-        print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
-        await store_file(print_png_key, print_bytes, content_type="image/png")
-    except Exception as e:
-        log.warning(f"Print PNG generation failed (non-fatal): {e}")
-
-    # Generate Etsy listing image (4:3 ratio for Etsy grid)
     etsy_key = None
-    try:
-        etsy_bytes = generate_etsy_listing_image(result["svg"])
-        etsy_key = svg_key.replace("svg/", "etsy/").replace(".svg", "_etsy.png")
-        await store_file(etsy_key, etsy_bytes, content_type="image/png")
-    except Exception as e:
-        log.warning(f"Etsy listing image generation failed (non-fatal): {e}")
+
+    if user:
+        svg_key = f"svg/{req.osm_type}_{req.osm_id}_{req.style.value}_{int(board_w)}x{int(board_h)}.svg"
+        try:
+            await store_file(svg_key, result["svg"].encode("utf-8"))
+        except Exception as e:
+            log.error(f"Failed to store SVG: {e}")
+            raise HTTPException(status_code=500, detail="Failed to save generated file. Please try again.")
+
+        # Generate DXF (CNC-ready vector) alongside SVG
+        try:
+            dxf_bytes = generate_dxf(
+                processed=processed,
+                location_name=location_name,
+                show_coordinates=req.show_coordinates,
+                font_size_mm=req.font_size_mm,
+                center_latlon=processed.get("center_latlon"),
+                streets_data=streets_data,
+                markers=board_markers,
+            )
+            dxf_key = svg_key.replace("svg/", "dxf/").replace(".svg", ".dxf")
+            await store_file(dxf_key, dxf_bytes)
+        except Exception as e:
+            log.warning(f"DXF generation failed (non-fatal): {e}")
+
+        # Generate STL 3D mesh when contours are available (bathymetric/topo)
+        if contour_data:
+            try:
+                stl_bytes = generate_stl(
+                    processed=processed,
+                    contour_data=contour_data,
+                )
+                stl_key = svg_key.replace("svg/", "stl/").replace(".svg", ".stl")
+                await store_file(stl_key, stl_bytes)
+                log.info(f"STL generated: {len(stl_bytes)} bytes")
+            except Exception as e:
+                log.warning(f"STL generation failed (non-fatal): {e}")
+
+        # Generate PNG thumbnail for Etsy product mockups
+        try:
+            png_bytes = generate_thumbnail(
+                result["svg"],
+                background_color=None,  # Print SVG already has mat + background
+            )
+            thumbnail_key = svg_key.replace("svg/", "thumbnails/").replace(".svg", ".png")
+            await store_file(thumbnail_key, png_bytes, content_type="image/png")
+        except Exception as e:
+            log.warning(f"Thumbnail generation failed (non-fatal): {e}")
+
+        # Generate high-res print PNG from poster SVG (themed, with proper layout)
+        try:
+            print_bytes = generate_print_image(
+                result["svg"],
+                color_theme=req.color_theme,
+                skip_remap=True,
+                board_size=req.board_size.value,
+                dpi=req.print_dpi,
+            )
+            print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
+            await store_file(print_png_key, print_bytes, content_type="image/png")
+        except Exception as e:
+            log.warning(f"Print PNG generation failed (non-fatal): {e}")
+
+        # Generate Etsy listing image (4:3 ratio for Etsy grid)
+        try:
+            etsy_bytes = generate_etsy_listing_image(result["svg"])
+            etsy_key = svg_key.replace("svg/", "etsy/").replace(".svg", "_etsy.png")
+            await store_file(etsy_key, etsy_bytes, content_type="image/png")
+        except Exception as e:
+            log.warning(f"Etsy listing image generation failed (non-fatal): {e}")
 
     # Calculate print pixel dimensions for the response
     print_pixels = None

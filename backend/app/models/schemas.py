@@ -227,7 +227,7 @@ class GenerateResponse(BaseModel):
     etsy_listing_available: bool = False
     dxf_available: bool = False
     stl_available: bool = False
-    file_id: str
+    file_id: Optional[str] = None
     location_name: str
     dimensions_mm: tuple[float, float]
     node_count: int
