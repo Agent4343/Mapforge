@@ -135,8 +135,8 @@ def generate_auth_url(user_id: str, creds: Optional[dict] = None) -> str:
         "code_challenge": code_challenge,
         "code_challenge_method": "S256",
     }
-    qs = "&".join(f"{k}={httpx.URL('', params={k: v}).params[k]}" for k, v in params.items())
-    return f"{ETSY_AUTH_URL}?{qs}"
+    from urllib.parse import urlencode
+    return f"{ETSY_AUTH_URL}?{urlencode(params)}"
 
 
 async def exchange_code(user_id: str, code: str, creds: Optional[dict] = None) -> dict:

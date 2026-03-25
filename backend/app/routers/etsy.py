@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -87,11 +87,21 @@ async def etsy_connect(
 
 @router.get("/callback")
 async def etsy_callback(
-    code: str,
-    state: str,
+    request: Request,
+    code: str | None = Query(None),
+    state: str | None = Query(None),
+    error: str | None = Query(None),
+    error_description: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Handle the OAuth callback from Etsy. Exchanges code for tokens."""
+    frontend_url = settings.FRONTEND_URL or "https://mapforge-production.up.railway.app"
+
+    # Handle OAuth errors or denied authorization
+    if error or not code or not state:
+        log.warning("Etsy OAuth callback error: %s — %s", error, error_description)
+        return RedirectResponse(url=f"{frontend_url}?etsy_error={error or 'missing_code'}")
+
     user_id = state
 
     result = await db.execute(select(User).where(User.id == user_id))
