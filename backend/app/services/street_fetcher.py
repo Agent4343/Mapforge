@@ -38,7 +38,7 @@ ROAD_CLASSES = {
 async def _fetch_one_endpoint(endpoint: str, query: str) -> dict | None:
     """Try a single Overpass endpoint. Returns valid data or None."""
     try:
-        async with httpx.AsyncClient(timeout=55.0) as client:
+        async with httpx.AsyncClient(timeout=100.0) as client:
             resp = await client.post(endpoint, data={"data": query})
             resp.raise_for_status()
             data = resp.json()
@@ -117,21 +117,44 @@ async def fetch_streets(
     """
     south, west, north, east = bbox
 
-    highway_filter = "|".join(ROAD_CLASSES.keys()) if include_minor else "|".join(
+    all_highway_filter = "|".join(ROAD_CLASSES.keys())
+    major_highway_filter = "|".join(
         k for k, v in ROAD_CLASSES.items() if v["layer"] == "major"
     )
 
-    query = f"""
-    [out:json][timeout:45];
-    way["highway"~"^({highway_filter})$"]({south},{west},{north},{east});
+    if include_minor:
+        # Try all roads first; if Overpass times out, fall back to major only
+        query = f"""
+    [out:json][timeout:90];
+    way["highway"~"^({all_highway_filter})$"]({south},{west},{north},{east});
     out body;
     >;
     out skel qt;
     """
+        log.info(f"Fetching all streets for bbox: {bbox}")
+        data = await _fetch_overpass_with_retry(query, max_retries=1)
 
-    log.info(f"Fetching streets for bbox: {bbox}")
+        if data is None:
+            log.warning("Full street fetch failed — falling back to major roads only")
+            query = f"""
+    [out:json][timeout:90];
+    way["highway"~"^({major_highway_filter})$"]({south},{west},{north},{east});
+    out body;
+    >;
+    out skel qt;
+    """
+            data = await _fetch_overpass_with_retry(query, max_retries=2)
+    else:
+        query = f"""
+    [out:json][timeout:90];
+    way["highway"~"^({major_highway_filter})$"]({south},{west},{north},{east});
+    out body;
+    >;
+    out skel qt;
+    """
+        log.info(f"Fetching major streets for bbox: {bbox}")
+        data = await _fetch_overpass_with_retry(query)
 
-    data = await _fetch_overpass_with_retry(query)
     if data is None:
         return {"major_roads": [], "minor_roads": []}
 
