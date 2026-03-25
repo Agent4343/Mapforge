@@ -134,6 +134,15 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     bounds = geom.bounds  # minx, miny, maxx, maxy
     bbox = (bounds[1], bounds[0], bounds[3], bounds[2])
 
+    # For large areas (provinces, states), only fetch major roads —
+    # residential streets on a province-scale map are too dense to render
+    # well and the Overpass query would be enormous.
+    bbox_area_deg2 = (bounds[2] - bounds[0]) * (bounds[3] - bounds[1])
+    is_large_area = bbox_area_deg2 > 4.0  # roughly > 200km x 200km
+    include_minor_streets = req.product_type.value in street_types and not is_large_area
+    if is_large_area and need_streets:
+        log.info(f"Large area ({bbox_area_deg2:.1f} deg²) — fetching major roads only")
+
     async def _get_streets():
         cache_key = _bbox_cache_key("streets", bbox)
         if cache_key in _overpass_cache:
@@ -141,7 +150,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             return _overpass_cache[cache_key]
         result = await fetch_streets(
             bbox=bbox,
-            include_minor=req.product_type.value in street_types,
+            include_minor=include_minor_streets,
             osm_id=req.osm_id,
             osm_type=req.osm_type,
         )
