@@ -94,8 +94,14 @@ async def _race_endpoints(query: str, timeout: float = 45.0) -> dict | None:
 async def fetch_streets(
     bbox: tuple[float, float, float, float],
     include_minor: bool = True,
+    osm_id: int | None = None,
+    osm_type: str | None = None,
 ) -> dict:
-    """Fetch street network within bounding box.
+    """Fetch street network for a geographic area.
+
+    When osm_id is provided, uses Overpass area queries which are much faster
+    than bbox queries for large cities — they only return roads inside the
+    actual administrative boundary instead of the entire bounding box.
 
     Uses a total time budget to prevent the entire generation from timing out.
     If all roads can't be fetched in time, falls back to major roads only.
@@ -103,6 +109,8 @@ async def fetch_streets(
     Args:
         bbox: (south, west, north, east) in WGS84
         include_minor: include residential/tertiary roads
+        osm_id: OSM relation/way ID for area-based queries
+        osm_type: "relation" or "way"
 
     Returns:
         dict with 'major_roads' and 'minor_roads' as lists of
@@ -116,18 +124,38 @@ async def fetch_streets(
         k for k, v in ROAD_CLASSES.items() if v["layer"] == "major"
     )
 
-    data = None
-
-    if include_minor:
-        # Try all roads first with a tight timeout
-        query_all = f"""
+    # Use area query when we have an OSM relation ID — much faster for cities
+    # Overpass area IDs: relation ID + 3600000000, way ID + 2400000000
+    use_area = osm_id and osm_type == "relation"
+    if use_area:
+        area_id = osm_id + 3600000000
+        area_filter = f"area({area_id})"
+        # Area queries: first define the area, then query within it
+        def _build_query(highway_filter):
+            return f"""
     [out:json][timeout:40];
-    way["highway"~"^({all_highway_filter})$"]({south},{west},{north},{east});
+    area({area_id})->.a;
+    way["highway"~"^({highway_filter})$"](area.a);
     out body;
     >;
     out skel qt;
     """
-        log.info(f"Fetching all streets for bbox: {bbox}")
+        log.info(f"Using Overpass area query for OSM relation {osm_id}")
+    else:
+        def _build_query(highway_filter):
+            return f"""
+    [out:json][timeout:40];
+    way["highway"~"^({highway_filter})$"]({south},{west},{north},{east});
+    out body;
+    >;
+    out skel qt;
+    """
+
+    data = None
+
+    if include_minor:
+        query_all = _build_query(all_highway_filter)
+        log.info(f"Fetching all streets for {'area' if use_area else 'bbox'}: {osm_id or bbox}")
         data = await _race_endpoints(query_all, timeout=45.0)
 
         if data is None:
@@ -137,24 +165,12 @@ async def fetch_streets(
                 log.warning(f"Street fetch budget exhausted ({elapsed:.0f}s) — skipping fallback")
             else:
                 log.warning(f"Full street fetch failed ({elapsed:.0f}s) — falling back to major roads ({remaining:.0f}s left)")
-                await asyncio.sleep(2)  # brief pause before retry
-                query_major = f"""
-    [out:json][timeout:40];
-    way["highway"~"^({major_highway_filter})$"]({south},{west},{north},{east});
-    out body;
-    >;
-    out skel qt;
-    """
+                await asyncio.sleep(2)
+                query_major = _build_query(major_highway_filter)
                 data = await _race_endpoints(query_major, timeout=min(remaining - 2, 45.0))
     else:
-        query_major = f"""
-    [out:json][timeout:40];
-    way["highway"~"^({major_highway_filter})$"]({south},{west},{north},{east});
-    out body;
-    >;
-    out skel qt;
-    """
-        log.info(f"Fetching major streets for bbox: {bbox}")
+        query_major = _build_query(major_highway_filter)
+        log.info(f"Fetching major streets for {'area' if use_area else 'bbox'}: {osm_id or bbox}")
         data = await _race_endpoints(query_major, timeout=45.0)
 
     elapsed = time.monotonic() - start

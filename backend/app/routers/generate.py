@@ -142,6 +142,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         result = await fetch_streets(
             bbox=bbox,
             include_minor=req.product_type.value in street_types,
+            osm_id=req.osm_id,
+            osm_type=req.osm_type,
         )
         has_data = result and (result.get("major_roads") or result.get("minor_roads"))
         if has_data:
