@@ -5,6 +5,7 @@ Races multiple Overpass endpoints concurrently for speed and reliability.
 """
 
 import asyncio
+import time
 
 import httpx
 
@@ -34,11 +35,16 @@ ROAD_CLASSES = {
     "unclassified": {"width": 0.3, "priority": 7, "layer": "minor"},
 }
 
+# Maximum total time budget for the entire street fetch (seconds).
+# Must leave room for geometry fetch, SVG generation, and PNG rendering
+# within the frontend's 120s timeout.
+STREET_FETCH_BUDGET = 55
 
-async def _fetch_one_endpoint(endpoint: str, query: str) -> dict | None:
+
+async def _fetch_one_endpoint(endpoint: str, query: str, timeout: float = 45.0) -> dict | None:
     """Try a single Overpass endpoint. Returns valid data or None."""
     try:
-        async with httpx.AsyncClient(timeout=100.0) as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(endpoint, data={"data": query})
             resp.raise_for_status()
             data = resp.json()
@@ -59,10 +65,10 @@ async def _fetch_one_endpoint(endpoint: str, query: str) -> dict | None:
         return None
 
 
-async def _race_endpoints(query: str) -> dict | None:
+async def _race_endpoints(query: str, timeout: float = 45.0) -> dict | None:
     """Race all Overpass endpoints concurrently — first valid response wins."""
     tasks = {
-        asyncio.create_task(_fetch_one_endpoint(ep, query)): ep
+        asyncio.create_task(_fetch_one_endpoint(ep, query, timeout)): ep
         for ep in OVERPASS_ENDPOINTS
     }
     pending = set(tasks.keys())
@@ -85,27 +91,14 @@ async def _race_endpoints(query: str) -> dict | None:
     return None
 
 
-async def _fetch_overpass_with_retry(query: str, max_retries: int = 2) -> dict | None:
-    """Race all Overpass endpoints, retrying with backoff if all fail."""
-    for attempt in range(max_retries + 1):
-        result = await _race_endpoints(query)
-        if result is not None:
-            return result
-
-        if attempt < max_retries:
-            wait = 3 * (attempt + 1)  # 3s, 6s
-            log.warning(f"All Overpass endpoints failed for streets — retrying in {wait}s (attempt {attempt + 1}/{max_retries})")
-            await asyncio.sleep(wait)
-
-    log.error("All Overpass endpoints failed for street fetch after retries")
-    return None
-
-
 async def fetch_streets(
     bbox: tuple[float, float, float, float],
     include_minor: bool = True,
 ) -> dict:
     """Fetch street network within bounding box.
+
+    Uses a total time budget to prevent the entire generation from timing out.
+    If all roads can't be fetched in time, falls back to major roads only.
 
     Args:
         bbox: (south, west, north, east) in WGS84
@@ -115,6 +108,7 @@ async def fetch_streets(
         dict with 'major_roads' and 'minor_roads' as lists of
         (coords_list, road_class, width, name) tuples
     """
+    start = time.monotonic()
     south, west, north, east = bbox
 
     all_highway_filter = "|".join(ROAD_CLASSES.keys())
@@ -122,40 +116,50 @@ async def fetch_streets(
         k for k, v in ROAD_CLASSES.items() if v["layer"] == "major"
     )
 
+    data = None
+
     if include_minor:
-        # Try all roads first; if Overpass times out, fall back to major only
-        query = f"""
-    [out:json][timeout:90];
+        # Try all roads first with a tight timeout
+        query_all = f"""
+    [out:json][timeout:40];
     way["highway"~"^({all_highway_filter})$"]({south},{west},{north},{east});
     out body;
     >;
     out skel qt;
     """
         log.info(f"Fetching all streets for bbox: {bbox}")
-        data = await _fetch_overpass_with_retry(query, max_retries=1)
+        data = await _race_endpoints(query_all, timeout=45.0)
 
         if data is None:
-            log.warning("Full street fetch failed — falling back to major roads only")
-            query = f"""
-    [out:json][timeout:90];
+            elapsed = time.monotonic() - start
+            remaining = STREET_FETCH_BUDGET - elapsed
+            if remaining < 10:
+                log.warning(f"Street fetch budget exhausted ({elapsed:.0f}s) — skipping fallback")
+            else:
+                log.warning(f"Full street fetch failed ({elapsed:.0f}s) — falling back to major roads ({remaining:.0f}s left)")
+                await asyncio.sleep(2)  # brief pause before retry
+                query_major = f"""
+    [out:json][timeout:40];
     way["highway"~"^({major_highway_filter})$"]({south},{west},{north},{east});
     out body;
     >;
     out skel qt;
     """
-            data = await _fetch_overpass_with_retry(query, max_retries=2)
+                data = await _race_endpoints(query_major, timeout=min(remaining - 2, 45.0))
     else:
-        query = f"""
-    [out:json][timeout:90];
+        query_major = f"""
+    [out:json][timeout:40];
     way["highway"~"^({major_highway_filter})$"]({south},{west},{north},{east});
     out body;
     >;
     out skel qt;
     """
         log.info(f"Fetching major streets for bbox: {bbox}")
-        data = await _fetch_overpass_with_retry(query)
+        data = await _race_endpoints(query_major, timeout=45.0)
 
+    elapsed = time.monotonic() - start
     if data is None:
+        log.error(f"All street fetch attempts failed after {elapsed:.0f}s")
         return {"major_roads": [], "minor_roads": []}
 
     elements = data.get("elements", [])
@@ -189,5 +193,5 @@ async def fetch_streets(
         else:
             minor_roads.append(entry)
 
-    log.info(f"Fetched {len(major_roads)} major roads, {len(minor_roads)} minor roads")
+    log.info(f"Fetched {len(major_roads)} major roads, {len(minor_roads)} minor roads in {elapsed:.1f}s")
     return {"major_roads": major_roads, "minor_roads": minor_roads}
