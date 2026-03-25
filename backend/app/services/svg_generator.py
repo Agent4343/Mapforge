@@ -468,6 +468,21 @@ def _generate_print_svg(
         f'<rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"/>'
         f"</clipPath>"
     )
+
+    # Clip path using the city boundary polygon — clips streets/water
+    # to the actual geographic boundary so nothing bleeds outside
+    boundary_paths = []
+    for exterior, holes in polygons:
+        path_d = _coords_to_path(exterior)
+        for hole in holes:
+            path_d += " " + _coords_to_path(hole)
+        boundary_paths.append(path_d)
+    if boundary_paths:
+        lines.append('    <clipPath id="boundary_clip">')
+        for bp in boundary_paths:
+            lines.append(f'      <path d="{bp}" fill-rule="evenodd"/>')
+        lines.append("    </clipPath>")
+
     lines.append("  </defs>")
     lines.append("")
 
@@ -509,6 +524,11 @@ def _generate_print_svg(
             )
     lines.append("    </g>")
 
+    # For street maps, clip streets and water to the city boundary polygon
+    # so they don't bleed into surrounding areas
+    if is_street_map and boundary_paths:
+        lines.append('    <g clip-path="url(#boundary_clip)">')
+
     # Water features — filled with water color
     if water_data:
         _render_print_water(lines, water_data, processed, theme)
@@ -520,6 +540,9 @@ def _generate_print_svg(
     # Streets — the hero visual for city maps
     if streets_data:
         _render_print_streets(lines, streets_data, processed, theme)
+
+    if is_street_map and boundary_paths:
+        lines.append("    </g>")  # close boundary_clip
 
     # Markers — remap coordinates from board space to poster map space
     def _remap_point(x, y):
