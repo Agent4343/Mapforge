@@ -349,7 +349,10 @@ async def _fulfill_credit(credit_id: str):
             result = await db.execute(
                 select(DesignCredit).where(DesignCredit.id == credit_id)
             )
-            credit = result.scalar_one()
+            credit = result.scalar_one_or_none()
+            if not credit:
+                log.error(f"Design credit {credit_id} not found after generation")
+                return
             credit.file_id = gen_response.file_id
             credit.status = "completed"
             credit.completed_at = datetime.now(timezone.utc)
@@ -363,6 +366,9 @@ async def _fulfill_credit(credit_id: str):
             result = await db.execute(
                 select(DesignCredit).where(DesignCredit.id == credit_id)
             )
-            credit = result.scalar_one()
+            credit = result.scalar_one_or_none()
+            if not credit:
+                log.error(f"Design credit {credit_id} not found during error recovery")
+                return
             credit.status = "unused"  # Reset so customer can try again
             await db.commit()

@@ -241,8 +241,8 @@ def _verify_etsy_signature(payload: bytes, headers: dict) -> bool:
     """
     secret = settings.ETSY_WEBHOOK_SECRET
     if not secret:
-        log.warning("ETSY_WEBHOOK_SECRET not set — skipping signature verification")
-        return True
+        log.warning("ETSY_WEBHOOK_SECRET not set — rejecting webhook (configure secret to enable)")
+        return False
 
     webhook_id = headers.get("webhook-id", "")
     webhook_timestamp = headers.get("webhook-timestamp", "")

@@ -1,6 +1,3 @@
-import { useState, useEffect } from "react";
-import { calculatePrice } from "../services/api.js";
-
 // Client-side price table (mirrors backend for instant updates)
 const BASE_PRICE_CENTS = {
   province: 499, city: 699, lake: 799, park: 699, community: 599, name_sign: 899,
