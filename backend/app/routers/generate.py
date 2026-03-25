@@ -393,7 +393,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         stl_available=stl_key is not None,
         file_id=file_id,
         location_name=location_name,
-        dimensions_mm=(board_w, board_h),
+        dimensions_mm=(round(board_w, 1), round(board_h, 1)),
         node_count=result["node_count"],
         path_count=result["path_count"],
         layer_count=result["layer_count"],
@@ -608,7 +608,7 @@ async def generate_pin(
         etsy_listing_available=etsy_key is not None,
         file_id=file_id,
         location_name=location_name,
-        dimensions_mm=(board_w, board_h),
+        dimensions_mm=(round(board_w, 1), round(board_h, 1)),
         node_count=result["node_count"],
         path_count=result["path_count"],
         layer_count=result["layer_count"],
@@ -672,7 +672,7 @@ async def preview(file_id: str, db: AsyncSession = Depends(get_db)):
     return PreviewResponse(
         svg=svg_bytes.decode("utf-8"),
         location_name=file_record.location_name,
-        dimensions_mm=(file_record.board_width_mm, file_record.board_height_mm),
+        dimensions_mm=(round(file_record.board_width_mm, 1), round(file_record.board_height_mm, 1)),
     )
 
 

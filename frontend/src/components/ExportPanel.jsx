@@ -187,13 +187,13 @@ export default function ExportPanel({
       )}
 
       {/* Non-admin visitors: show "Buy on Etsy" CTA after they generate a preview */}
-      {result && !isAdmin && (
+      {result && !isAdmin && etsyShopUrl && (
         <div className="etsy-cta-section">
           <div className="etsy-cta-card">
             <h3>Love your design?</h3>
             <p>Get your print-ready files — high-resolution PNG, SVG source, and mockup image.</p>
             <a
-              href={etsyShopUrl || "https://mapforgedesign.etsy.com"}
+              href={etsyShopUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="btn btn-etsy btn-full etsy-buy-btn"
@@ -212,7 +212,7 @@ export default function ExportPanel({
         <div className="file-stats-grid">
             <div className="file-stat">
               <span className="file-stat-label">Size</span>
-              <span className="file-stat-value">{result.dimensions_mm[0]}&times;{result.dimensions_mm[1]}mm</span>
+              <span className="file-stat-value">{Math.round(result.dimensions_mm[0] * 10) / 10}&times;{Math.round(result.dimensions_mm[1] * 10) / 10}mm</span>
             </div>
             <div className="file-stat">
               <span className="file-stat-label">Nodes</span>
