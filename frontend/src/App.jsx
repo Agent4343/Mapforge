@@ -189,6 +189,19 @@ export default function App() {
       return;
     }
 
+    // Etsy OAuth callback success
+    if (params.get("etsy_connected") === "1") {
+      addToast("Etsy shop connected! Generate a map and publish it to your shop.", "success");
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+
+    // Etsy OAuth callback error
+    const etsyError = params.get("etsy_error");
+    if (etsyError) {
+      addToast(`Etsy connection failed: ${etsyError}. Please try again.`, "error");
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+
     // Etsy referral (no credit yet — just browsing from listing description)
     if (params.get("ref") === "etsy") {
       setIsEtsyReferral(true);

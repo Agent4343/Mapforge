@@ -186,6 +186,27 @@ export default function ExportPanel({
         <p className="export-hint">Select a location above to generate a preview</p>
       )}
 
+      {/* Etsy Connection Status — visible to admin anytime */}
+      {isAdmin && user && !result && (
+        <div className="etsy-connection-section">
+          {etsyStatus.connected ? (
+            <div className="etsy-connected">
+              <span className="etsy-badge">Etsy Connected: {etsyStatus.shop_name || "Your Shop"}</span>
+              <button className="btn btn-sm btn-secondary" onClick={handleDisconnectEtsy}>
+                Disconnect
+              </button>
+            </div>
+          ) : (
+            <button className="btn btn-etsy btn-full" onClick={handleConnectEtsy}>
+              Connect Etsy Shop
+            </button>
+          )}
+          {etsyStatus.connected && (
+            <p className="export-hint">Generate a map above, then publish it to Etsy.</p>
+          )}
+        </div>
+      )}
+
       {/* Non-admin visitors: show "Buy on Etsy" CTA after they generate a preview */}
       {result && !isAdmin && etsyShopUrl && (
         <div className="etsy-cta-section">
