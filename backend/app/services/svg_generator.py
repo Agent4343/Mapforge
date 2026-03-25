@@ -496,6 +496,7 @@ def _generate_print_svg(
     # For lake/province/park maps, the filled polygon IS the visual —
     # the shape of the lake or province is the main content.
     is_street_map = product_type in ("city", "community", "name_sign")
+    has_streets = streets_data and (streets_data.get("major_roads") or streets_data.get("minor_roads"))
 
     lines.append('    <g id="geography_fill">')
     if is_street_map:
@@ -511,8 +512,21 @@ def _generate_print_svg(
                 f' fill="{theme["land"]}" stroke="{theme["land_stroke"]}"'
                 f' stroke-width="0.5" fill-rule="evenodd" stroke-linejoin="round"/>'
             )
+    elif has_streets:
+        # Province/lake/park with streets: use map_bg fill so the polygon
+        # blends with the background and streets are the visual focus.
+        # A subtle stroke still defines the geographic boundary.
+        for exterior, holes in polygons:
+            path_d = _coords_to_path(exterior)
+            for hole in holes:
+                path_d += " " + _coords_to_path(hole)
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="{theme["map_bg"]}" stroke="{theme["land_stroke"]}"'
+                f' stroke-width="0.5" fill-rule="evenodd" stroke-linejoin="round"/>'
+            )
     else:
-        # Lake/province/park maps: filled polygon is the main visual
+        # Lake/province/park maps without streets: filled polygon is the main visual
         for exterior, holes in polygons:
             path_d = _coords_to_path(exterior)
             for hole in holes:
