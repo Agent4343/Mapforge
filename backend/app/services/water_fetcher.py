@@ -15,6 +15,8 @@ OVERPASS_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
     "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+    "https://overpass.openstreetmap.fr/api/interpreter",
+    "https://overpass.nchc.org.tw/api/interpreter",
 ]
 
 
@@ -42,7 +44,7 @@ async def _fetch_one_endpoint(endpoint: str, query: str) -> dict | None:
         return None
 
 
-async def _fetch_overpass_with_retry(query: str) -> dict | None:
+async def _race_endpoints(query: str) -> dict | None:
     """Race all Overpass endpoints concurrently — first valid response wins."""
     tasks = {
         asyncio.create_task(_fetch_one_endpoint(ep, query)): ep
@@ -65,7 +67,22 @@ async def _fetch_overpass_with_retry(query: str) -> dict | None:
         for t in pending:
             t.cancel()
 
-    log.error("All Overpass endpoints failed for water fetch")
+    return None
+
+
+async def _fetch_overpass_with_retry(query: str, max_retries: int = 2) -> dict | None:
+    """Race all Overpass endpoints, retrying with backoff if all fail."""
+    for attempt in range(max_retries + 1):
+        result = await _race_endpoints(query)
+        if result is not None:
+            return result
+
+        if attempt < max_retries:
+            wait = 3 * (attempt + 1)  # 3s, 6s
+            log.warning(f"All Overpass endpoints failed for water — retrying in {wait}s (attempt {attempt + 1}/{max_retries})")
+            await asyncio.sleep(wait)
+
+    log.error("All Overpass endpoints failed for water fetch after retries")
     return None
 
 
