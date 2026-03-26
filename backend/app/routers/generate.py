@@ -97,6 +97,19 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     else:
         w_in, h_in = 16, 20
 
+    # Cap DPI for very large print sizes to prevent out-of-memory crashes.
+    # A 24x36" print at 600 DPI = 14400x21600 = 311M pixels → OOM risk.
+    max_pixels = 80_000_000  # ~80 megapixels
+    effective_dpi = req.print_dpi
+    pixels_at_requested_dpi = (w_in * effective_dpi) * (h_in * effective_dpi)
+    if pixels_at_requested_dpi > max_pixels:
+        effective_dpi = int((max_pixels / (w_in * h_in)) ** 0.5)
+        effective_dpi = max(300, effective_dpi)  # never go below 300
+        if effective_dpi < req.print_dpi:
+            warnings.append(f"DPI reduced from {req.print_dpi} to {effective_dpi} for this print size to ensure generation succeeds.")
+            log.info(f"Capped DPI from {req.print_dpi} to {effective_dpi} for {w_in}x{h_in}\" ({pixels_at_requested_dpi/1e6:.0f}M pixels)")
+            req = req.model_copy(update={"print_dpi": effective_dpi})
+
     # Fetch geometry
     log.info(f"Generating {req.product_type.value} for OSM {req.osm_type}/{req.osm_id}")
     geom = await fetch_geometry(req.osm_id, req.osm_type)
@@ -139,9 +152,18 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     # well and the Overpass query would be enormous.
     bbox_area_deg2 = (bounds[2] - bounds[0]) * (bounds[3] - bounds[1])
     is_large_area = bbox_area_deg2 > 4.0  # roughly > 200km x 200km
-    include_minor_streets = req.product_type.value in street_types and not is_large_area
-    if is_large_area and need_streets:
+    is_very_large_area = bbox_area_deg2 > 25.0  # provinces like Ontario
+
+    if is_very_large_area and need_streets:
+        # Skip streets entirely for very large areas — Overpass can't handle it
+        # and streets look like noise at province scale
+        log.info(f"Very large area ({bbox_area_deg2:.1f} deg²) — skipping street fetch entirely")
+        need_streets = False
+        warnings.append("Street overlay is not available for areas this large. Streets work best with cities and communities.")
+    elif is_large_area and need_streets:
         log.info(f"Large area ({bbox_area_deg2:.1f} deg²) — fetching major roads only")
+
+    include_minor_streets = req.product_type.value in street_types and not is_large_area
 
     async def _get_streets():
         cache_key = _bbox_cache_key("streets", bbox)

@@ -26,7 +26,7 @@ try:
 
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=port, timeout_keep_alive=65)
 except Exception as e:
     log.critical("FATAL STARTUP ERROR: %s", e)
     traceback.print_exc()
