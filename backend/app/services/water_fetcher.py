@@ -53,18 +53,24 @@ async def _try_endpoint(client: httpx.AsyncClient, endpoint: str, query: str) ->
         return None
 
 
-async def _fetch_overpass_with_retry(query: str, max_retries: int = 1) -> dict | None:
-    """Try Overpass endpoints sequentially, with one retry pass if all fail."""
-    for attempt in range(max_retries + 1):
-        async with httpx.AsyncClient(timeout=50.0, follow_redirects=True) as client:
-            for endpoint in OVERPASS_ENDPOINTS:
-                result = await _try_endpoint(client, endpoint, query)
-                if result is not None:
-                    return result
+async def _fetch_overpass_with_retry(query: str) -> dict | None:
+    """Try Overpass endpoints sequentially with a total time budget."""
+    import time
+    start = time.monotonic()
+    budget = 30.0  # total seconds for all water fetch attempts
 
-        if attempt < max_retries:
-            log.warning("All Overpass endpoints failed for water — retrying in 3s")
-            await asyncio.sleep(3)
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+        for endpoint in OVERPASS_ENDPOINTS:
+            elapsed = time.monotonic() - start
+            if elapsed >= budget:
+                break
+            remaining = budget - elapsed
+            if remaining < 5:
+                break
+            client.timeout = httpx.Timeout(min(20.0, remaining))
+            result = await _try_endpoint(client, endpoint, query)
+            if result is not None:
+                return result
 
     log.error("All Overpass endpoints failed for water fetch")
     return None
