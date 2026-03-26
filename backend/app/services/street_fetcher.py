@@ -1,7 +1,7 @@
 """City street network fetcher from OpenStreetMap Overpass API.
 
-Fetches road networks within a bounding box for city street map products.
-Races multiple Overpass endpoints concurrently for speed and reliability.
+Fetches road networks for city/province street map products.
+Uses sequential endpoint fallback with proper identification headers.
 """
 
 import asyncio
@@ -11,13 +11,19 @@ import httpx
 
 from app.logging_config import log
 
+# Overpass endpoints in priority order — try one at a time, not all at once.
+# Racing all endpoints simultaneously looks like abuse and gets IPs blocked.
 OVERPASS_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
-    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
     "https://overpass.openstreetmap.fr/api/interpreter",
-    "https://overpass.nchc.org.tw/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
 ]
+
+# Required by OSM Acceptable Use Policy
+REQUEST_HEADERS = {
+    "User-Agent": "MapForgeCNC/1.0 (https://mapforge-production.up.railway.app; mapforge map generator)",
+}
 
 # Road classification → SVG stroke width (mm) and layer priority
 ROAD_CLASSES = {
@@ -36,59 +42,87 @@ ROAD_CLASSES = {
 }
 
 # Maximum total time budget for the entire street fetch (seconds).
-# Must leave room for geometry fetch, SVG generation, and PNG rendering
-# within the frontend's 120s timeout.
-STREET_FETCH_BUDGET = 55
+STREET_FETCH_BUDGET = 60
 
 
-async def _fetch_one_endpoint(endpoint: str, query: str, timeout: float = 45.0) -> dict | None:
+async def _try_endpoint(client: httpx.AsyncClient, endpoint: str, query: str) -> dict | None:
     """Try a single Overpass endpoint. Returns valid data or None."""
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(endpoint, data={"data": query})
-            resp.raise_for_status()
-            data = resp.json()
+        resp = await client.post(endpoint, data={"data": query}, headers=REQUEST_HEADERS)
+
+        if resp.status_code == 429:
+            retry_after = resp.headers.get("retry-after", "5")
+            log.warning(f"Overpass 429 from {endpoint}, retry-after={retry_after}")
+            return None
+
+        if resp.status_code == 504:
+            log.warning(f"Overpass 504 timeout from {endpoint}")
+            return None
+
+        if resp.status_code != 200:
+            log.warning(f"Overpass HTTP {resp.status_code} from {endpoint}")
+            return None
+
+        data = resp.json()
 
         if "remark" in data:
-            log.warning(f"Overpass remark from {endpoint}: {data['remark']}")
+            remark = data["remark"]
+            log.warning(f"Overpass remark from {endpoint}: {remark[:120]}")
+            # "runtime error" usually means query too complex/large
+            if "runtime" in remark.lower() or "timeout" in remark.lower():
+                return None
+            # Other remarks (e.g. "Area ... not found") — still no data
             return None
 
         if not data.get("elements"):
-            log.warning(f"Overpass returned no/empty elements from {endpoint}")
+            log.warning(f"Overpass returned 0 elements from {endpoint}")
             return None
 
-        log.info(f"Overpass success from {endpoint}: {len(data['elements'])} elements")
+        log.info(f"Overpass OK from {endpoint}: {len(data['elements'])} elements")
         return data
 
+    except httpx.TimeoutException:
+        log.warning(f"Overpass timeout from {endpoint}")
+        return None
     except Exception as e:
-        log.warning(f"Overpass request to {endpoint} failed: {e}")
+        log.warning(f"Overpass error from {endpoint}: {type(e).__name__}: {e}")
         return None
 
 
-async def _race_endpoints(query: str, timeout: float = 45.0) -> dict | None:
-    """Race all Overpass endpoints concurrently — first valid response wins."""
-    tasks = {
-        asyncio.create_task(_fetch_one_endpoint(ep, query, timeout)): ep
-        for ep in OVERPASS_ENDPOINTS
-    }
-    pending = set(tasks.keys())
+async def _fetch_with_fallback(query: str, timeout: float = 50.0) -> dict | None:
+    """Try Overpass endpoints sequentially until one succeeds.
 
-    try:
-        while pending:
-            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-            for task in done:
-                result = task.result()
-                if result is not None:
-                    for t in pending:
-                        t.cancel()
-                    return result
-    except Exception as e:
-        log.error(f"Unexpected error racing Overpass endpoints: {e}")
-    finally:
-        for t in pending:
-            t.cancel()
-
+    Sequential is better than racing because:
+    - Racing 5 endpoints simultaneously looks like abuse → IP gets blocked
+    - Most of the time the first endpoint works
+    - If the first fails, we try the next one immediately
+    """
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        for endpoint in OVERPASS_ENDPOINTS:
+            result = await _try_endpoint(client, endpoint, query)
+            if result is not None:
+                return result
     return None
+
+
+def _build_area_query(area_id: int, highway_filter: str) -> str:
+    """Build an Overpass area query (for relations with known OSM ID)."""
+    return (
+        f'[out:json][timeout:45];'
+        f'area({area_id})->.a;'
+        f'way["highway"~"^({highway_filter})$"](area.a);'
+        f'out body;>;out skel qt;'
+    )
+
+
+def _build_bbox_query(bbox: tuple, highway_filter: str) -> str:
+    """Build an Overpass bbox query."""
+    south, west, north, east = bbox
+    return (
+        f'[out:json][timeout:45];'
+        f'way["highway"~"^({highway_filter})$"]({south},{west},{north},{east});'
+        f'out body;>;out skel qt;'
+    )
 
 
 async def fetch_streets(
@@ -99,85 +133,52 @@ async def fetch_streets(
 ) -> dict:
     """Fetch street network for a geographic area.
 
-    When osm_id is provided, uses Overpass area queries which are much faster
-    than bbox queries for large cities — they only return roads inside the
-    actual administrative boundary instead of the entire bounding box.
-
-    Uses a total time budget to prevent the entire generation from timing out.
-    If all roads can't be fetched in time, falls back to major roads only.
-
-    Args:
-        bbox: (south, west, north, east) in WGS84
-        include_minor: include residential/tertiary roads
-        osm_id: OSM relation/way ID for area-based queries
-        osm_type: "relation" or "way"
+    Strategy:
+    1. If osm_id is a relation, use Overpass area query (faster, scoped to boundary)
+    2. Try the requested road set (all or major-only)
+    3. If all roads fail, fall back to major roads only
+    4. Try endpoints sequentially (not racing) to avoid IP bans
 
     Returns:
-        dict with 'major_roads' and 'minor_roads' as lists of
-        (coords_list, road_class, width, name) tuples
+        dict with 'major_roads' and 'minor_roads' lists
     """
     start = time.monotonic()
-    south, west, north, east = bbox
 
-    all_highway_filter = "|".join(ROAD_CLASSES.keys())
-    major_highway_filter = "|".join(
-        k for k, v in ROAD_CLASSES.items() if v["layer"] == "major"
-    )
+    all_filter = "|".join(ROAD_CLASSES.keys())
+    major_filter = "|".join(k for k, v in ROAD_CLASSES.items() if v["layer"] == "major")
 
-    # Use area query when we have an OSM relation ID — much faster for cities
-    # Overpass area IDs: relation ID + 3600000000, way ID + 2400000000
+    # Choose query builder based on whether we have an OSM relation ID
     use_area = osm_id and osm_type == "relation"
     if use_area:
         area_id = osm_id + 3600000000
-        area_filter = f"area({area_id})"
-        # Area queries: first define the area, then query within it
-        def _build_query(highway_filter):
-            return f"""
-    [out:json][timeout:40];
-    area({area_id})->.a;
-    way["highway"~"^({highway_filter})$"](area.a);
-    out body;
-    >;
-    out skel qt;
-    """
-        log.info(f"Using Overpass area query for OSM relation {osm_id}")
+        build_q = lambda filt: _build_area_query(area_id, filt)
+        log.info(f"Street fetch: area query for relation {osm_id}")
     else:
-        def _build_query(highway_filter):
-            return f"""
-    [out:json][timeout:40];
-    way["highway"~"^({highway_filter})$"]({south},{west},{north},{east});
-    out body;
-    >;
-    out skel qt;
-    """
+        build_q = lambda filt: _build_bbox_query(bbox, filt)
+        log.info(f"Street fetch: bbox query for {bbox}")
 
     data = None
 
     if include_minor:
-        query_all = _build_query(all_highway_filter)
-        log.info(f"Fetching all streets for {'area' if use_area else 'bbox'}: {osm_id or bbox}")
-        data = await _race_endpoints(query_all, timeout=45.0)
+        # Try all roads first
+        data = await _fetch_with_fallback(build_q(all_filter), timeout=50.0)
 
+        # Fall back to major roads if all roads failed
         if data is None:
             elapsed = time.monotonic() - start
             remaining = STREET_FETCH_BUDGET - elapsed
-            if remaining < 10:
-                log.warning(f"Street fetch budget exhausted ({elapsed:.0f}s) — skipping fallback")
-            else:
-                log.warning(f"Full street fetch failed ({elapsed:.0f}s) — falling back to major roads ({remaining:.0f}s left)")
-                await asyncio.sleep(2)
-                query_major = _build_query(major_highway_filter)
-                data = await _race_endpoints(query_major, timeout=min(remaining - 2, 45.0))
+            if remaining > 10:
+                log.warning(f"All-roads fetch failed ({elapsed:.0f}s) — trying major only")
+                data = await _fetch_with_fallback(build_q(major_filter), timeout=min(remaining, 50.0))
     else:
-        query_major = _build_query(major_highway_filter)
-        log.info(f"Fetching major streets for {'area' if use_area else 'bbox'}: {osm_id or bbox}")
-        data = await _race_endpoints(query_major, timeout=45.0)
+        data = await _fetch_with_fallback(build_q(major_filter), timeout=50.0)
 
     elapsed = time.monotonic() - start
     if data is None:
-        log.error(f"All street fetch attempts failed after {elapsed:.0f}s")
+        log.error(f"Street fetch failed completely after {elapsed:.0f}s")
         return {"major_roads": [], "minor_roads": []}
 
+    # Parse the Overpass response
     elements = data.get("elements", [])
     nodes = {}
     ways = []
@@ -209,5 +210,5 @@ async def fetch_streets(
         else:
             minor_roads.append(entry)
 
-    log.info(f"Fetched {len(major_roads)} major roads, {len(minor_roads)} minor roads in {elapsed:.1f}s")
+    log.info(f"Parsed {len(major_roads)} major + {len(minor_roads)} minor roads in {elapsed:.1f}s")
     return {"major_roads": major_roads, "minor_roads": minor_roads}

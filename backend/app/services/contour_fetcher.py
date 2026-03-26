@@ -15,6 +15,10 @@ OVERPASS_ENDPOINTS = [
     "https://overpass.openstreetmap.fr/api/interpreter",
 ]
 
+REQUEST_HEADERS = {
+    "User-Agent": "MapForgeCNC/1.0 (https://mapforge-production.up.railway.app; mapforge map generator)",
+}
+
 
 async def fetch_contour_lines(
     bbox: tuple[float, float, float, float],
@@ -62,8 +66,8 @@ async def fetch_contour_lines(
     data = None
     for endpoint in OVERPASS_ENDPOINTS:
         try:
-            async with httpx.AsyncClient(timeout=35.0) as client:
-                resp = await client.post(endpoint, data={"data": query})
+            async with httpx.AsyncClient(timeout=35.0, follow_redirects=True) as client:
+                resp = await client.post(endpoint, data={"data": query}, headers=REQUEST_HEADERS)
                 resp.raise_for_status()
                 data = resp.json()
             if data.get("elements"):
