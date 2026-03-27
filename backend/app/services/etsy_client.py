@@ -412,3 +412,94 @@ async def upload_listing_file(
         raise ValueError(f"Failed to upload file to Etsy: {resp.status_code}")
 
     return resp.json()
+
+
+async def send_buyer_message(
+    access_token: str,
+    shop_id: str,
+    receipt_id: str,
+    message: str,
+    creds: Optional[dict] = None,
+) -> bool:
+    """Send a message to a buyer via Etsy Conversations API.
+
+    Uses the shop receipt to identify the buyer and send them a message
+    with their custom design link.
+
+    Returns True if the message was sent successfully.
+    """
+    headers = _auth_headers(access_token, creds)
+
+    # Etsy API: POST /v3/application/shops/{shop_id}/receipts/{receipt_id}/send-message
+    # This sends a message to the buyer associated with the receipt
+    async with httpx.AsyncClient() as client:
+        # First try the receipt-based messaging endpoint
+        resp = await _request_with_retry(
+            client, "POST",
+            f"{ETSY_API_BASE}/application/shops/{shop_id}/receipts/{receipt_id}/messages",
+            headers=headers,
+            json={"message": message},
+            timeout=15.0,
+        )
+
+    if resp.status_code in (200, 201):
+        logger.info(f"Sent Etsy message to buyer for receipt {receipt_id}")
+        return True
+
+    # Log but don't raise — messaging is best-effort
+    logger.warning(
+        f"Etsy buyer message failed ({resp.status_code}): {resp.text[:200]}. "
+        f"Design link must be delivered manually."
+    )
+    return False
+
+
+def generate_instruction_file(shop_name: str = "MapForgeDesign", frontend_url: str = "") -> bytes:
+    """Generate a generic instruction text file for Etsy digital download.
+
+    This file is uploaded to each listing. It tells buyers what to expect
+    and how to access their custom design tool.
+    """
+    url = frontend_url or "https://mapforge-production.up.railway.app"
+
+    content = f"""
+===========================================
+   Welcome to {shop_name}!
+   Your Custom Map Print
+===========================================
+
+Thank you for your purchase!
+
+HOW TO GET YOUR CUSTOM MAP:
+---------------------------
+
+1. Check your Etsy Messages - we'll send you a unique
+   design link within a few minutes of your purchase.
+
+2. Click the link to open our design tool.
+
+3. Choose any location in the world - your hometown,
+   where you got married, your favorite vacation spot.
+
+4. Customize the colors, style, text, and size.
+
+5. Download your print-ready files instantly!
+
+WHAT YOU'LL RECEIVE:
+- High-resolution PNG (up to 600 DPI)
+- SVG vector source file
+- Product mockup image
+- Up to 5 downloads
+
+NEED HELP?
+----------
+If you haven't received your design link within
+30 minutes, please send us a message on Etsy
+and we'll get it to you right away.
+
+Visit us: {url}
+
+Happy designing!
+- The {shop_name} Team
+"""
+    return content.strip().encode("utf-8")

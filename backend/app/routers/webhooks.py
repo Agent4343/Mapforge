@@ -378,7 +378,7 @@ async def _handle_etsy_order_paid(db: AsyncSession, data: dict, shop_id: str):
     db.add(credit)
     await db.commit()
 
-    frontend_url = settings.FRONTEND_URL or "http://localhost:5173"
+    frontend_url = settings.FRONTEND_URL or "https://mapforge-production.up.railway.app"
     design_url = f"{frontend_url}?credit={token}"
 
     log.info(
@@ -386,11 +386,38 @@ async def _handle_etsy_order_paid(db: AsyncSession, data: dict, shop_id: str):
         f"(shop {shop_id}, buyer {buyer_email}): {design_url}"
     )
 
-    # NOTE: The design_url needs to be delivered to the customer. Options:
-    #   1. Include it in the Etsy digital download file (PDF/text)
-    #   2. Send via Etsy Message API (if available)
-    #   3. Send via email (requires email service integration)
-    # For now it's logged — the seller can also find it in the admin dashboard.
+    # Send the design link to the buyer via Etsy message
+    if seller.etsy_access_token and receipt_id:
+        try:
+            from app.services.etsy_client import send_buyer_message, get_valid_token
+            from app.services.app_settings import get_etsy_credentials
+
+            creds = await get_etsy_credentials(db)
+            access_token = await get_valid_token(seller, creds=creds)
+            await db.commit()  # persist any refreshed tokens
+
+            message = (
+                f"Thank you for your purchase! Here is your custom map design link:\n\n"
+                f"{design_url}\n\n"
+                f"Click the link above to:\n"
+                f"1. Choose any location in the world\n"
+                f"2. Customize colors, style, and text\n"
+                f"3. Download your print-ready files\n\n"
+                f"You can redesign up to 5 times. Enjoy!"
+            )
+            sent = await send_buyer_message(
+                access_token=access_token,
+                shop_id=shop_id,
+                receipt_id=receipt_id,
+                message=message,
+                creds=creds,
+            )
+            if sent:
+                log.info(f"Design link sent to buyer via Etsy message for receipt {receipt_id}")
+            else:
+                log.warning(f"Could not auto-send design link for receipt {receipt_id} — seller should send manually")
+        except Exception as e:
+            log.warning(f"Failed to send Etsy message for receipt {receipt_id}: {e}")
 
 
 async def _handle_etsy_order_canceled(db: AsyncSession, data: dict, shop_id: str):

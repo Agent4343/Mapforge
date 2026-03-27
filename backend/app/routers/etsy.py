@@ -243,29 +243,34 @@ async def etsy_publish(
             except ValueError as e:
                 log.warning("Etsy thumbnail upload failed: %s", e)
 
-    # 4. Upload SVG as the digital download file, then set type to "download".
-    #    Per Etsy docs: create draft → upload file → PATCH type=download.
-    svg_bytes = await retrieve_file(file_record.svg_storage_key)
-    if svg_bytes:
-        try:
-            await upload_listing_file(
-                access_token=access_token,
-                shop_id=shop_id,
-                listing_id=listing_id,
-                file_bytes=svg_bytes,
-                filename=f"{file_record.location_name.replace(' ', '_')}_mapforge.svg",
-                creds=creds,
-            )
-            # Now mark the listing as a digital download
-            await update_listing_type(
-                access_token=access_token,
-                shop_id=shop_id,
-                listing_id=listing_id,
-                listing_type="download",
-                creds=creds,
-            )
-        except ValueError as e:
-            log.warning("Etsy digital file upload/type-update failed: %s", e)
+    # 4. Upload instruction file as the digital download, then set type to "download".
+    #    The instruction file tells buyers to check Etsy messages for their
+    #    unique design link (sent automatically by the webhook handler).
+    #    Per Etsy docs: create draft -> upload file -> PATCH type=download.
+    try:
+        from app.services.etsy_client import generate_instruction_file
+        instruction_bytes = generate_instruction_file(
+            shop_name=user.etsy_shop_name or "MapForgeDesign",
+            frontend_url=settings.FRONTEND_URL or "https://mapforge-production.up.railway.app",
+        )
+        await upload_listing_file(
+            access_token=access_token,
+            shop_id=shop_id,
+            listing_id=listing_id,
+            file_bytes=instruction_bytes,
+            filename="MapForge_Your_Custom_Map_Instructions.txt",
+            creds=creds,
+        )
+        # Now mark the listing as a digital download
+        await update_listing_type(
+            access_token=access_token,
+            shop_id=shop_id,
+            listing_id=listing_id,
+            listing_type="download",
+            creds=creds,
+        )
+    except ValueError as e:
+        log.warning("Etsy digital file upload/type-update failed: %s", e)
 
     listing_url = f"https://www.etsy.com/listing/{listing_id}"
     log.info("Published Etsy draft listing %d for user %s: %s", listing_id, user.id, file_record.location_name)
