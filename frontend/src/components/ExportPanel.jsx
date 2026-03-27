@@ -322,126 +322,127 @@ export default function ExportPanel({
             </div>
           )}
 
-          {/* Sell / Publish Section */}
-          {canSell && !showListForm && (
-            <div className="sell-buttons">
-              <button
-                className="btn btn-marketplace btn-full"
-                onClick={() => {
-                  setListTitle(result.location_name);
-                  setShowListForm(true);
-                  setListSuccess(false);
-                  setListError(null);
-                  setEtsyResult(null);
-                }}
-              >
-                {etsyStatus.connected ? "Sell on Marketplace / Etsy" : "Sell on Marketplace"}
-              </button>
-            </div>
-          )}
-
-          {showListForm && (
-            <div className="list-form">
-              <div className="list-form-header">
-                <h3>Create Listing</h3>
-                <button className="list-form-close" onClick={() => setShowListForm(false)}>
-                  &times;
-                </button>
-              </div>
-
-              {/* AI Assist Button */}
-              <button
-                className="btn btn-ai btn-full"
-                onClick={handleAiDescribe}
-                disabled={aiLoading}
-              >
-                {aiLoading ? (
-                  <span className="generate-btn-content">
-                    <span className="spinner-inline" /> AI Writing...
-                  </span>
-                ) : (
-                  "AI Write Title, Description & Tags"
-                )}
-              </button>
-
-              <div className="control-group">
-                <label>Title</label>
-                <input type="text" value={listTitle} onChange={(e) => setListTitle(e.target.value)} maxLength={255} />
-              </div>
-              <div className="control-group">
-                <label>Price (USD)</label>
-                <input
-                  type="number"
-                  min="1.99"
-                  max="99.99"
-                  step="0.01"
-                  value={listPrice}
-                  onChange={(e) => setListPrice(e.target.value)}
-                />
-              </div>
-              <div className="control-group">
-                <label>Description</label>
-                <textarea
-                  value={listDesc}
-                  onChange={(e) => setListDesc(e.target.value)}
-                  placeholder="Describe the design, style, and what makes it unique..."
-                  maxLength={2000}
-                  rows={5}
-                  className="list-textarea"
-                />
-              </div>
-              <div className="control-group">
-                <label>Tags</label>
-                <input
-                  type="text"
-                  value={listTags}
-                  onChange={(e) => setListTags(e.target.value)}
-                  placeholder="lake, cottage, muskoka, wall art, map print"
-                  maxLength={500}
-                />
-              </div>
-              {listError && <div className="error-message">{listError}</div>}
-              {listSuccess && <div className="success-message">Listed on Marketplace!</div>}
-              {etsyResult && (
-                <div className="success-message">
-                  Draft listing created on Etsy!{" "}
-                  <a href={etsyResult.listing_url} target="_blank" rel="noopener noreferrer">
-                    View on Etsy
-                  </a>
-                </div>
-              )}
-
-              <div className="list-form-actions">
-                <button
-                  className="btn btn-primary btn-full"
-                  onClick={handleList}
-                  disabled={listing || listSuccess}
-                >
-                  {listing ? "Listing..." : listSuccess ? "Listed!" : "Publish to Marketplace"}
-                </button>
-
-                {etsyStatus.connected && (
-                  <button
-                    className="btn btn-etsy btn-full"
-                    onClick={handlePublishToEtsy}
-                    disabled={etsyPublishing || !!etsyResult}
-                  >
-                    {etsyPublishing ? (
-                      <span className="generate-btn-content">
-                        <span className="spinner-inline" /> Publishing to Etsy...
-                      </span>
-                    ) : etsyResult ? (
-                      "Published to Etsy!"
-                    ) : (
-                      "Publish to Etsy (Draft)"
-                    )}
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
 
         </>
+      )}
+
+      {/* Sell / Publish Section — available to maker/pro/admin */}
+      {result && canSell && !showListForm && (
+        <div className="sell-buttons">
+          <button
+            className="btn btn-marketplace btn-full"
+            onClick={() => {
+              setListTitle(result.location_name);
+              setShowListForm(true);
+              setListSuccess(false);
+              setListError(null);
+              setEtsyResult(null);
+            }}
+          >
+            {etsyStatus.connected ? "Sell on Marketplace / Etsy" : "Sell on Marketplace"}
+          </button>
+        </div>
+      )}
+
+      {result && showListForm && (
+        <div className="list-form">
+          <div className="list-form-header">
+            <h3>Create Listing</h3>
+            <button className="list-form-close" onClick={() => setShowListForm(false)}>
+              &times;
+            </button>
+          </div>
+
+          {/* AI Assist Button */}
+          <button
+            className="btn btn-ai btn-full"
+            onClick={handleAiDescribe}
+            disabled={aiLoading}
+          >
+            {aiLoading ? (
+              <span className="generate-btn-content">
+                <span className="spinner-inline" /> AI Writing...
+              </span>
+            ) : (
+              "AI Write Title, Description & Tags"
+            )}
+          </button>
+
+          <div className="control-group">
+            <label>Title</label>
+            <input type="text" value={listTitle} onChange={(e) => setListTitle(e.target.value)} maxLength={255} />
+          </div>
+          <div className="control-group">
+            <label>Price (USD)</label>
+            <input
+              type="number"
+              min="1.99"
+              max="99.99"
+              step="0.01"
+              value={listPrice}
+              onChange={(e) => setListPrice(e.target.value)}
+            />
+          </div>
+          <div className="control-group">
+            <label>Description</label>
+            <textarea
+              value={listDesc}
+              onChange={(e) => setListDesc(e.target.value)}
+              placeholder="Describe the design, style, and what makes it unique..."
+              maxLength={2000}
+              rows={5}
+              className="list-textarea"
+            />
+          </div>
+          <div className="control-group">
+            <label>Tags</label>
+            <input
+              type="text"
+              value={listTags}
+              onChange={(e) => setListTags(e.target.value)}
+              placeholder="lake, cottage, muskoka, wall art, map print"
+              maxLength={500}
+            />
+          </div>
+          {listError && <div className="error-message">{listError}</div>}
+          {listSuccess && <div className="success-message">Listed on Marketplace!</div>}
+          {etsyResult && (
+            <div className="success-message">
+              Draft listing created on Etsy!{" "}
+              <a href={etsyResult.listing_url} target="_blank" rel="noopener noreferrer">
+                View on Etsy
+              </a>
+            </div>
+          )}
+
+          <div className="list-form-actions">
+            <button
+              className="btn btn-primary btn-full"
+              onClick={handleList}
+              disabled={listing || listSuccess}
+            >
+              {listing ? "Listing..." : listSuccess ? "Listed!" : "Publish to Marketplace"}
+            </button>
+
+            {etsyStatus.connected && (
+              <button
+                className="btn btn-etsy btn-full"
+                onClick={handlePublishToEtsy}
+                disabled={etsyPublishing || !!etsyResult}
+              >
+                {etsyPublishing ? (
+                  <span className="generate-btn-content">
+                    <span className="spinner-inline" /> Publishing to Etsy...
+                  </span>
+                ) : etsyResult ? (
+                  "Published to Etsy!"
+                ) : (
+                  "Publish to Etsy (Draft)"
+                )}
+              </button>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
