@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import async_session
 from app.logging_config import log
-from app.models.db_models import User, Purchase, MarketplaceListing, DesignCredit
+from app.models.db_models import User, Purchase, MarketplaceListing, DesignCredit, PublishedListing, EtsyPurchase
 from app.services.payments import verify_webhook_signature, create_transfer
 
 router = APIRouter(prefix="/api/v1/webhooks", tags=["webhooks"])
@@ -234,10 +234,14 @@ async def _handle_account_updated(db: AsyncSession, data: dict):
 def _verify_etsy_signature(payload: bytes, headers: dict) -> bool:
     """Verify Etsy webhook signature using HMAC-SHA256.
 
-    Per Etsy docs:
-      signed_content = webhook-id + "." + webhook-timestamp + "." + raw_body
-      secret_bytes = base64_decode(secret.split("_")[1])
-      expected_sig = base64_encode(HMAC_SHA256(secret_bytes, signed_content))
+    Implements Svix signature verification (the protocol Etsy uses):
+
+      signed_content = <webhook-id> + "." + <webhook-timestamp> + "." + <raw_body_bytes>
+      secret_bytes   = base64_decode(secret_after_"whsec_"_prefix)
+      expected_sig   = base64_encode(HMAC_SHA256(secret_bytes, signed_content))
+
+    Raw payload bytes are used directly instead of decoding to a string to
+    avoid any byte-sequence transformation that would break the HMAC.
     """
     secret = settings.ETSY_WEBHOOK_SECRET
     if not secret:
@@ -268,15 +272,17 @@ def _verify_etsy_signature(payload: bytes, headers: dict) -> bool:
         log.error("Failed to decode ETSY_WEBHOOK_SECRET")
         return False
 
-    # Compute expected signature
-    signed_content = f"{webhook_id}.{webhook_timestamp}.{payload.decode('utf-8')}"
+    # Build signed content using raw bytes to avoid any encoding transformation.
+    # Format: "<webhook-id>.<webhook-timestamp>.<raw_body>"
+    signed_prefix = f"{webhook_id}.{webhook_timestamp}.".encode("utf-8")
+    signed_content: bytes = signed_prefix + payload
     expected = base64.b64encode(
-        hmac.new(secret_bytes, signed_content.encode("utf-8"), hashlib.sha256).digest()
+        hmac.new(secret_bytes, signed_content, hashlib.sha256).digest()
     ).decode("ascii")
 
-    # Compare against all signatures in the header (space-separated)
+    # Compare against all signatures in the header (space-separated).
+    # Signatures may carry a version prefix like "v1,".
     for sig in webhook_signature.split(" "):
-        # Signatures may have a version prefix like "v1,"
         sig_value = sig.split(",", 1)[-1] if "," in sig else sig
         if hmac.compare_digest(expected, sig_value):
             return True
@@ -325,11 +331,16 @@ async def etsy_webhook(request: Request):
 
 
 async def _handle_etsy_order_paid(db: AsyncSession, data: dict, shop_id: str):
-    """Handle Etsy order.paid — create a design credit for the customer.
+    """Handle Etsy order.paid — fulfil both DesignCredit and EtsyPurchase orders.
 
-    When a customer buys on Etsy, we auto-create a DesignCredit with a unique
-    token. The token is included in the Etsy digital download file so the
-    customer can access the design tool and download their custom map.
+    Two flows are handled:
+    1. *Legacy / post-purchase design*: the buyer bought a generic listing;
+       we create a DesignCredit so they can design later. Idempotent on
+       (etsy_receipt_id, etsy_shop_id).
+    2. *Pre-purchase design (push-to-Etsy)*: the listing was created from a
+       BuildDraft via ``POST /api/v1/etsy/push``.  We look up the
+       PublishedListing by etsy_listing_id and create an EtsyPurchase
+       idempotently using etsy_transaction_id.
     """
     import secrets
 
@@ -345,6 +356,67 @@ async def _handle_etsy_order_paid(db: AsyncSession, data: dict, shop_id: str):
     # Extract order details from the webhook payload
     receipt_id = str(data.get("receipt_id", data.get("resource_id", "")))
     buyer_email = data.get("buyer_email", "")
+
+    # -----------------------------------------------------------------
+    # Handle per-transaction line items for the push-to-Etsy flow.
+    # Etsy sends a "transactions" list; each item has a listing_id.
+    # -----------------------------------------------------------------
+    transactions = data.get("transactions", [])
+    for txn in transactions:
+        txn_id = str(txn.get("transaction_id", ""))
+        listing_id = str(txn.get("listing_id", ""))
+        if not txn_id or not listing_id:
+            continue
+
+        # Look up whether this listing was pushed from a BuildDraft
+        pub_result = await db.execute(
+            select(PublishedListing).where(PublishedListing.etsy_listing_id == listing_id)
+        )
+        pub_listing = pub_result.scalar_one_or_none()
+        if pub_listing is None:
+            continue  # Not a push-to-Etsy listing; handled below
+
+        # Idempotency: skip if we already have this transaction
+        existing = await db.execute(
+            select(EtsyPurchase).where(EtsyPurchase.etsy_transaction_id == txn_id)
+        )
+        if existing.scalar_one_or_none() is not None:
+            log.info(f"EtsyPurchase for transaction {txn_id} already exists — skipping duplicate")
+            continue
+
+        purchase = EtsyPurchase(
+            etsy_receipt_id=receipt_id,
+            etsy_transaction_id=txn_id,
+            published_listing_id=pub_listing.id,
+            buyer_email=buyer_email,
+            status="pending",
+        )
+        db.add(purchase)
+        await db.flush()  # so purchase.id is assigned
+
+        log.info(
+            f"EtsyPurchase {purchase.id} created for transaction {txn_id} "
+            f"(listing {listing_id}, receipt {receipt_id})"
+        )
+
+    await db.commit()
+
+    # -----------------------------------------------------------------
+    # Legacy flow: create DesignCredit for generic listings.
+    # Skip if ALL transactions were accounted for by the push-to-Etsy path.
+    # Idempotent on (etsy_receipt_id, etsy_shop_id).
+    # -----------------------------------------------------------------
+    # Check whether a credit already exists for this receipt
+    existing_credit = await db.execute(
+        select(DesignCredit).where(
+            DesignCredit.etsy_receipt_id == receipt_id,
+            DesignCredit.etsy_shop_id == shop_id,
+        )
+    )
+    if existing_credit.scalar_one_or_none() is not None:
+        log.info(f"DesignCredit for receipt {receipt_id} already exists — skipping duplicate")
+        return
+
     listing_title = data.get("title", "")
     price_raw = data.get("grandtotal", data.get("subtotal", {}))
     price_cents = 0

@@ -188,6 +188,70 @@ class AppSettings(Base):
     updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
 
+class BuildDraft(Base):
+    """Anonymous map design draft — saved server-side before purchase.
+
+    A buyer designs their map, and the draft is persisted so it can be
+    referenced when they push the design to Etsy and when fulfilment runs.
+    No user account is required.
+    """
+    __tablename__ = "build_drafts"
+
+    id = Column(String(16), primary_key=True, default=_uuid)
+    draft_token = Column(String(64), nullable=False, unique=True, index=True)
+    design_config = Column(Text, nullable=True)  # JSON blob
+    session_key = Column(String(128), nullable=True)  # optional browser fingerprint
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
+
+    published_listings = relationship("PublishedListing", back_populates="draft")
+
+
+class PublishedListing(Base):
+    """An Etsy listing created for a specific BuildDraft.
+
+    Provides the durable mapping between an Etsy listing ID and the
+    design config that should be fulfilled when the listing is purchased.
+    """
+    __tablename__ = "published_listings"
+
+    id = Column(String(16), primary_key=True, default=_uuid)
+    etsy_listing_id = Column(String(100), nullable=False, unique=True, index=True)
+    build_draft_id = Column(String(16), ForeignKey("build_drafts.id"), nullable=False, index=True)
+    listing_url = Column(String(500), nullable=True)
+    state = Column(String(50), default="draft")   # draft, active, sold_out, etc.
+    status = Column(String(20), default="active")  # active, deleted
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+
+    draft = relationship("BuildDraft", back_populates="published_listings")
+    purchases = relationship("EtsyPurchase", back_populates="listing")
+
+
+class EtsyPurchase(Base):
+    """A purchase of a PublishedListing via Etsy.
+
+    ``etsy_transaction_id`` carries a UNIQUE constraint so that webhook
+    retries from Etsy are idempotent — a second delivery of the same event
+    will find the existing row and skip duplicate work.
+    """
+    __tablename__ = "etsy_purchases"
+
+    id = Column(String(16), primary_key=True, default=_uuid)
+    etsy_receipt_id = Column(String(100), nullable=True)
+    etsy_transaction_id = Column(String(100), nullable=False, unique=True, index=True)
+    published_listing_id = Column(String(16), ForeignKey("published_listings.id"), nullable=False, index=True)
+    status = Column(String(20), default="pending")  # pending, generating, delivered, failed
+    error_message = Column(Text, nullable=True)
+    file_id = Column(String(16), ForeignKey("generated_files.id"), nullable=True)
+    buyer_email = Column(String(255), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    listing = relationship("PublishedListing", back_populates="purchases")
+    file = relationship("GeneratedFile", foreign_keys=[file_id])
+
+
 class Review(Base):
     __tablename__ = "reviews"
 
