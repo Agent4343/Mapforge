@@ -42,7 +42,9 @@ ROAD_CLASSES = {
 }
 
 # Maximum total time budget for the entire street fetch (seconds).
-STREET_FETCH_BUDGET = 60
+# Must be tight enough that streets + water + SVG + PNG all fit
+# within Railway's ~60s proxy timeout.
+STREET_FETCH_BUDGET = 25
 
 
 async def _try_endpoint(client: httpx.AsyncClient, endpoint: str, query: str) -> dict | None:
@@ -172,17 +174,17 @@ async def fetch_streets(
 
     if include_minor:
         # Try all roads with ~25s budget
-        data = await _fetch_with_fallback(build_q(all_filter), timeout_per_endpoint=20.0, total_budget=25.0)
+        data = await _fetch_with_fallback(build_q(all_filter), timeout_per_endpoint=15.0, total_budget=20.0)
 
         # Fall back to major roads if all roads failed
         if data is None:
             elapsed = time.monotonic() - start
             remaining = STREET_FETCH_BUDGET - elapsed
-            if remaining > 8:
+            if remaining > 5:
                 log.warning(f"All-roads fetch failed ({elapsed:.0f}s) — trying major only")
-                data = await _fetch_with_fallback(build_q(major_filter), timeout_per_endpoint=15.0, total_budget=min(remaining, 20.0))
+                data = await _fetch_with_fallback(build_q(major_filter), timeout_per_endpoint=10.0, total_budget=min(remaining, 15.0))
     else:
-        data = await _fetch_with_fallback(build_q(major_filter), timeout_per_endpoint=20.0, total_budget=25.0)
+        data = await _fetch_with_fallback(build_q(major_filter), timeout_per_endpoint=15.0, total_budget=20.0)
 
     elapsed = time.monotonic() - start
     if data is None:
