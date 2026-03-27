@@ -874,8 +874,8 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
 
     # Scale street widths based on map zoom level
     is_province = product_type in ("province",)
-    major_scale = 1.8 if is_province else 0.5
-    minor_scale = 1.2 if is_province else 0.35
+    major_scale = 1.0 if is_province else 0.5
+    minor_scale = 0.6 if is_province else 0.35
 
     lines.append('    <g id="streets">')
 

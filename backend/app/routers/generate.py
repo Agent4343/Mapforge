@@ -142,7 +142,14 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     water_types = ("community", "city", "park")
     auto_streets = req.product_type.value in street_types
     need_streets = req.include_streets or auto_streets
-    need_water = req.product_type.value in water_types
+    # Always fetch water for provinces — lakes/rivers give the shape character
+    need_water = req.product_type.value in water_types or req.product_type.value == "province"
+
+    # Always fetch major highways for provinces — they provide structure
+    # even when the "streets" toggle is off. The province shape alone is too plain.
+    is_province = req.product_type.value == "province"
+    if is_province and not need_streets:
+        need_streets = True  # fetch major roads as baseline detail
 
     bounds = geom.bounds  # minx, miny, maxx, maxy
     bbox = (bounds[1], bounds[0], bounds[3], bounds[2])
@@ -163,7 +170,9 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     elif is_medium_area and need_streets:
         log.info(f"Medium area ({bbox_area_deg2:.1f} deg²) — fetching major roads only")
 
-    include_minor_streets = not is_medium_area
+    # Provinces get major roads only (highways) unless user explicitly enabled streets.
+    # Cities always get full street grid.
+    include_minor_streets = not is_medium_area and not (is_province and not req.include_streets)
 
     async def _get_streets():
         cache_key = _bbox_cache_key("streets", bbox)
