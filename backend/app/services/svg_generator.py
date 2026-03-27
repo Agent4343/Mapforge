@@ -525,9 +525,10 @@ def _generate_print_svg(
             )
     lines.append("    </g>")
 
-    # For street maps, clip streets and water to the city boundary polygon
-    # so they don't bleed into surrounding areas
-    if is_street_map and boundary_paths:
+    # Clip streets and water to the boundary polygon so they don't bleed
+    # outside the geographic area (applies to cities AND provinces with streets)
+    clip_to_boundary = boundary_paths and (is_street_map or (streets_data and (streets_data.get("major_roads") or streets_data.get("minor_roads"))))
+    if clip_to_boundary:
         lines.append('    <g clip-path="url(#boundary_clip)">')
 
     # Water features — filled with water color
@@ -538,11 +539,11 @@ def _generate_print_svg(
     if contour_data:
         _render_contour_bands(lines, contour_data, processed)
 
-    # Streets — the hero visual for city maps
+    # Streets
     if streets_data:
-        _render_print_streets(lines, streets_data, processed, theme)
+        _render_print_streets(lines, streets_data, processed, theme, product_type=product_type)
 
-    if is_street_map and boundary_paths:
+    if clip_to_boundary:
         lines.append("    </g>")  # close boundary_clip
 
     # Markers — remap coordinates from board space to poster map space
@@ -855,37 +856,42 @@ def _render_print_water(lines: list[str], water_data: dict, processed: dict, the
     lines.append("    </g>")
 
 
-def _render_print_streets(lines: list[str], streets_data: dict, processed: dict, theme: dict):
+def _render_print_streets(lines: list[str], streets_data: dict, processed: dict, theme: dict, product_type: str = "city"):
     """Render streets with themed poster colors.
 
-    Print-mode streets use reduced widths compared to CNC base widths to
-    produce the thin, delicate line work seen on premium Etsy map prints.
-    Major roads: 0.5x base, minor roads: 0.35x base.
+    Street widths are scaled based on the product type:
+    - Cities: thin, delicate lines (0.5x/0.35x base width)
+    - Provinces: thicker, bolder lines visible at province scale (1.5x/1.0x base)
     """
     transform = processed.get("transform")
 
+    # Scale street widths based on map zoom level
+    is_province = product_type in ("province",)
+    major_scale = 1.8 if is_province else 0.5
+    minor_scale = 1.2 if is_province else 0.35
+
     lines.append('    <g id="streets">')
 
-    # Major roads — visible but thin and elegant
+    # Major roads
     for coords, road_class, width, name in streets_data.get("major_roads", []):
         if len(coords) < 2:
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
-        sw = round(width * 0.5, 2)
+        sw = round(width * major_scale, 2)
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="none" stroke="{theme["street_major"]}" stroke-width="{sw}"'
             f' stroke-linecap="round" stroke-linejoin="round"/>'
         )
 
-    # Minor roads — fine grid that fills the city area
+    # Minor roads
     for coords, road_class, width, name in streets_data.get("minor_roads", []):
         if len(coords) < 2:
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
-        sw = round(width * 0.35, 2)
+        sw = round(width * minor_scale, 2)
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="none" stroke="{theme["street_minor"]}" stroke-width="{sw}"'
