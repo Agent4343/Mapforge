@@ -1,6 +1,6 @@
 """Fulfillment worker for EtsyPurchase orders.
 
-This module provides two ways to run fulfilment:
+This module provides two ways to run fulfillment:
 
 1. **Background polling loop** (started automatically on app startup via
    ``start_fulfillment_loop``).  It wakes up every
@@ -52,7 +52,7 @@ FULFILLMENT_POLL_SECONDS = 30  # interval between background polling runs
 
 @router.post("/process")
 async def process_pending():
-    """Process all pending EtsyPurchase fulfilments.
+    """Process all pending EtsyPurchase fulfillments.
 
     This endpoint is designed to be called by an external scheduler.  It
     returns a summary of how many purchases were processed.
@@ -82,7 +82,7 @@ async def start_fulfillment_loop():
 
 
 # ---------------------------------------------------------------------------
-# Core fulfilment logic
+# Core fulfillment logic
 # ---------------------------------------------------------------------------
 
 async def _run_fulfillment_pass() -> tuple[int, int]:
@@ -149,7 +149,7 @@ async def _claim_and_fulfill(purchase_id: str) -> bool | None:
         return True
 
     except Exception as exc:
-        log.error("EtsyPurchase %s fulfilment failed: %s", purchase_id, exc)
+        log.error("EtsyPurchase %s fulfillment failed: %s", purchase_id, exc)
         async with async_session() as db:
             await db.execute(
                 update(EtsyPurchase)
@@ -228,7 +228,7 @@ async def _upload_to_etsy(etsy_listing_id: str, file_id: str) -> None:
         )
         seller = seller_result.scalars().first()
         if not seller:
-            raise RuntimeError("No connected Etsy shop found for fulfilment upload")
+            raise RuntimeError("No connected Etsy shop found for fulfillment upload")
 
         creds = await get_etsy_credentials(db)
         access_token = await get_valid_token(seller, creds=creds)

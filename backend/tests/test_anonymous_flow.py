@@ -1,4 +1,4 @@
-"""Tests for the anonymous map builder → push-to-Etsy → fulfilment pipeline.
+"""Tests for the anonymous map builder → push-to-Etsy → fulfillment pipeline.
 
 Covers:
 - BuildDraft CRUD endpoints
