@@ -159,7 +159,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     if is_very_large_area and need_streets:
         log.info(f"Very large area ({bbox_area_deg2:.1f} deg²) — skipping street fetch entirely")
         need_streets = False
-        warnings.append("Street overlay is not available for areas this large. Streets work best with cities and smaller provinces.")
+        warnings.append("Street overlay is not available for areas this large. Try searching for a specific city or town within this region to get a detailed street map.")
     elif is_medium_area and need_streets:
         log.info(f"Medium area ({bbox_area_deg2:.1f} deg²) — fetching major roads only")
 
