@@ -602,6 +602,22 @@ def _generate_print_svg(
     is_street_map = product_type in ("city", "community", "name_sign")
     has_streets = streets_data and (streets_data.get("major_roads") or streets_data.get("minor_roads"))
 
+    # Land shadow — render BEFORE geography so it appears behind the land mass
+    if land_shadow and not full_bleed_map:
+        lines.append('    <g id="land_shadow" opacity="0.12">')
+        shadow_offset = round(min(board_w, board_h) * 0.004, 2)
+        for exterior, holes in polygons:
+            path_d = _coords_to_path(exterior)
+            for hole in holes:
+                path_d += " " + _coords_to_path(hole)
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="#000000" stroke="none" fill-rule="evenodd"'
+                f' transform="translate({shadow_offset},{shadow_offset})"/>'
+            )
+        lines.append("    </g>")
+        layer_count += 1
+
     lines.append('    <g id="geography_fill">')
     if is_street_map:
         # Street maps: fill the boundary polygon with land color to create
@@ -678,22 +694,6 @@ def _generate_print_svg(
         _render_custom_markers(lines, remapped_markers, board_w, board_h, font_size_mm)
         layer_count += 1
         path_count += len(markers)
-
-    # Land shadow — subtle drop shadow behind the land mass for depth
-    if land_shadow and not full_bleed_map:
-        lines.append('    <g id="land_shadow" opacity="0.12">')
-        shadow_offset = round(min(board_w, board_h) * 0.004, 2)
-        for exterior, holes in polygons:
-            path_d = _coords_to_path(exterior)
-            for hole in holes:
-                path_d += " " + _coords_to_path(hole)
-            lines.append(
-                f'      <path d="{path_d}"'
-                f' fill="#000000" stroke="none" fill-rule="evenodd"'
-                f' transform="translate({shadow_offset},{shadow_offset})"/>'
-            )
-        lines.append("    </g>")
-        layer_count += 1
 
     # Vignette edge fade — only if layout enables it
     if layout.get("vignette", False):
