@@ -4,6 +4,8 @@ Fetches elevation contour lines from OpenStreetMap and generates depth/elevation
 bands for premium CNC products.
 """
 
+import time
+
 import httpx
 from shapely.geometry import LineString
 
@@ -64,9 +66,20 @@ async def fetch_contour_lines(
     log.info(f"Fetching {contour_type} contours for bbox: {bbox}")
 
     data = None
+    start = time.monotonic()
+    budget = 25.0  # keep within Railway's request timeout budget
+    _min_ep_timeout = 5.0  # minimum seconds needed for a meaningful Overpass request
     for endpoint in OVERPASS_ENDPOINTS:
+        elapsed = time.monotonic() - start
+        if elapsed >= budget:
+            log.warning(f"Contour fetch budget exhausted ({elapsed:.0f}s)")
+            break
+        remaining = budget - elapsed
+        if remaining < _min_ep_timeout:
+            break
+        ep_timeout = min(20.0, remaining)
         try:
-            async with httpx.AsyncClient(timeout=35.0, follow_redirects=True) as client:
+            async with httpx.AsyncClient(timeout=ep_timeout, follow_redirects=True) as client:
                 resp = await client.post(endpoint, data={"data": query}, headers=REQUEST_HEADERS)
                 resp.raise_for_status()
                 data = resp.json()

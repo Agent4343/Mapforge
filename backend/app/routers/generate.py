@@ -203,11 +203,26 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             return result
         return None
 
+    async def _get_contours():
+        contours = await fetch_contour_lines(
+            bbox=bbox,
+            contour_type=req.contour_type,
+        )
+        if contours:
+            return generate_depth_bands(contours, num_bands=req.num_depth_bands)
+        return None
+
+    # Fetch streets, water, and contours concurrently to minimise total wall time.
+    # Running them in parallel avoids sequential Overpass round-trips that can
+    # push total generation time past Railway's 60-second proxy timeout.
+    contour_data = None
     tasks = []
     if need_streets:
         tasks.append(("streets", _get_streets()))
     if need_water:
         tasks.append(("water", _get_water()))
+    if req.include_contours:
+        tasks.append(("contours", _get_contours()))
 
     if tasks:
         results = await asyncio.gather(
@@ -219,25 +234,16 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                 warnings.append(f"{label.title()} data unavailable — map generated without {label}.")
             elif result is None:
                 log.warning(f"{label.title()} fetch returned empty results — not caching")
-                warnings.append(f"{label.title()} data unavailable — the Overpass API may be busy. Try regenerating in a minute.")
+                if label != "contours":
+                    # Contour data is optional; empty results are normal for many areas.
+                    # Only warn users when streets/water are unavailable.
+                    warnings.append(f"{label.title()} data unavailable — the Overpass API may be busy. Try regenerating in a minute.")
             elif label == "streets":
                 streets_data = result
             elif label == "water":
                 water_data = result
-
-    # Fetch contours for premium products
-    contour_data = None
-    if req.include_contours:
-        try:
-            bounds = geom.bounds
-            contours = await fetch_contour_lines(
-                bbox=(bounds[1], bounds[0], bounds[3], bounds[2]),
-                contour_type=req.contour_type,
-            )
-            if contours:
-                contour_data = generate_depth_bands(contours, num_bands=req.num_depth_bands)
-        except Exception as e:
-            log.warning(f"Contour fetch failed (non-fatal): {e}")
+            elif label == "contours":
+                contour_data = result
 
     # Transform custom markers from lat/lon to board mm coordinates
     board_markers = None
@@ -554,47 +560,50 @@ async def generate_pin(
         include_crop_marks=req.include_crop_marks,
     )
 
-    # Store SVG
+    # Store files and generate derivatives (only for authenticated users — visitors just get a preview)
     board_w, board_h = processed["board_mm"]
-    svg_key = f"svg/pin_{req.lat:.4f}_{req.lon:.4f}_{req.style.value}_{int(board_w)}x{int(board_h)}.svg"
-    try:
-        await store_file(svg_key, result["svg"].encode("utf-8"))
-    except Exception as e:
-        log.error(f"Failed to store pin SVG: {e}")
-        raise HTTPException(status_code=500, detail="Failed to save generated file. Please try again.")
-
-    # Generate thumbnail
+    svg_key = None
     thumbnail_key = None
-    try:
-        png_bytes = generate_thumbnail(result["svg"], background_color=None)
-        thumbnail_key = svg_key.replace("svg/", "thumbnails/").replace(".svg", ".png")
-        await store_file(thumbnail_key, png_bytes, content_type="image/png")
-    except Exception as e:
-        log.warning(f"Thumbnail generation failed (non-fatal): {e}")
-
-    # Generate high-res print PNG from the themed print SVG
     print_png_key = None
-    try:
-        print_bytes = generate_print_image(
-            result["svg"],
-            color_theme=req.color_theme,
-            skip_remap=True,
-            board_size=req.board_size.value,
-            dpi=req.print_dpi,
-        )
-        print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
-        await store_file(print_png_key, print_bytes, content_type="image/png")
-    except Exception as e:
-        log.warning(f"Print PNG generation failed (non-fatal): {e}")
-
-    # Generate Etsy listing image for pin maps
     etsy_key = None
-    try:
-        etsy_bytes = generate_etsy_listing_image(result["svg"])
-        etsy_key = svg_key.replace("svg/", "etsy/").replace(".svg", "_etsy.png")
-        await store_file(etsy_key, etsy_bytes, content_type="image/png")
-    except Exception as e:
-        log.warning(f"Etsy listing image generation failed (non-fatal): {e}")
+
+    if user:
+        svg_key = f"svg/pin_{req.lat:.4f}_{req.lon:.4f}_{req.style.value}_{int(board_w)}x{int(board_h)}.svg"
+        try:
+            await store_file(svg_key, result["svg"].encode("utf-8"))
+        except Exception as e:
+            log.error(f"Failed to store pin SVG: {e}")
+            raise HTTPException(status_code=500, detail="Failed to save generated file. Please try again.")
+
+        # Generate thumbnail
+        try:
+            png_bytes = generate_thumbnail(result["svg"], background_color=None)
+            thumbnail_key = svg_key.replace("svg/", "thumbnails/").replace(".svg", ".png")
+            await store_file(thumbnail_key, png_bytes, content_type="image/png")
+        except Exception as e:
+            log.warning(f"Thumbnail generation failed (non-fatal): {e}")
+
+        # Generate high-res print PNG from the themed print SVG
+        try:
+            print_bytes = generate_print_image(
+                result["svg"],
+                color_theme=req.color_theme,
+                skip_remap=True,
+                board_size=req.board_size.value,
+                dpi=req.print_dpi,
+            )
+            print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
+            await store_file(print_png_key, print_bytes, content_type="image/png")
+        except Exception as e:
+            log.warning(f"Print PNG generation failed (non-fatal): {e}")
+
+        # Generate Etsy listing image for pin maps
+        try:
+            etsy_bytes = generate_etsy_listing_image(result["svg"])
+            etsy_key = svg_key.replace("svg/", "etsy/").replace(".svg", "_etsy.png")
+            await store_file(etsy_key, etsy_bytes, content_type="image/png")
+        except Exception as e:
+            log.warning(f"Etsy listing image generation failed (non-fatal): {e}")
 
     # Calculate print pixel dimensions for the response
     pin_print_pixels = None
