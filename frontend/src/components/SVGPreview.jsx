@@ -97,10 +97,10 @@ export default function SVGPreview({ svgContent, loading, error, colorTheme }) {
 
     let svg = svgContent;
 
-    // Make SVG responsive: replace mm dimensions with CSS-friendly values
-    // The viewBox attribute preserves aspect ratio and internal coordinates
+    // Make SVG responsive: set width to 100% and remove fixed height
+    // so the viewBox attribute controls aspect ratio naturally
     svg = svg.replace(/width="[\d.]+mm"/, 'width="100%"');
-    svg = svg.replace(/height="[\d.]+mm"/, 'height="auto"');
+    svg = svg.replace(/height="[\d.]+mm"/, '');
 
     // In print mode with a backend-generated print SVG, use as-is (already themed)
     if (isPrint && svg.includes('id="mat_border"')) return svg;
