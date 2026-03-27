@@ -98,8 +98,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         w_in, h_in = 16, 20
 
     # Cap DPI for very large print sizes to prevent out-of-memory crashes.
-    # A 24x36" print at 600 DPI = 14400x21600 = 311M pixels → OOM risk.
-    max_pixels = 80_000_000  # ~80 megapixels
+    # 600 DPI works fine up to 18x24" (156M pixels). Only cap 24x36" and larger.
+    max_pixels = 160_000_000  # ~160 megapixels (18x24 at 600 DPI = 156M)
     effective_dpi = req.print_dpi
     pixels_at_requested_dpi = (w_in * effective_dpi) * (h_in * effective_dpi)
     if pixels_at_requested_dpi > max_pixels:
