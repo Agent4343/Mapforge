@@ -163,6 +163,25 @@ export default function CustomizePanel({ config, onChange, user }) {
         </div>
       )}
 
+      {/* Poster Layout */}
+      {isPrint && (
+        <div className="customize-group">
+          <div className="customize-group-label">Poster Layout</div>
+          <div className="control-group">
+            <select
+              value={config.posterLayout || "classic"}
+              onChange={(e) => update("posterLayout", e.target.value)}
+            >
+              <option value="classic">Classic — Map top, text bottom</option>
+              <option value="minimal">Minimal — Edge-to-edge map</option>
+              <option value="editorial">Editorial — Text header above map</option>
+              <option value="bold">Bold — Full bleed with overlay text</option>
+              <option value="vintage">Vintage — Ornate border, serif text</option>
+            </select>
+          </div>
+        </div>
+      )}
+
       {/* Typography & Frame — Print mode */}
       {isPrint && (
         <div className="customize-group">
@@ -178,6 +197,9 @@ export default function CustomizePanel({ config, onChange, user }) {
                 <option value="serif">Classic Serif</option>
                 <option value="script">Script / Romantic</option>
                 <option value="mono">Technical Mono</option>
+                <option value="display">Bold Display</option>
+                <option value="condensed">Condensed Elegant</option>
+                <option value="slab">Vintage Slab</option>
               </select>
             </div>
             <div className="control-group">
@@ -324,6 +346,61 @@ export default function CustomizePanel({ config, onChange, user }) {
           </div>
         )}
       </div>
+
+      {/* Map Elements — professional map features */}
+      {isPrint && (
+        <div className="customize-group">
+          <div className="customize-group-label">Map Elements</div>
+
+          <div className="toggle-row">
+            <label>Compass Rose</label>
+            <label className="toggle-switch">
+              <input
+                type="checkbox"
+                checked={config.showCompass || false}
+                onChange={(e) => update("showCompass", e.target.checked)}
+              />
+              <span className="toggle-slider" />
+            </label>
+          </div>
+
+          <div className="toggle-row">
+            <label>Scale Bar</label>
+            <label className="toggle-switch">
+              <input
+                type="checkbox"
+                checked={config.showScaleBar || false}
+                onChange={(e) => update("showScaleBar", e.target.checked)}
+              />
+              <span className="toggle-slider" />
+            </label>
+          </div>
+
+          <div className="toggle-row">
+            <label>Gradient Water</label>
+            <label className="toggle-switch">
+              <input
+                type="checkbox"
+                checked={config.gradientWater !== false}
+                onChange={(e) => update("gradientWater", e.target.checked)}
+              />
+              <span className="toggle-slider" />
+            </label>
+          </div>
+
+          <div className="toggle-row">
+            <label>Land Shadow</label>
+            <label className="toggle-switch">
+              <input
+                type="checkbox"
+                checked={config.landShadow !== false}
+                onChange={(e) => update("landShadow", e.target.checked)}
+              />
+              <span className="toggle-slider" />
+            </label>
+          </div>
+        </div>
+      )}
 
       {config.includeContours && isPro && (
         <div className="control-row">

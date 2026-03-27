@@ -3,6 +3,9 @@
 Produces print-mode poster SVGs for wall art, Etsy listings, and high-quality
 map prints with colored fills, themed typography, and professional layout.
 
+Supports multiple poster layout styles (classic, minimal, editorial, bold, vintage)
+with professional map elements (compass rose, scale bar, gradient water, land shadows).
+
 Also retains CNC SVG generation for legacy/internal use.
 """
 
@@ -24,6 +27,60 @@ FONT_FAMILIES = {
     "serif": "Georgia, 'Times New Roman', Times, serif",
     "script": "'Brush Script MT', 'Segoe Script', cursive",
     "mono": "'Courier New', Courier, monospace",
+    "display": "Impact, 'Arial Black', Gadget, sans-serif",
+    "condensed": "'Arial Narrow', 'Helvetica Condensed', sans-serif",
+    "slab": "Rockwell, 'Courier New', Courier, serif",
+}
+
+# Layout configurations — each layout defines spacing, text placement, and framing
+POSTER_LAYOUTS = {
+    "classic": {
+        "mat_pct": 0.05,          # White mat border percentage
+        "text_area_pct": 0.16,    # Text area height as fraction of board
+        "text_position": "bottom", # Text below the map
+        "map_frame": True,         # Double-line frame around map
+        "separator": True,         # Line between map and text
+        "vignette": True,          # Radial vignette on map edges
+        "full_bleed_map": False,
+    },
+    "minimal": {
+        "mat_pct": 0.0,
+        "text_area_pct": 0.0,
+        "text_position": "overlay_bottom",  # Text overlaid on map
+        "map_frame": False,
+        "separator": False,
+        "vignette": False,
+        "full_bleed_map": True,
+    },
+    "editorial": {
+        "mat_pct": 0.06,
+        "text_area_pct": 0.18,
+        "text_position": "top",    # Large text header above map
+        "map_frame": True,
+        "separator": True,
+        "vignette": True,
+        "full_bleed_map": False,
+    },
+    "bold": {
+        "mat_pct": 0.0,
+        "text_area_pct": 0.0,
+        "text_position": "overlay_center",  # Bold text centered on map
+        "map_frame": False,
+        "separator": False,
+        "vignette": True,
+        "full_bleed_map": True,
+    },
+    "vintage": {
+        "mat_pct": 0.07,
+        "text_area_pct": 0.14,
+        "text_position": "bottom",
+        "map_frame": True,
+        "separator": True,
+        "vignette": True,
+        "full_bleed_map": False,
+        "ornate_corners": True,
+        "force_font": "serif",
+    },
 }
 
 
@@ -48,12 +105,17 @@ def generate_svg(
     product_type: str = "lake",
     include_bleed: bool = False,
     include_crop_marks: bool = False,
+    poster_layout: str = "classic",
+    show_compass: bool = False,
+    show_scale_bar: bool = False,
+    gradient_water: bool = True,
+    land_shadow: bool = True,
 ) -> dict:
     """Generate an SVG string from processed geometry.
 
     When output_mode="print", produces a poster-style SVG with colored fills,
     themed typography, and white matting — matching the style of premium
-    city map wall art prints.
+    city map wall art prints. Supports multiple poster layouts.
 
     When output_mode="cnc" (default), produces CNC-ready SVG with toolpath
     layers for VCarve Pro.
@@ -81,6 +143,11 @@ def generate_svg(
             product_type=product_type,
             include_bleed=include_bleed,
             include_crop_marks=include_crop_marks,
+            poster_layout=poster_layout,
+            show_compass=show_compass,
+            show_scale_bar=show_scale_bar,
+            gradient_water=gradient_water,
+            land_shadow=land_shadow,
         )
 
     return _generate_cnc_svg(
@@ -309,17 +376,17 @@ def _generate_print_svg(
     product_type: str = "lake",
     include_bleed: bool = False,
     include_crop_marks: bool = False,
+    poster_layout: str = "classic",
+    show_compass: bool = False,
+    show_scale_bar: bool = False,
+    gradient_water: bool = True,
+    land_shadow: bool = True,
 ) -> dict:
     """Generate a poster-style print SVG with themed colors, filled regions,
     and clean typography matching premium city map wall art.
 
-    Layout:
-    - White mat border around the entire poster
-    - Colored map area filling most of the poster
-    - Geography rendered as filled land with themed colors
-    - Streets as fine lines (dark on light themes, light on dark themes)
-    - Water features filled with water color
-    - Text area below map: City Name / Subtitle / Coordinates
+    Supports 5 poster layouts: classic, minimal, editorial, bold, vintage.
+    Professional map elements: compass rose, scale bar, gradient water, land shadow.
     """
     from app.services.thumbnail_generator import get_poster_theme
 
@@ -341,19 +408,51 @@ def _generate_print_svg(
     if contour_data:
         layer_count += 1
         path_count += sum(len(b.get("contours", [])) for b in contour_data)
+    if show_compass:
+        layer_count += 1
+    if show_scale_bar:
+        layer_count += 1
 
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # Poster layout dimensions — clean white mat with maximum map coverage
-    mat_pct = 0.05  # 5% white mat on each side
-    mat_x = round(board_w * mat_pct, 2)
-    mat_y = round(board_h * mat_pct, 2)
-    # Extra space at bottom for text area (title + subtitle + coordinates)
-    text_area_h = round(board_h * 0.16, 2)
-    map_x = mat_x
-    map_y = mat_y
-    map_w = round(board_w - 2 * mat_x, 2)
-    map_h = round(board_h - mat_y - text_area_h - mat_y, 2)
+    # Apply poster layout configuration
+    layout = POSTER_LAYOUTS.get(poster_layout, POSTER_LAYOUTS["classic"])
+    # Vintage layout forces serif font
+    if layout.get("force_font"):
+        font_family = layout["force_font"]
+
+    # Poster layout dimensions from layout config
+    mat_pct = layout["mat_pct"]
+    text_area_pct = layout["text_area_pct"]
+    full_bleed_map = layout.get("full_bleed_map", False)
+
+    if full_bleed_map:
+        # Full-bleed: map fills entire board, text overlaid
+        mat_x = 0.0
+        mat_y = 0.0
+        text_area_h = 0.0
+        map_x = 0.0
+        map_y = 0.0
+        map_w = board_w
+        map_h = board_h
+    elif layout["text_position"] == "top":
+        # Editorial: text header at top, map below
+        mat_x = round(board_w * mat_pct, 2)
+        mat_y = round(board_h * mat_pct, 2)
+        text_area_h = round(board_h * text_area_pct, 2)
+        map_x = mat_x
+        map_y = mat_y + text_area_h
+        map_w = round(board_w - 2 * mat_x, 2)
+        map_h = round(board_h - mat_y - text_area_h - mat_y, 2)
+    else:
+        # Classic/vintage: map on top, text at bottom
+        mat_x = round(board_w * mat_pct, 2)
+        mat_y = round(board_h * mat_pct, 2)
+        text_area_h = round(board_h * text_area_pct, 2)
+        map_x = mat_x
+        map_y = mat_y
+        map_w = round(board_w - 2 * mat_x, 2)
+        map_h = round(board_h - mat_y - text_area_h - mat_y, 2)
 
     # Remap geometry from full-board space to poster's map area.
     # The geometry processor scaled coords to fit (0..board_w, 0..board_h)
@@ -538,9 +637,9 @@ def _generate_print_svg(
     if clip_to_boundary:
         lines.append('    <g clip-path="url(#boundary_clip)">')
 
-    # Water features — filled with water color
+    # Water features — filled with water color (optional gradient)
     if water_data:
-        _render_print_water(lines, water_data, processed, theme)
+        _render_print_water(lines, water_data, processed, theme, gradient=gradient_water)
 
     # Contour bands
     if contour_data:
@@ -580,118 +679,232 @@ def _generate_print_svg(
         layer_count += 1
         path_count += len(markers)
 
-    # Subtle vignette edge fade — softens the map boundary for a premium look
-    lines.append('    <g id="vignette">')
-    vig_id = "vig_grad"
-    lines.append("      <defs>")
-    # Radial gradient: transparent center → semi-transparent map_bg edges
-    lines.append(
-        f'        <radialGradient id="{vig_id}" cx="50%" cy="50%" r="70%">'
-    )
-    lines.append(f'          <stop offset="60%" stop-color="{theme["map_bg"]}" stop-opacity="0"/>')
-    lines.append(f'          <stop offset="100%" stop-color="{theme["map_bg"]}" stop-opacity="0.3"/>')
-    lines.append(f"        </radialGradient>")
-    lines.append("      </defs>")
-    lines.append(
-        f'      <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"'
-        f' fill="url(#{vig_id})"/>'
-    )
-    lines.append("    </g>")
+    # Land shadow — subtle drop shadow behind the land mass for depth
+    if land_shadow and not full_bleed_map:
+        lines.append('    <g id="land_shadow" opacity="0.12">')
+        shadow_offset = round(min(board_w, board_h) * 0.004, 2)
+        for exterior, holes in polygons:
+            path_d = _coords_to_path(exterior)
+            for hole in holes:
+                path_d += " " + _coords_to_path(hole)
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="#000000" stroke="none" fill-rule="evenodd"'
+                f' transform="translate({shadow_offset},{shadow_offset})"/>'
+            )
+        lines.append("    </g>")
+        layer_count += 1
+
+    # Vignette edge fade — only if layout enables it
+    if layout.get("vignette", False):
+        lines.append('    <g id="vignette">')
+        vig_id = "vig_grad"
+        lines.append("      <defs>")
+        lines.append(
+            f'        <radialGradient id="{vig_id}" cx="50%" cy="50%" r="70%">'
+        )
+        lines.append(f'          <stop offset="60%" stop-color="{theme["map_bg"]}" stop-opacity="0"/>')
+        lines.append(f'          <stop offset="100%" stop-color="{theme["map_bg"]}" stop-opacity="0.3"/>')
+        lines.append(f"        </radialGradient>")
+        lines.append("      </defs>")
+        lines.append(
+            f'      <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"'
+            f' fill="url(#{vig_id})"/>'
+        )
+        lines.append("    </g>")
+
+    # Compass rose
+    if show_compass:
+        _add_compass_rose(lines, map_x, map_y, map_w, map_h, theme)
+
+    # Scale bar
+    if show_scale_bar and latlon:
+        _add_scale_bar(lines, map_x, map_y, map_w, map_h, latlon, processed, theme)
 
     lines.append("  </g>")  # close map clip group
     lines.append("")
 
-    # Premium layered border frame around the map area
-    # Outer thin line (the mat border edge)
-    inset = 1.5  # mm inset for the inner accent line
-    lines.append('  <g id="map_frame">')
-    lines.append(
-        f'    <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"'
-        f' fill="none" stroke="{theme["land_stroke"]}" stroke-width="0.6"/>'
-    )
-    # Inner accent line (creates premium double-frame effect)
-    lines.append(
-        f'    <rect x="{round(map_x - inset, 2)}" y="{round(map_y - inset, 2)}"'
-        f' width="{round(map_w + 2 * inset, 2)}" height="{round(map_h + 2 * inset, 2)}"'
-        f' fill="none" stroke="{theme["land_stroke"]}" stroke-width="0.25"'
-        f' opacity="0.5"/>'
-    )
-    lines.append("  </g>")
-    lines.append("")
+    # Map frame and text — depends on layout
+    if layout.get("map_frame", False) and not full_bleed_map:
+        inset = 1.5
+        lines.append('  <g id="map_frame">')
+        lines.append(
+            f'    <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"'
+            f' fill="none" stroke="{theme["land_stroke"]}" stroke-width="0.6"/>'
+        )
+        lines.append(
+            f'    <rect x="{round(map_x - inset, 2)}" y="{round(map_y - inset, 2)}"'
+            f' width="{round(map_w + 2 * inset, 2)}" height="{round(map_h + 2 * inset, 2)}"'
+            f' fill="none" stroke="{theme["land_stroke"]}" stroke-width="0.25"'
+            f' opacity="0.5"/>'
+        )
+        lines.append("  </g>")
+        lines.append("")
 
-    # Thin separator line between map and text area
-    sep_y = round(map_y + map_h + text_area_h * 0.10, 2)
-    sep_margin = round(board_w * 0.25, 2)  # 25% inset from each side
-    lines.append(
-        f'  <line x1="{sep_margin}" y1="{sep_y}" x2="{round(board_w - sep_margin, 2)}" y2="{sep_y}"'
-        f' stroke="{theme["land_stroke"]}" stroke-width="0.3" opacity="0.4"/>'
-    )
-    lines.append("")
+    # Ornate corners for vintage layout
+    if layout.get("ornate_corners", False):
+        _add_ornate_corners(lines, map_x, map_y, map_w, map_h, theme)
+        lines.append("")
 
-    # Text area — below the map, on the white mat
+    # Separator line between map and text area (only for non-overlay layouts)
+    text_position = layout["text_position"]
+    if layout.get("separator", False) and text_area_h > 0:
+        if text_position == "top":
+            sep_y = round(map_y - text_area_h * 0.10, 2)
+        else:
+            sep_y = round(map_y + map_h + text_area_h * 0.10, 2)
+        sep_margin = round(board_w * 0.25, 2)
+        lines.append(
+            f'  <line x1="{sep_margin}" y1="{sep_y}" x2="{round(board_w - sep_margin, 2)}" y2="{sep_y}"'
+            f' stroke="{theme["land_stroke"]}" stroke-width="0.3" opacity="0.4"/>'
+        )
+        lines.append("")
+
+    # --- Text rendering based on layout text_position ---
     text_center_x = round(board_w / 2, 2)
-    # Vertically center text block within the text area (below separator)
-    text_start_y = round(sep_y + text_area_h * 0.22, 2)
 
-    # Print-mode font sizes (larger for poster readability)
+    # Print-mode font sizes
     title_size = round(font_size_mm * 1.6, 2)
     subtitle_size = round(font_size_mm * 0.65, 2)
     coord_size = round(font_size_mm * 0.45, 2)
 
-    # Auto-scale title if it would overflow the board width.
-    # Approximate character width: ~0.65 * font_size for uppercase bold + letter-spacing.
     title_text = location_name.upper()
-    char_width_factor = 0.75  # avg uppercase bold char width as fraction of font size
+    char_width_factor = 0.75
     title_tracking = title_size * 0.2
     est_title_width = len(title_text) * (title_size * char_width_factor + title_tracking)
-    available_width = board_w * 0.85  # 85% of board width (leave margin)
+    available_width = board_w * 0.85
     if est_title_width > available_width and len(title_text) > 0:
         scale = available_width / est_title_width
         title_size = round(title_size * scale, 2)
         title_tracking = title_size * 0.2
 
-    lines.append('  <g id="poster_text">')
+    if text_position in ("overlay_bottom", "overlay_center"):
+        # Overlay text on the map with a semi-transparent backdrop
+        if text_position == "overlay_center":
+            overlay_y = round(board_h * 0.45, 2)
+            title_size = round(font_size_mm * 2.2, 2)
+            title_tracking = title_size * 0.3
+        else:
+            overlay_y = round(board_h * 0.82, 2)
 
-    # City name (large, bold, uppercase, wide tracking)
-    lines.append(
-        f'    <text x="{text_center_x}" y="{round(text_start_y, 2)}"'
-        f' text-anchor="middle" font-family="{ff}"'
-        f' font-size="{title_size}" font-weight="bold"'
-        f' letter-spacing="{round(title_tracking, 2)}"'
-        f' fill="{theme["text_primary"]}">{_escape_xml(title_text)}</text>'
-    )
-
-    next_y = text_start_y + title_size * 1.1
-
-    # Subtitle (state/country or custom tagline)
-    if subtitle:
+        # Semi-transparent text backdrop
+        backdrop_h = round(font_size_mm * 4.5, 2)
+        backdrop_y = round(overlay_y - font_size_mm * 1.5, 2)
+        lines.append('  <g id="poster_text">')
         lines.append(
-            f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
-            f' text-anchor="middle" font-family="{ff}"'
-            f' font-size="{subtitle_size}" font-weight="300"'
-            f' letter-spacing="{round(subtitle_size * 0.25, 2)}"'
-            f' fill="{theme["text_secondary"]}">{_escape_xml(subtitle)}</text>'
+            f'    <rect x="0" y="{backdrop_y}" width="{board_w}" height="{backdrop_h}"'
+            f' fill="{theme["mat"]}" opacity="0.75"/>'
         )
-        next_y += subtitle_size * 1.6
-        layer_count += 1
-
-    # GPS coordinates
-    if show_coordinates and latlon:
-        lat, lon = latlon
-        lat_dir = "N" if lat >= 0 else "S"
-        lon_dir = "W" if lon < 0 else "E"
-        coord_text = f"{abs(lat):.6f}\u00b0 {lat_dir}  /  {abs(lon):.6f}\u00b0 {lon_dir}"
-
+        text_y = overlay_y
         lines.append(
-            f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
+            f'    <text x="{text_center_x}" y="{round(text_y, 2)}"'
             f' text-anchor="middle" font-family="{ff}"'
-            f' font-size="{coord_size}"'
-            f' letter-spacing="{round(coord_size * 0.15, 2)}"'
-            f' fill="{theme["text_secondary"]}">{coord_text}</text>'
+            f' font-size="{title_size}" font-weight="bold"'
+            f' letter-spacing="{round(title_tracking, 2)}"'
+            f' fill="{theme["text_primary"]}">{_escape_xml(title_text)}</text>'
         )
+        next_y = text_y + title_size * 1.1
+        if subtitle:
+            lines.append(
+                f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
+                f' text-anchor="middle" font-family="{ff}"'
+                f' font-size="{subtitle_size}" font-weight="300"'
+                f' letter-spacing="{round(subtitle_size * 0.25, 2)}"'
+                f' fill="{theme["text_secondary"]}">{_escape_xml(subtitle)}</text>'
+            )
+            next_y += subtitle_size * 1.6
+            layer_count += 1
+        if show_coordinates and latlon:
+            lat, lon = latlon
+            lat_dir = "N" if lat >= 0 else "S"
+            lon_dir = "W" if lon < 0 else "E"
+            coord_text = f"{abs(lat):.6f}\u00b0 {lat_dir}  /  {abs(lon):.6f}\u00b0 {lon_dir}"
+            lines.append(
+                f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
+                f' text-anchor="middle" font-family="{ff}"'
+                f' font-size="{coord_size}"'
+                f' letter-spacing="{round(coord_size * 0.15, 2)}"'
+                f' fill="{theme["text_secondary"]}">{coord_text}</text>'
+            )
+        lines.append("  </g>")
+        lines.append("")
+    elif text_position == "top":
+        # Editorial: large text header above the map
+        text_start_y = round(mat_y + text_area_h * 0.45, 2)
+        lines.append('  <g id="poster_text">')
+        lines.append(
+            f'    <text x="{text_center_x}" y="{round(text_start_y, 2)}"'
+            f' text-anchor="middle" font-family="{ff}"'
+            f' font-size="{title_size}" font-weight="bold"'
+            f' letter-spacing="{round(title_tracking, 2)}"'
+            f' fill="{theme["text_primary"]}">{_escape_xml(title_text)}</text>'
+        )
+        next_y = text_start_y + title_size * 1.1
+        if subtitle:
+            lines.append(
+                f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
+                f' text-anchor="middle" font-family="{ff}"'
+                f' font-size="{subtitle_size}" font-weight="300"'
+                f' letter-spacing="{round(subtitle_size * 0.25, 2)}"'
+                f' fill="{theme["text_secondary"]}">{_escape_xml(subtitle)}</text>'
+            )
+            next_y += subtitle_size * 1.6
+            layer_count += 1
+        if show_coordinates and latlon:
+            lat, lon = latlon
+            lat_dir = "N" if lat >= 0 else "S"
+            lon_dir = "W" if lon < 0 else "E"
+            coord_text = f"{abs(lat):.6f}\u00b0 {lat_dir}  /  {abs(lon):.6f}\u00b0 {lon_dir}"
+            lines.append(
+                f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
+                f' text-anchor="middle" font-family="{ff}"'
+                f' font-size="{coord_size}"'
+                f' letter-spacing="{round(coord_size * 0.15, 2)}"'
+                f' fill="{theme["text_secondary"]}">{coord_text}</text>'
+            )
+        lines.append("  </g>")
+        lines.append("")
+    else:
+        # Classic/vintage: text below the map
+        if text_area_h > 0:
+            sep_y_ref = round(map_y + map_h + text_area_h * 0.10, 2)
+            text_start_y = round(sep_y_ref + text_area_h * 0.22, 2)
+        else:
+            text_start_y = round(board_h - font_size_mm * 3, 2)
 
-    lines.append("  </g>")
-    lines.append("")
+        lines.append('  <g id="poster_text">')
+        lines.append(
+            f'    <text x="{text_center_x}" y="{round(text_start_y, 2)}"'
+            f' text-anchor="middle" font-family="{ff}"'
+            f' font-size="{title_size}" font-weight="bold"'
+            f' letter-spacing="{round(title_tracking, 2)}"'
+            f' fill="{theme["text_primary"]}">{_escape_xml(title_text)}</text>'
+        )
+        next_y = text_start_y + title_size * 1.1
+        if subtitle:
+            lines.append(
+                f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
+                f' text-anchor="middle" font-family="{ff}"'
+                f' font-size="{subtitle_size}" font-weight="300"'
+                f' letter-spacing="{round(subtitle_size * 0.25, 2)}"'
+                f' fill="{theme["text_secondary"]}">{_escape_xml(subtitle)}</text>'
+            )
+            next_y += subtitle_size * 1.6
+            layer_count += 1
+        if show_coordinates and latlon:
+            lat, lon = latlon
+            lat_dir = "N" if lat >= 0 else "S"
+            lon_dir = "W" if lon < 0 else "E"
+            coord_text = f"{abs(lat):.6f}\u00b0 {lat_dir}  /  {abs(lon):.6f}\u00b0 {lon_dir}"
+            lines.append(
+                f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
+                f' text-anchor="middle" font-family="{ff}"'
+                f' font-size="{coord_size}"'
+                f' letter-spacing="{round(coord_size * 0.15, 2)}"'
+                f' fill="{theme["text_secondary"]}">{coord_text}</text>'
+            )
+        lines.append("  </g>")
+        lines.append("")
 
     # Close the bleed offset group
     if include_bleed:
@@ -713,6 +926,187 @@ def _generate_print_svg(
         "path_count": path_count,
         "layer_count": layer_count,
     }
+
+
+def _add_compass_rose(
+    lines: list[str],
+    map_x: float,
+    map_y: float,
+    map_w: float,
+    map_h: float,
+    theme: dict,
+) -> None:
+    """Add a compass rose indicator in the top-right corner of the map."""
+    size = min(map_w, map_h) * 0.06
+    cx = round(map_x + map_w - size * 2.5, 2)
+    cy = round(map_y + size * 2.5, 2)
+    text_color = theme.get("text_primary", "#1a1a1a")
+    stroke_color = theme.get("land_stroke", "#333333")
+
+    lines.append(f'    <g id="compass_rose" opacity="0.6">')
+
+    # North arrow (filled triangle pointing up)
+    n_top = round(cy - size, 2)
+    n_left = round(cx - size * 0.2, 2)
+    n_right = round(cx + size * 0.2, 2)
+    lines.append(
+        f'      <path d="M{cx},{n_top} L{n_left},{cy} L{n_right},{cy} Z"'
+        f' fill="{text_color}" stroke="{stroke_color}" stroke-width="0.2"/>'
+    )
+    # South arrow (outline triangle pointing down)
+    s_bottom = round(cy + size, 2)
+    lines.append(
+        f'      <path d="M{cx},{s_bottom} L{n_left},{cy} L{n_right},{cy} Z"'
+        f' fill="none" stroke="{stroke_color}" stroke-width="0.3"/>'
+    )
+    # East/West ticks
+    lines.append(
+        f'      <line x1="{round(cx - size * 0.6, 2)}" y1="{cy}"'
+        f' x2="{round(cx + size * 0.6, 2)}" y2="{cy}"'
+        f' stroke="{stroke_color}" stroke-width="0.3"/>'
+    )
+    # N label
+    label_size = round(size * 0.5, 2)
+    lines.append(
+        f'      <text x="{cx}" y="{round(n_top - size * 0.15, 2)}"'
+        f' text-anchor="middle" font-family="Arial, sans-serif"'
+        f' font-size="{label_size}" font-weight="bold"'
+        f' fill="{text_color}">N</text>'
+    )
+    lines.append("    </g>")
+
+
+def _add_scale_bar(
+    lines: list[str],
+    map_x: float,
+    map_y: float,
+    map_w: float,
+    map_h: float,
+    latlon: tuple[float, float],
+    processed: dict,
+    theme: dict,
+) -> None:
+    """Add a scale bar in the bottom-left corner of the map.
+
+    Calculates real-world distance based on latitude and map scale.
+    """
+    text_color = theme.get("text_primary", "#1a1a1a")
+    stroke_color = theme.get("land_stroke", "#333333")
+
+    # Calculate scale: how many km per mm on the map
+    lat = latlon[0]
+    bounds_mm = processed.get("bounds_mm", (0, 0, map_w, map_h))
+    geo_w = bounds_mm[2] - bounds_mm[0]
+    if geo_w <= 0:
+        return
+
+    transform = processed.get("transform", {})
+    if not transform:
+        return
+
+    # Approximate km span of the map
+    min_x = transform.get("min_x", 0)
+    scale_factor = transform.get("scale", 1)
+    if scale_factor <= 0:
+        return
+
+    # Degrees per mm in the original geometry
+    deg_per_mm = 1.0 / scale_factor
+    # At this latitude, 1 degree longitude = cos(lat) * 111.32 km
+    km_per_deg = math.cos(math.radians(lat)) * 111.32
+    km_per_mm = deg_per_mm * km_per_deg
+
+    # Choose a nice round scale bar length
+    bar_mm_target = map_w * 0.2  # target ~20% of map width
+    bar_km = bar_mm_target * km_per_mm
+
+    # Round to a nice number
+    nice_values = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000]
+    bar_km_nice = nice_values[0]
+    for nv in nice_values:
+        if nv <= bar_km * 1.5:
+            bar_km_nice = nv
+
+    bar_mm = round(bar_km_nice / km_per_mm, 2)
+    if bar_mm < 5 or bar_mm > map_w * 0.4:
+        return  # scale bar wouldn't look right
+
+    # Position: bottom-left of map area
+    bar_x = round(map_x + map_w * 0.05, 2)
+    bar_y = round(map_y + map_h - map_h * 0.05, 2)
+    bar_h = round(min(map_w, map_h) * 0.008, 2)
+    label_size = round(min(map_w, map_h) * 0.025, 2)
+
+    lines.append(f'    <g id="scale_bar" opacity="0.6">')
+
+    # Bar rectangle
+    lines.append(
+        f'      <rect x="{bar_x}" y="{bar_y}" width="{bar_mm}" height="{bar_h}"'
+        f' fill="{text_color}" stroke="{stroke_color}" stroke-width="0.15"/>'
+    )
+    # Half-bar (alternating fill for readability)
+    half_w = round(bar_mm / 2, 2)
+    lines.append(
+        f'      <rect x="{round(bar_x + half_w, 2)}" y="{bar_y}" width="{half_w}" height="{bar_h}"'
+        f' fill="{theme.get("mat", "#ffffff")}" stroke="{stroke_color}" stroke-width="0.15"/>'
+    )
+
+    # Label
+    if bar_km_nice >= 1:
+        label = f"{int(bar_km_nice)} km"
+    else:
+        label = f"{int(bar_km_nice * 1000)} m"
+    lines.append(
+        f'      <text x="{round(bar_x + bar_mm / 2, 2)}" y="{round(bar_y - bar_h * 1.5, 2)}"'
+        f' text-anchor="middle" font-family="Arial, sans-serif"'
+        f' font-size="{label_size}" fill="{text_color}">{label}</text>'
+    )
+    lines.append("    </g>")
+
+
+def _add_ornate_corners(
+    lines: list[str],
+    map_x: float,
+    map_y: float,
+    map_w: float,
+    map_h: float,
+    theme: dict,
+) -> None:
+    """Add decorative ornate corner brackets around the map area for vintage layout."""
+    stroke_color = theme.get("land_stroke", "#333333")
+    c = min(map_w, map_h) * 0.06  # corner size
+    sw = 0.6  # stroke width
+
+    lines.append('  <g id="ornate_corners">')
+    for cx, cy, dx, dy in [
+        (map_x, map_y, 1, 1),
+        (map_x + map_w, map_y, -1, 1),
+        (map_x, map_y + map_h, 1, -1),
+        (map_x + map_w, map_y + map_h, -1, -1),
+    ]:
+        # L-shaped bracket
+        d = (
+            f"M{round(cx + dx * c, 2)},{round(cy, 2)} "
+            f"L{round(cx, 2)},{round(cy, 2)} "
+            f"L{round(cx, 2)},{round(cy + dy * c, 2)}"
+        )
+        lines.append(
+            f'    <path d="{d}" fill="none" stroke="{stroke_color}"'
+            f' stroke-width="{sw}" stroke-linecap="round"/>'
+        )
+        # Inner decorative tick
+        inner_c = c * 0.6
+        inner_offset = c * 0.15
+        d2 = (
+            f"M{round(cx + dx * inner_c + dx * inner_offset, 2)},{round(cy + dy * inner_offset, 2)} "
+            f"L{round(cx + dx * inner_offset, 2)},{round(cy + dy * inner_offset, 2)} "
+            f"L{round(cx + dx * inner_offset, 2)},{round(cy + dy * inner_c + dy * inner_offset, 2)}"
+        )
+        lines.append(
+            f'    <path d="{d2}" fill="none" stroke="{stroke_color}"'
+            f' stroke-width="{round(sw * 0.5, 2)}" stroke-linecap="round" opacity="0.5"/>'
+        )
+    lines.append("  </g>")
 
 
 def _render_crop_marks(
@@ -827,24 +1221,39 @@ def _render_geography(lines: list[str], polygons: list, style: CutStyle):
         lines.append("  </g>")
 
 
-def _render_print_water(lines: list[str], water_data: dict, processed: dict, theme: dict):
+def _render_print_water(lines: list[str], water_data: dict, processed: dict, theme: dict, gradient: bool = True):
     """Render water features with themed poster colors.
 
-    Water bodies are drawn with filled polygons and visible strokes to
-    create clear visual contrast against the land color.
+    When gradient=True, larger water bodies get a radial gradient fill
+    for a subtle depth perception effect.
     """
     transform = processed.get("transform")
 
     lines.append('    <g id="water_features">')
 
-    for coords, water_type, name in water_data.get("water_polygons", []):
+    # If gradient enabled, define gradient in defs
+    if gradient:
+        water_color = theme["water"]
+        water_dark = theme.get("water_stroke", "#5a9aba")
+        lines.append("      <defs>")
+        lines.append(
+            f'        <radialGradient id="water_grad" cx="50%" cy="40%" r="60%">'
+        )
+        lines.append(f'          <stop offset="0%" stop-color="{water_color}"/>')
+        lines.append(f'          <stop offset="100%" stop-color="{water_dark}" stop-opacity="0.6"/>')
+        lines.append("        </radialGradient>")
+        lines.append("      </defs>")
+
+    for i, (coords, water_type, name) in enumerate(water_data.get("water_polygons", [])):
         if len(coords) < 3:
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_path(board_coords)
+        # Use gradient for larger water bodies (>6 points suggests a significant feature)
+        fill = "url(#water_grad)" if gradient and len(coords) > 6 else theme["water"]
         lines.append(
             f'      <path d="{path_d}"'
-            f' fill="{theme["water"]}" stroke="{theme["water_stroke"]}"'
+            f' fill="{fill}" stroke="{theme["water_stroke"]}"'
             f' stroke-width="0.3" stroke-linejoin="round"/>'
         )
 

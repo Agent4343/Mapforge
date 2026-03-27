@@ -291,6 +291,11 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         product_type=req.product_type.value,
         include_bleed=req.include_bleed,
         include_crop_marks=req.include_crop_marks,
+        poster_layout=req.poster_layout,
+        show_compass=req.show_compass,
+        show_scale_bar=req.show_scale_bar,
+        gradient_water=req.gradient_water,
+        land_shadow=req.land_shadow,
     )
 
     # Store files + generate derivatives (only for authenticated users)
@@ -558,6 +563,11 @@ async def generate_pin(
         product_type="name_sign",
         include_bleed=req.include_bleed,
         include_crop_marks=req.include_crop_marks,
+        poster_layout=req.poster_layout,
+        show_compass=req.show_compass,
+        show_scale_bar=req.show_scale_bar,
+        gradient_water=req.gradient_water,
+        land_shadow=req.land_shadow,
     )
 
     # Store files and generate derivatives (only for authenticated users — visitors just get a preview)

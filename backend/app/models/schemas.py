@@ -137,6 +137,9 @@ class FontFamily(str, Enum):
     serif = "serif"       # Georgia/Times — classic elegant
     script = "script"     # Brush Script — romantic/wedding
     mono = "mono"         # Courier — technical/minimal
+    display = "display"   # Impact/Oswald — bold headlines
+    condensed = "condensed"  # Arial Narrow — tight elegant
+    slab = "slab"         # Rockwell/Courier — vintage poster
 
 
 class BorderStyle(str, Enum):
@@ -144,6 +147,14 @@ class BorderStyle(str, Enum):
     thin = "thin"         # Simple thin line
     double = "double"     # Double line frame
     ornate = "ornate"     # Decorative corner frame
+
+
+class PosterLayout(str, Enum):
+    classic = "classic"       # Standard: map top, text bottom, white mat
+    minimal = "minimal"       # Edge-to-edge map, small overlay text
+    editorial = "editorial"   # Large text header above map
+    bold = "bold"             # Full-bleed map with bold overlay text
+    vintage = "vintage"       # Ornate border, serif text, aged look
 
 
 class OutputMode(str, Enum):
@@ -180,8 +191,14 @@ class GenerateRequest(BaseModel):
     num_depth_bands: int = Field(5, ge=2, le=10)
     markers: list[MapMarker] = Field(default_factory=list, max_length=10)
     color_theme: str = "classic"  # classic, modern_dark, rose_gold, midnight, sage, minimal
+    poster_layout: str = "classic"  # classic, minimal, editorial, bold, vintage
     heart_lat: Optional[float] = Field(None, ge=-90, le=90)
     heart_lon: Optional[float] = Field(None, ge=-180, le=180)
+    # Professional map elements
+    show_compass: bool = False
+    show_scale_bar: bool = False
+    gradient_water: bool = True  # Use gradient fills for water bodies
+    land_shadow: bool = True     # Subtle drop shadow on land mass
     # Print production fields
     include_bleed: bool = False
     include_crop_marks: bool = False
@@ -214,6 +231,12 @@ class PinGenerateRequest(BaseModel):
     include_streets: bool = True
     output_mode: str = "print"
     color_theme: str = "classic"
+    poster_layout: str = "classic"
+    # Professional map elements
+    show_compass: bool = False
+    show_scale_bar: bool = False
+    gradient_water: bool = True
+    land_shadow: bool = True
     # Print production fields
     include_bleed: bool = False
     include_crop_marks: bool = False
