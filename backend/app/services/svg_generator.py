@@ -864,44 +864,105 @@ def _render_print_water(lines: list[str], water_data: dict, processed: dict, the
 
 
 def _render_print_streets(lines: list[str], streets_data: dict, processed: dict, theme: dict, product_type: str = "city"):
-    """Render streets with themed poster colors.
+    """Render streets with professional cased road styling.
 
-    Street widths are scaled based on the product type:
-    - Cities: thin, delicate lines (0.5x/0.35x base width)
-    - Provinces: thicker, bolder lines visible at province scale (1.5x/1.0x base)
+    Professional map prints use "cased roads" — each road is drawn twice:
+    1. A wider outer stroke (the "casing") in a dark color
+    2. A narrower inner stroke (the "fill") in a lighter color
+    This creates the classic road map look with clear visual hierarchy.
+
+    At province scale, roads are thicker and only major roads are shown.
+    At city scale, all roads are rendered with fine, delicate lines.
     """
     transform = processed.get("transform")
-
-    # Scale street widths based on map zoom level
     is_province = product_type in ("province",)
-    major_scale = 1.0 if is_province else 0.5
-    minor_scale = 0.6 if is_province else 0.35
+
+    # Theme colors
+    major_color = theme.get("street_major", "#333333")
+    minor_color = theme.get("street_minor", "#666666")
+    # Road fill (inner color) — lighter than the casing for contrast
+    land_color = theme.get("land", "#e8dfd0")
+
+    # Width multipliers for province vs city scale
+    if is_province:
+        # Province: bold, clear highways visible at small scale
+        casing_widths = {
+            "motorway": 2.4, "motorway_link": 1.8,
+            "trunk": 2.0, "trunk_link": 1.5,
+            "primary": 1.6, "primary_link": 1.2,
+            "secondary": 1.2, "secondary_link": 0.9,
+            "tertiary": 0.8, "tertiary_link": 0.6,
+            "residential": 0.4, "unclassified": 0.4,
+        }
+        fill_ratio = 0.55  # inner fill is 55% of casing width
+    else:
+        # City: fine, elegant lines that create a dense grid pattern
+        casing_widths = {
+            "motorway": 0.9, "motorway_link": 0.7,
+            "trunk": 0.8, "trunk_link": 0.6,
+            "primary": 0.7, "primary_link": 0.5,
+            "secondary": 0.5, "secondary_link": 0.4,
+            "tertiary": 0.35, "tertiary_link": 0.25,
+            "residential": 0.2, "unclassified": 0.2,
+        }
+        fill_ratio = 0.5
 
     lines.append('    <g id="streets">')
 
-    # Major roads
-    for coords, road_class, width, name in streets_data.get("major_roads", []):
+    # Collect all road paths grouped by class for proper layering
+    # Draw casings first (bottom layer), then fills (top layer)
+    # This prevents casing from one road covering the fill of another
+    major_paths = []
+    minor_paths = []
+
+    for coords, road_class, _width, name in streets_data.get("major_roads", []):
         if len(coords) < 2:
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
-        sw = round(width * major_scale, 2)
+        cw = casing_widths.get(road_class, 0.5)
+        major_paths.append((path_d, road_class, cw))
+
+    for coords, road_class, _width, name in streets_data.get("minor_roads", []):
+        if len(coords) < 2:
+            continue
+        board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
+        path_d = _coords_to_open_path(board_coords)
+        cw = casing_widths.get(road_class, 0.2)
+        minor_paths.append((path_d, road_class, cw))
+
+    # Layer 1: Minor road casings (bottom)
+    for path_d, road_class, cw in minor_paths:
         lines.append(
             f'      <path d="{path_d}"'
-            f' fill="none" stroke="{theme["street_major"]}" stroke-width="{sw}"'
+            f' fill="none" stroke="{minor_color}" stroke-width="{cw}"'
             f' stroke-linecap="round" stroke-linejoin="round"/>'
         )
 
-    # Minor roads
-    for coords, road_class, width, name in streets_data.get("minor_roads", []):
-        if len(coords) < 2:
-            continue
-        board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
-        path_d = _coords_to_open_path(board_coords)
-        sw = round(width * minor_scale, 2)
+    # Layer 2: Minor road fills
+    for path_d, road_class, cw in minor_paths:
+        fw = round(cw * fill_ratio, 2)
         lines.append(
             f'      <path d="{path_d}"'
-            f' fill="none" stroke="{theme["street_minor"]}" stroke-width="{sw}"'
+            f' fill="none" stroke="{land_color}" stroke-width="{fw}"'
+            f' stroke-linecap="round" stroke-linejoin="round"/>'
+        )
+
+    # Layer 3: Major road casings (on top of minor roads)
+    for path_d, road_class, cw in major_paths:
+        lines.append(
+            f'      <path d="{path_d}"'
+            f' fill="none" stroke="{major_color}" stroke-width="{cw}"'
+            f' stroke-linecap="round" stroke-linejoin="round"/>'
+        )
+
+    # Layer 4: Major road fills (topmost)
+    for path_d, road_class, cw in major_paths:
+        fw = round(cw * fill_ratio, 2)
+        fill_color = "#ffffff" if is_province else land_color
+        lines.append(
+            f'      <path d="{path_d}"'
+            f' fill="none" stroke="{fill_color}" stroke-width="{fw}"'
             f' stroke-linecap="round" stroke-linejoin="round"/>'
         )
 

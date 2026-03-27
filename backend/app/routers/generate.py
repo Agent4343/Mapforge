@@ -145,7 +145,11 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     # Always fetch water for provinces — lakes/rivers give the shape character
     need_water = req.product_type.value in water_types or req.product_type.value == "province"
 
+    # Always fetch major highways for provinces — with cased road styling
+    # they look professional and give the map structure
     is_province = req.product_type.value == "province"
+    if is_province and not need_streets:
+        need_streets = True
 
     bounds = geom.bounds  # minx, miny, maxx, maxy
     bbox = (bounds[1], bounds[0], bounds[3], bounds[2])
