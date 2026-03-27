@@ -39,7 +39,7 @@ const DEFAULT_CONFIG = {
   borderStyle: "none",
   showCoordinates: true,
   includeIslands: true,
-  includeStreets: true,
+  includeStreets: false,
   includeContours: false,
   contourType: "depth",
   numDepthBands: 5,

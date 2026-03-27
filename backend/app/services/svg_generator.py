@@ -453,10 +453,15 @@ def _generate_print_svg(
     lines.append("")
 
     # Layer: map area background
+    # For provinces/lakes, use water color as the background so the ocean
+    # is visible and the land shape has strong contrast. For cities, use
+    # the standard map_bg since streets are the focus.
+    is_coastal_map = product_type in ("province", "lake", "park")
+    map_area_bg = theme["water"] if is_coastal_map else theme["map_bg"]
     lines.append('  <g id="map_area">')
     lines.append(
         f'    <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"'
-        f' fill="{theme["map_bg"]}"/>'
+        f' fill="{map_area_bg}"/>'
     )
     lines.append("  </g>")
     lines.append("")
@@ -513,7 +518,9 @@ def _generate_print_svg(
                 f' stroke-width="0.5" fill-rule="evenodd" stroke-linejoin="round"/>'
             )
     else:
-        # Province/lake/park maps: filled polygon is the main visual
+        # Province/lake/park maps: filled polygon is the main visual.
+        # With water-colored background, the land shape pops beautifully.
+        # Use a clean stroke to define the coastline edge.
         for exterior, holes in polygons:
             path_d = _coords_to_path(exterior)
             for hole in holes:
@@ -521,7 +528,7 @@ def _generate_print_svg(
             lines.append(
                 f'      <path d="{path_d}"'
                 f' fill="{theme["land"]}" stroke="{theme["land_stroke"]}"'
-                f' stroke-width="0.3" fill-rule="evenodd" stroke-linejoin="round"/>'
+                f' stroke-width="0.5" fill-rule="evenodd" stroke-linejoin="round"/>'
             )
     lines.append("    </g>")
 
