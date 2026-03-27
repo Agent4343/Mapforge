@@ -14,9 +14,15 @@ import MarkersPanel from "./components/MarkersPanel.jsx";
 import LandingPage from "./components/LandingPage.jsx";
 import PricingModal from "./components/PricingModal.jsx";
 import PurchasesView from "./components/PurchasesView.jsx";
+import PriceDisplay from "./components/PriceDisplay.jsx";
+import GenerateModal from "./components/CheckoutModal.jsx";
+import OrderStatus from "./components/OrderStatus.jsx";
 import {
-  generateSVG, generatePin, downloadSVG, downloadDXF, downloadThumbnail, downloadPrintPNG,
+  generateSVG, generatePin, downloadSVG, downloadDXF, downloadSTL,
+  downloadThumbnail, downloadPrintPNG,
+  downloadEtsyListing, downloadEtsyPackage, downloadPreview,
   getProfile, logout, getToken, subscribe,
+  redeemCredit,
 } from "./services/api.js";
 
 const DEFAULT_CONFIG = {
@@ -33,7 +39,7 @@ const DEFAULT_CONFIG = {
   borderStyle: "none",
   showCoordinates: true,
   includeIslands: true,
-  includeStreets: true,
+  includeStreets: false,
   includeContours: false,
   contourType: "depth",
   numDepthBands: 5,
@@ -41,6 +47,9 @@ const DEFAULT_CONFIG = {
   colorTheme: "classic",
   heartLat: null,
   heartLon: null,
+  includeBleed: false,
+  includeCropMarks: false,
+  printDPI: 300,
 };
 
 function loadSavedConfig() {
@@ -65,6 +74,32 @@ const COUNTRIES = [
   { code: "", label: "Global" },
 ];
 
+// Toast notification system
+function Toast({ message, type, onDismiss }) {
+  useEffect(() => {
+    const timer = setTimeout(onDismiss, 4000);
+    return () => clearTimeout(timer);
+  }, [onDismiss]);
+
+  return (
+    <div className={`toast toast-${type}`} onClick={onDismiss}>
+      {message}
+    </div>
+  );
+}
+
+function ToastContainer({ toasts, onDismiss }) {
+  return (
+    <div className="toast-container">
+      {toasts.map((t) => (
+        <Toast key={t.id} message={t.message} type={t.type} onDismiss={() => onDismiss(t.id)} />
+      ))}
+    </div>
+  );
+}
+
+let toastId = 0;
+
 export default function App() {
   const [user, setUser] = useState(null);
   const [showAuth, setShowAuth] = useState(false);
@@ -72,6 +107,7 @@ export default function App() {
   const [showPricing, setShowPricing] = useState(false);
   const [showLanding, setShowLanding] = useState(!getToken());
   const [view, setView] = useState("main"); // main, library, marketplace, dashboard
+  const [toasts, setToasts] = useState([]);
 
   const [selectedResult, setSelectedResult] = useState(null);
   const [config, setConfig] = useState(loadSavedConfig);
@@ -84,11 +120,25 @@ export default function App() {
   const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [pinCoords, setPinCoords] = useState(null); // {lat, lon} for name_sign pin drop
   const [markers, setMarkers] = useState([]); // custom markers [{lat, lon, label, icon}]
+  const [showGenerateModal, setShowGenerateModal] = useState(false);
+  const [creditToken, setCreditToken] = useState(null); // design credit token from Etsy purchase
+  const [creditData, setCreditData] = useState(null); // credit info from API
+  const [creditView, setCreditView] = useState(null); // "status" to show order status page
+  const [isEtsyReferral, setIsEtsyReferral] = useState(false);
 
   // Undo/redo state
   const [configHistory, setConfigHistory] = useState([config]);
   const [historyIndex, setHistoryIndex] = useState(0);
   const skipHistory = useRef(false);
+
+  const addToast = useCallback((message, type = "error") => {
+    const id = ++toastId;
+    setToasts((prev) => [...prev.slice(-4), { id, message, type }]);
+  }, []);
+
+  const dismissToast = useCallback((id) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
 
   // Load user profile if token exists; clear stale tokens on failure
   useEffect(() => {
@@ -96,6 +146,74 @@ export default function App() {
       getProfile()
         .then((p) => { if (p) setUser(p); else { logout(); } })
         .catch(() => { logout(); });
+    }
+  }, []);
+
+  // Fetch public config (Etsy shop URL, etc.)
+  const [etsyShopUrl, setEtsyShopUrl] = useState(null);
+  useEffect(() => {
+    fetch(`${import.meta.env.VITE_API_URL || ""}/api/v1/config`)
+      .then((r) => r.json())
+      .then((c) => { if (c.etsy_shop_url) setEtsyShopUrl(c.etsy_shop_url); })
+      .catch(() => {});
+  }, []);
+
+  // Handle URL params: Etsy design credits (?credit=TOKEN) and referrals (?ref=etsy)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+
+    // Etsy purchase credit — customer bought on Etsy, has a design token
+    const creditParam = params.get("credit");
+    if (creditParam) {
+      setCreditToken(creditParam);
+      setShowLanding(false);
+      setIsEtsyReferral(true);
+      window.history.replaceState({}, "", window.location.pathname);
+      // Validate the token
+      redeemCredit(creditParam)
+        .then((data) => {
+          setCreditData(data);
+          // If already completed, show the download page
+          if (data.status === "completed" || data.status === "generating") {
+            setCreditView("status");
+          }
+          // Pre-fill product type from the Etsy listing
+          if (data.product_type) {
+            setConfig((prev) => ({ ...prev, productType: data.product_type }));
+          }
+        })
+        .catch(() => {
+          setCreditToken(null);
+          setCreditData(null);
+        });
+      return;
+    }
+
+    // Etsy OAuth callback success
+    if (params.get("etsy_connected") === "1") {
+      addToast("Etsy shop connected! Generate a map and publish it to your shop.", "success");
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+
+    // Etsy OAuth callback error
+    const etsyError = params.get("etsy_error");
+    if (etsyError) {
+      addToast(`Etsy connection failed: ${etsyError}. Please try again.`, "error");
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+
+    // Etsy referral (no credit yet — just browsing from listing description)
+    if (params.get("ref") === "etsy") {
+      setIsEtsyReferral(true);
+      setShowLanding(false);
+      const updates = {};
+      if (params.get("product_type")) updates.productType = params.get("product_type");
+      if (params.get("board_size")) updates.boardSize = params.get("board_size");
+      if (params.get("color_theme")) updates.colorTheme = params.get("color_theme");
+      if (Object.keys(updates).length > 0) {
+        setConfig((prev) => ({ ...prev, ...updates }));
+      }
+      window.history.replaceState({}, "", window.location.pathname);
     }
   }, []);
 
@@ -164,7 +282,7 @@ export default function App() {
         window.location.href = data.checkout_url;
       }
     } catch (err) {
-      alert(err.message);
+      addToast(err.message, "error");
     }
   }
 
@@ -213,15 +331,18 @@ export default function App() {
           label: config.text || "My Place",
           subtitle: config.subtitle || "",
           board_size: config.boardSize,
-          style: config.outputMode === "print" ? "filled" : config.style,
-          export_format: config.outputMode === "print" ? "svg" : config.exportFormat,
+          style: "filled",
+          export_format: "svg",
           show_coordinates: config.showCoordinates,
           font_size_mm: config.fontSize,
           font_family: config.fontFamily || "sans",
           border_style: config.borderStyle || "none",
           include_streets: config.includeStreets,
-          output_mode: config.outputMode || "cnc",
+          output_mode: "print",
           color_theme: config.colorTheme || "classic",
+          include_bleed: config.includeBleed || false,
+          include_crop_marks: config.includeCropMarks || false,
+          print_dpi: config.printDPI || 300,
         };
         if (config.boardSize === "custom") {
           pinParams.board_width_inches = config.customWidth || 16;
@@ -244,9 +365,9 @@ export default function App() {
           osm_type: selectedResult.osm_type,
           product_type: config.productType,
           board_size: config.boardSize,
-          style: config.outputMode === "print" ? "filled" : config.style,
-          export_format: config.outputMode === "print" ? "svg" : config.exportFormat,
-          output_mode: config.outputMode || "cnc",
+          style: "filled",
+          export_format: "svg",
+          output_mode: "print",
           text: config.text,
           subtitle: config.subtitle || "",
           show_coordinates: config.showCoordinates,
@@ -264,6 +385,9 @@ export default function App() {
           color_theme: config.colorTheme || "classic",
           heart_lat: config.heartLat || undefined,
           heart_lon: config.heartLon || undefined,
+          include_bleed: config.includeBleed || false,
+          include_crop_marks: config.includeCropMarks || false,
+          print_dpi: config.printDPI || 300,
         };
         if (config.boardSize === "custom") {
           params.board_width_inches = config.customWidth || 16;
@@ -278,9 +402,7 @@ export default function App() {
       // Quality/generation warnings
       const allWarnings = [...(data.warnings || [])];
       if (data.node_count < 20) {
-        allWarnings.push("Low detail: This location has very few data points. The SVG may appear rough or oversimplified.");
-      } else if (data.node_count > 50000) {
-        allWarnings.push("High complexity: This file has many nodes and may be slow to process on some CNC controllers. Consider reducing detail.");
+        allWarnings.push("Low detail: This location has very few data points. The map may appear rough or oversimplified.");
       }
       setQualityWarning(allWarnings.length > 0 ? allWarnings.join(" ") : null);
     } catch (err) {
@@ -292,21 +414,9 @@ export default function App() {
 
   const handleDownload = useCallback(async () => {
     if (!result) return;
-    // Always fetch CNC SVG from server — the in-memory svgContent may be
-    // the print/poster SVG (colored fills, mat borders) which isn't VCarve-ready.
     try {
       const blob = await downloadSVG(result.file_id);
       _triggerDownload(blob, config.text, "svg");
-    } catch (err) {
-      setError(err.message);
-    }
-  }, [result, config.text]);
-
-  const handleDownloadDXF = useCallback(async () => {
-    if (!result) return;
-    try {
-      const blob = await downloadDXF(result.file_id);
-      _triggerDownload(blob, config.text, "dxf");
     } catch (err) {
       setError(err.message);
     }
@@ -332,6 +442,56 @@ export default function App() {
     }
   }, [result, config.text]);
 
+  const handleDownloadDXF = useCallback(async () => {
+    if (!result) return;
+    try {
+      const blob = await downloadDXF(result.file_id);
+      _triggerDownload(blob, config.text + "_cnc", "dxf");
+    } catch (err) {
+      setError(err.message);
+    }
+  }, [result, config.text]);
+
+  const handleDownloadSTL = useCallback(async () => {
+    if (!result) return;
+    try {
+      const blob = await downloadSTL(result.file_id);
+      _triggerDownload(blob, config.text + "_3d", "stl");
+    } catch (err) {
+      setError(err.message);
+    }
+  }, [result, config.text]);
+
+  const handleDownloadEtsyListing = useCallback(async () => {
+    if (!result) return;
+    try {
+      const blob = await downloadEtsyListing(result.file_id);
+      _triggerDownload(blob, config.text + "_etsy_listing", "png");
+    } catch (err) {
+      setError(err.message);
+    }
+  }, [result, config.text]);
+
+  const handleDownloadEtsyPackage = useCallback(async () => {
+    if (!result) return;
+    try {
+      const blob = await downloadEtsyPackage(result.file_id);
+      _triggerDownload(blob, config.text + "_etsy_package", "zip");
+    } catch (err) {
+      setError(err.message);
+    }
+  }, [result, config.text]);
+
+  const handleDownloadPreview = useCallback(async () => {
+    if (!result) return;
+    try {
+      const blob = await downloadPreview(result.file_id);
+      _triggerDownload(blob, config.text + "_preview", "png");
+    } catch (err) {
+      setError(err.message);
+    }
+  }, [result, config.text]);
+
   function _triggerDownload(blob, name, ext) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -343,8 +503,30 @@ export default function App() {
     URL.revokeObjectURL(url);
   }
 
-  // Landing page for new visitors
-  if (showLanding && !user) {
+  // Order status page (after generation started or already completed)
+  if (creditView === "status" && creditToken) {
+    return (
+      <div className="app">
+        <header className="header">
+          <div className="header-brand">
+            <div>
+              <h1>Map<span>Forge</span></h1>
+              <div className="subtitle">Custom Map Art</div>
+            </div>
+          </div>
+        </header>
+        <div className="order-status-page">
+          <OrderStatus
+            creditToken={creditToken}
+            onBack={() => { setCreditView(null); }}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // Landing page for new visitors (unless they came from Etsy)
+  if (showLanding && !user && !isEtsyReferral) {
     return (
       <>
         <LandingPage
@@ -372,11 +554,7 @@ export default function App() {
         <div className="header-brand">
           <div>
             <h1>Map<span>Forge</span></h1>
-            <div className="subtitle">
-              {config.outputMode === "print"
-                ? "Custom Street Map Prints for Etsy & Wall Art"
-                : "Geographic SVG Generator for CNC Routing"}
-            </div>
+            <div className="subtitle">Custom Map Art — Design Yours</div>
           </div>
         </div>
         <nav className="header-nav">
@@ -391,11 +569,11 @@ export default function App() {
               <option key={c.code} value={c.code}>{c.label}</option>
             ))}
           </select>
-          <button className="nav-btn" onClick={() => setShowPricing(true)}>Pricing</button>
-          <button className="nav-btn" onClick={() => setView("marketplace")}>Marketplace</button>
-          {user && <button className="nav-btn" onClick={() => setView("library")}>Library</button>}
-          {user && <button className="nav-btn" onClick={() => setView("purchases")}>Purchases</button>}
-          {user && (user.tier === "maker" || user.tier === "pro" || user.tier === "admin") && (
+          {user?.tier === "admin" && <button className="nav-btn" onClick={() => setShowPricing(true)}>Pricing</button>}
+          {user?.tier === "admin" && <button className="nav-btn" onClick={() => setView("marketplace")}>Marketplace</button>}
+          {user?.tier === "admin" && <button className="nav-btn" onClick={() => setView("library")}>Library</button>}
+          {user?.tier === "admin" && <button className="nav-btn" onClick={() => setView("purchases")}>Purchases</button>}
+          {user?.tier === "admin" && (
             <button className="nav-btn" onClick={() => setView("dashboard")}>Seller</button>
           )}
           {user && (user.tier === "pro" || user.tier === "admin") && (
@@ -528,17 +706,48 @@ export default function App() {
             </div>
           )}
 
+          {/* Etsy credit banner — show when customer has a valid design credit */}
+          {creditToken && creditData && creditData.status === "unused" && (
+            <div className="credit-banner">
+              <div className="credit-banner-text">
+                Etsy purchase confirmed — design your custom map below, then click Generate.
+              </div>
+            </div>
+          )}
+
+          {/* Generate button for Etsy customers with a credit */}
+          {creditToken && creditData && creditData.status === "unused" &&
+           (!!selectedResult || (config.productType === "name_sign" && !!pinCoords)) && (
+            <button
+              className="btn btn-primary btn-full checkout-cta"
+              onClick={() => setShowGenerateModal(true)}
+              style={{ marginBottom: "12px", fontSize: "16px", padding: "14px" }}
+            >
+              Generate My Map — Included with Etsy Purchase
+            </button>
+          )}
+
+          {/* Price display for browsing customers (no credit yet) */}
+          {!creditToken && (
+            <PriceDisplay config={config} markers={markers} />
+          )}
+
           <ExportPanel
             result={result}
             onGenerate={handleGenerate}
             onDownload={handleDownload}
             onDownloadDXF={handleDownloadDXF}
+            onDownloadSTL={handleDownloadSTL}
             onDownloadThumbnail={handleDownloadThumbnail}
             onDownloadPrintPNG={handleDownloadPrintPNG}
+            onDownloadEtsyListing={handleDownloadEtsyListing}
+            onDownloadEtsyPackage={handleDownloadEtsyPackage}
+            onDownloadPreview={handleDownloadPreview}
             canGenerate={!!selectedResult || (config.productType === "name_sign" && !!pinCoords)}
             generating={generating}
             user={user}
-            outputMode={config.outputMode}
+            printDPI={config.printDPI}
+            etsyShopUrl={etsyShopUrl}
           />
         </div>
         <div className="panel-right">
@@ -546,7 +755,6 @@ export default function App() {
             svgContent={svgContent}
             loading={generating}
             error={error}
-            outputMode={config.outputMode}
             colorTheme={config.colorTheme}
           />
         </div>
@@ -586,6 +794,21 @@ export default function App() {
       {showAuth && <AuthModal onAuth={handleAuth} onClose={() => setShowAuth(false)} />}
       {showBatch && <BatchPanel config={config} onClose={() => setShowBatch(false)} />}
       {showPricing && <PricingModal user={user} onClose={() => setShowPricing(false)} onSubscribe={handleSubscribe} />}
+      {showGenerateModal && creditToken && (
+        <GenerateModal
+          config={config}
+          selectedResult={selectedResult}
+          pinCoords={pinCoords}
+          markers={markers}
+          creditToken={creditToken}
+          onClose={() => setShowGenerateModal(false)}
+          onGenerating={() => {
+            setShowGenerateModal(false);
+            setCreditView("status");
+          }}
+        />
+      )}
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }

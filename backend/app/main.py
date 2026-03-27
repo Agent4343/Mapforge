@@ -15,7 +15,7 @@ from slowapi.errors import RateLimitExceeded
 from app.config import settings
 from app.database import init_db
 from app.logging_config import log
-from app.routers import admin, auth, generate, library, marketplace, search, webhooks
+from app.routers import admin, auth, etsy, generate, library, marketplace, orders, search, webhooks
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
@@ -87,6 +87,10 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    if os.environ.get("RAILWAY_PUBLIC_DOMAIN"):
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
 
 # API Routers
@@ -96,7 +100,18 @@ app.include_router(search.router)
 app.include_router(generate.router)
 app.include_router(library.router)
 app.include_router(marketplace.router)
+app.include_router(etsy.router)
+app.include_router(orders.router)
 app.include_router(webhooks.router)
+
+
+@app.get("/api/v1/config")
+async def get_public_config():
+    """Public config for the frontend (no auth required)."""
+    from app.config import settings
+    return {
+        "etsy_shop_url": settings.ETSY_SHOP_URL or None,
+    }
 
 
 @app.get("/health")

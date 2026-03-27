@@ -9,7 +9,15 @@ from shapely.geometry import LineString
 
 from app.logging_config import log
 
-OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+OVERPASS_ENDPOINTS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.openstreetmap.fr/api/interpreter",
+]
+
+REQUEST_HEADERS = {
+    "User-Agent": "MapForgeCNC/1.0 (https://mapforge-production.up.railway.app; mapforge map generator)",
+}
 
 
 async def fetch_contour_lines(
@@ -55,13 +63,21 @@ async def fetch_contour_lines(
 
     log.info(f"Fetching {contour_type} contours for bbox: {bbox}")
 
-    try:
-        async with httpx.AsyncClient(timeout=35.0) as client:
-            resp = await client.post(OVERPASS_URL, data={"data": query})
-            resp.raise_for_status()
-            data = resp.json()
-    except (httpx.HTTPError, httpx.ProxyError) as e:
-        log.warning(f"Overpass contour request failed: {e}")
+    data = None
+    for endpoint in OVERPASS_ENDPOINTS:
+        try:
+            async with httpx.AsyncClient(timeout=35.0, follow_redirects=True) as client:
+                resp = await client.post(endpoint, data={"data": query}, headers=REQUEST_HEADERS)
+                resp.raise_for_status()
+                data = resp.json()
+            if data.get("elements"):
+                break
+            log.warning(f"Overpass contour: empty from {endpoint}")
+            data = None
+        except Exception as e:
+            log.warning(f"Overpass contour request to {endpoint} failed: {e}")
+            data = None
+    if data is None:
         return []
 
     elements = data.get("elements", [])

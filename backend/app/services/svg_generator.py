@@ -1,14 +1,9 @@
-"""CNC-optimized SVG generation engine.
+"""Print/poster SVG generation engine for MapForge.
 
-Produces SVG files conforming to the MapForge CNC output spec:
-- Units in mm, explicit mm on width/height
-- M/L/Z path commands only (no curves)
-- Organized layer structure mapping to VCarve toolpaths
-- All paths closed (Z command)
-- Max 2 decimal places
-- CNC metadata in XML comments
+Produces print-mode poster SVGs for wall art, Etsy listings, and high-quality
+map prints with colored fills, themed typography, and professional layout.
 
-Also produces print-mode poster SVGs for wall art when output_mode="print".
+Also retains CNC SVG generation for legacy/internal use.
 """
 
 import math
@@ -16,6 +11,12 @@ from datetime import datetime, timezone
 
 from app.models.schemas import CutStyle
 from app.services.geometry_processor import transform_wgs84_to_board
+
+
+# Print production constants — bleed and crop marks for professional printing
+BLEED_MM = 3.0        # Standard bleed margin in mm
+CROP_MARK_LENGTH = 5.0  # Length of crop mark lines in mm
+CROP_MARK_OFFSET = 1.5  # Gap between trim edge and crop mark start
 
 
 FONT_FAMILIES = {
@@ -45,6 +46,8 @@ def generate_svg(
     output_mode: str = "cnc",
     color_theme: str = "classic",
     product_type: str = "lake",
+    include_bleed: bool = False,
+    include_crop_marks: bool = False,
 ) -> dict:
     """Generate an SVG string from processed geometry.
 
@@ -76,6 +79,8 @@ def generate_svg(
             heart_location=heart_location,
             color_theme=color_theme,
             product_type=product_type,
+            include_bleed=include_bleed,
+            include_crop_marks=include_crop_marks,
         )
 
     return _generate_cnc_svg(
@@ -302,6 +307,8 @@ def _generate_print_svg(
     heart_location: tuple[float, float] | None = None,
     color_theme: str = "classic",
     product_type: str = "lake",
+    include_bleed: bool = False,
+    include_crop_marks: bool = False,
 ) -> dict:
     """Generate a poster-style print SVG with themed colors, filled regions,
     and clean typography matching premium city map wall art.
@@ -341,8 +348,8 @@ def _generate_print_svg(
     mat_pct = 0.05  # 5% white mat on each side
     mat_x = round(board_w * mat_pct, 2)
     mat_y = round(board_h * mat_pct, 2)
-    # Extra space at bottom for text area
-    text_area_h = round(board_h * 0.12, 2)
+    # Extra space at bottom for text area (title + subtitle + coordinates)
+    text_area_h = round(board_h * 0.16, 2)
     map_x = mat_x
     map_y = mat_y
     map_w = round(board_w - 2 * mat_x, 2)
@@ -406,20 +413,35 @@ def _generate_print_svg(
     # Resolve font family
     ff = FONT_FAMILIES.get(font_family, FONT_FAMILIES["sans"])
 
+    # Calculate bleed dimensions
+    bleed = BLEED_MM if include_bleed else 0.0
+    svg_w = board_w + 2 * bleed
+    svg_h = board_h + 2 * bleed
+
     lines = []
     lines.append('<?xml version="1.0" encoding="UTF-8"?>')
-    lines.append(
+    svg_attrs = (
         f'<svg xmlns="http://www.w3.org/2000/svg"'
-        f' width="{board_w}mm" height="{board_h}mm"'
-        f' viewBox="0 0 {board_w} {board_h}">'
+        f' width="{svg_w}mm" height="{svg_h}mm"'
+        f' viewBox="0 0 {svg_w} {svg_h}"'
     )
+    if include_bleed:
+        svg_attrs += ' color-profile="sRGB"'
+    svg_attrs += '>'
+    lines.append(svg_attrs)
 
     # Metadata
     lines.append(f"  <!-- MapForge Print Poster v1.0 | Theme: {color_theme} -->")
     lines.append(f"  <!-- Location: {_escape_xml(location_name)} -->")
     lines.append("  <!-- Geographic data: © OpenStreetMap contributors (ODbL) -->")
+    if include_bleed:
+        lines.append(f"  <!-- Bleed: {BLEED_MM}mm on all sides -->")
     lines.append(f"  <!-- Generated: {timestamp} -->")
     lines.append("")
+
+    # When bleed is active, offset all content by the bleed margin
+    if include_bleed:
+        lines.append(f'  <g transform="translate({bleed}, {bleed})">')
 
     # Layer: white mat background (entire poster)
     lines.append('  <g id="poster_background">')
@@ -431,10 +453,15 @@ def _generate_print_svg(
     lines.append("")
 
     # Layer: map area background
+    # For provinces/lakes, use water color as the background so the ocean
+    # is visible and the land shape has strong contrast. For cities, use
+    # the standard map_bg since streets are the focus.
+    is_coastal_map = product_type in ("province", "lake", "park")
+    map_area_bg = theme["water"] if is_coastal_map else theme["map_bg"]
     lines.append('  <g id="map_area">')
     lines.append(
         f'    <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"'
-        f' fill="{theme["map_bg"]}"/>'
+        f' fill="{map_area_bg}"/>'
     )
     lines.append("  </g>")
     lines.append("")
@@ -446,6 +473,21 @@ def _generate_print_svg(
         f'<rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"/>'
         f"</clipPath>"
     )
+
+    # Clip path using the city boundary polygon — clips streets/water
+    # to the actual geographic boundary so nothing bleeds outside
+    boundary_paths = []
+    for exterior, holes in polygons:
+        path_d = _coords_to_path(exterior)
+        for hole in holes:
+            path_d += " " + _coords_to_path(hole)
+        boundary_paths.append(path_d)
+    if boundary_paths:
+        lines.append('    <clipPath id="boundary_clip">')
+        for bp in boundary_paths:
+            lines.append(f'      <path d="{bp}" fill-rule="evenodd"/>')
+        lines.append("    </clipPath>")
+
     lines.append("  </defs>")
     lines.append("")
 
@@ -459,6 +501,7 @@ def _generate_print_svg(
     # For lake/province/park maps, the filled polygon IS the visual —
     # the shape of the lake or province is the main content.
     is_street_map = product_type in ("city", "community", "name_sign")
+    has_streets = streets_data and (streets_data.get("major_roads") or streets_data.get("minor_roads"))
 
     lines.append('    <g id="geography_fill">')
     if is_street_map:
@@ -475,7 +518,9 @@ def _generate_print_svg(
                 f' stroke-width="0.5" fill-rule="evenodd" stroke-linejoin="round"/>'
             )
     else:
-        # Lake/province/park maps: filled polygon is the main visual
+        # Province/lake/park maps: filled polygon is the main visual.
+        # With water-colored background, the land shape pops beautifully.
+        # Use a clean stroke to define the coastline edge.
         for exterior, holes in polygons:
             path_d = _coords_to_path(exterior)
             for hole in holes:
@@ -483,9 +528,15 @@ def _generate_print_svg(
             lines.append(
                 f'      <path d="{path_d}"'
                 f' fill="{theme["land"]}" stroke="{theme["land_stroke"]}"'
-                f' stroke-width="0.3" fill-rule="evenodd" stroke-linejoin="round"/>'
+                f' stroke-width="0.5" fill-rule="evenodd" stroke-linejoin="round"/>'
             )
     lines.append("    </g>")
+
+    # Clip streets and water to the boundary polygon so they don't bleed
+    # outside the geographic area (applies to cities AND provinces with streets)
+    clip_to_boundary = boundary_paths and (is_street_map or (streets_data and (streets_data.get("major_roads") or streets_data.get("minor_roads"))))
+    if clip_to_boundary:
+        lines.append('    <g clip-path="url(#boundary_clip)">')
 
     # Water features — filled with water color
     if water_data:
@@ -495,9 +546,12 @@ def _generate_print_svg(
     if contour_data:
         _render_contour_bands(lines, contour_data, processed)
 
-    # Streets — the hero visual for city maps
+    # Streets
     if streets_data:
-        _render_print_streets(lines, streets_data, processed, theme)
+        _render_print_streets(lines, streets_data, processed, theme, product_type=product_type)
+
+    if clip_to_boundary:
+        lines.append("    </g>")  # close boundary_clip
 
     # Markers — remap coordinates from board space to poster map space
     def _remap_point(x, y):
@@ -566,7 +620,7 @@ def _generate_print_svg(
     lines.append("")
 
     # Thin separator line between map and text area
-    sep_y = round(map_y + map_h + text_area_h * 0.18, 2)
+    sep_y = round(map_y + map_h + text_area_h * 0.10, 2)
     sep_margin = round(board_w * 0.25, 2)  # 25% inset from each side
     lines.append(
         f'  <line x1="{sep_margin}" y1="{sep_y}" x2="{round(board_w - sep_margin, 2)}" y2="{sep_y}"'
@@ -577,12 +631,24 @@ def _generate_print_svg(
     # Text area — below the map, on the white mat
     text_center_x = round(board_w / 2, 2)
     # Vertically center text block within the text area (below separator)
-    text_start_y = round(sep_y + text_area_h * 0.32, 2)
+    text_start_y = round(sep_y + text_area_h * 0.22, 2)
 
     # Print-mode font sizes (larger for poster readability)
     title_size = round(font_size_mm * 1.6, 2)
     subtitle_size = round(font_size_mm * 0.65, 2)
     coord_size = round(font_size_mm * 0.45, 2)
+
+    # Auto-scale title if it would overflow the board width.
+    # Approximate character width: ~0.65 * font_size for uppercase bold + letter-spacing.
+    title_text = location_name.upper()
+    char_width_factor = 0.75  # avg uppercase bold char width as fraction of font size
+    title_tracking = title_size * 0.2
+    est_title_width = len(title_text) * (title_size * char_width_factor + title_tracking)
+    available_width = board_w * 0.85  # 85% of board width (leave margin)
+    if est_title_width > available_width and len(title_text) > 0:
+        scale = available_width / est_title_width
+        title_size = round(title_size * scale, 2)
+        title_tracking = title_size * 0.2
 
     lines.append('  <g id="poster_text">')
 
@@ -591,8 +657,8 @@ def _generate_print_svg(
         f'    <text x="{text_center_x}" y="{round(text_start_y, 2)}"'
         f' text-anchor="middle" font-family="{ff}"'
         f' font-size="{title_size}" font-weight="bold"'
-        f' letter-spacing="{round(title_size * 0.2, 2)}"'
-        f' fill="{theme["text_primary"]}">{_escape_xml(location_name.upper())}</text>'
+        f' letter-spacing="{round(title_tracking, 2)}"'
+        f' fill="{theme["text_primary"]}">{_escape_xml(title_text)}</text>'
     )
 
     next_y = text_start_y + title_size * 1.1
@@ -626,6 +692,17 @@ def _generate_print_svg(
 
     lines.append("  </g>")
     lines.append("")
+
+    # Close the bleed offset group
+    if include_bleed:
+        lines.append("  </g>")  # close bleed translate group
+        lines.append("")
+
+    # Render crop marks outside the bleed group (in full SVG coordinate space)
+    if include_crop_marks:
+        _render_crop_marks(lines, board_w, board_h, bleed)
+        lines.append("")
+
     lines.append("</svg>")
 
     svg_str = "\n".join(lines)
@@ -636,6 +713,60 @@ def _generate_print_svg(
         "path_count": path_count,
         "layer_count": layer_count,
     }
+
+
+def _render_crop_marks(
+    lines: list[str],
+    board_w: float,
+    board_h: float,
+    bleed: float,
+) -> None:
+    """Render crop marks (trim guides) at the four corners of the print area.
+
+    Crop marks are short lines placed just outside the bleed area to indicate
+    where the paper should be trimmed after printing. Each corner gets two
+    perpendicular lines (horizontal and vertical).
+
+    Args:
+        lines: SVG lines list to append to.
+        board_w: Board width in mm (trim size).
+        board_h: Board height in mm (trim size).
+        bleed: Bleed margin in mm.
+    """
+    offset = CROP_MARK_OFFSET
+    length = CROP_MARK_LENGTH
+
+    lines.append('  <g id="crop_marks" stroke="#000000" stroke-width="0.25">')
+
+    # The trim edges are at (bleed, bleed) to (bleed+board_w, bleed+board_h)
+    trim_left = bleed
+    trim_top = bleed
+    trim_right = bleed + board_w
+    trim_bottom = bleed + board_h
+
+    corners = [
+        # (corner_x, corner_y, h_dir, v_dir)
+        (trim_left, trim_top, -1, -1),       # top-left
+        (trim_right, trim_top, 1, -1),        # top-right
+        (trim_left, trim_bottom, -1, 1),      # bottom-left
+        (trim_right, trim_bottom, 1, 1),      # bottom-right
+    ]
+
+    for cx, cy, hd, vd in corners:
+        # Horizontal crop mark
+        h_start = round(cx + hd * offset, 2)
+        h_end = round(cx + hd * (offset + length), 2)
+        lines.append(
+            f'    <line x1="{h_start}" y1="{cy}" x2="{h_end}" y2="{cy}"/>'
+        )
+        # Vertical crop mark
+        v_start = round(cy + vd * offset, 2)
+        v_end = round(cy + vd * (offset + length), 2)
+        lines.append(
+            f'    <line x1="{cx}" y1="{v_start}" x2="{cx}" y2="{v_end}"/>'
+        )
+
+    lines.append("  </g>")
 
 
 def _render_geography(lines: list[str], polygons: list, style: CutStyle):
@@ -722,7 +853,7 @@ def _render_print_water(lines: list[str], water_data: dict, processed: dict, the
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
-        width = 1.5 if water_type in ("river", "coastline") else 0.7
+        width = 0.6 if water_type in ("river", "coastline") else 0.25
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="none" stroke="{theme["water_stroke"]}" stroke-width="{width}"'
@@ -732,41 +863,106 @@ def _render_print_water(lines: list[str], water_data: dict, processed: dict, the
     lines.append("    </g>")
 
 
-def _render_print_streets(lines: list[str], streets_data: dict, processed: dict, theme: dict):
-    """Render streets with themed poster colors.
+def _render_print_streets(lines: list[str], streets_data: dict, processed: dict, theme: dict, product_type: str = "city"):
+    """Render streets with professional cased road styling.
 
-    Print-mode streets use modest width scaling over CNC base widths to
-    create a clean road hierarchy without overwhelming the map.  The old
-    5x multiplier produced highway bands ~6 mm wide which dominated the
-    poster.  New values: major 1.8x, minor 1.2x.
+    Professional map prints use "cased roads" — each road is drawn twice:
+    1. A wider outer stroke (the "casing") in a dark color
+    2. A narrower inner stroke (the "fill") in a lighter color
+    This creates the classic road map look with clear visual hierarchy.
+
+    At province scale, roads are thicker and only major roads are shown.
+    At city scale, all roads are rendered with fine, delicate lines.
     """
     transform = processed.get("transform")
+    is_province = product_type in ("province",)
+
+    # Theme colors
+    major_color = theme.get("street_major", "#333333")
+    minor_color = theme.get("street_minor", "#666666")
+    # Road fill (inner color) — lighter than the casing for contrast
+    land_color = theme.get("land", "#e8dfd0")
+
+    # Width multipliers for province vs city scale
+    if is_province:
+        # Province: bold, clear highways visible at small scale
+        casing_widths = {
+            "motorway": 2.4, "motorway_link": 1.8,
+            "trunk": 2.0, "trunk_link": 1.5,
+            "primary": 1.6, "primary_link": 1.2,
+            "secondary": 1.2, "secondary_link": 0.9,
+            "tertiary": 0.8, "tertiary_link": 0.6,
+            "residential": 0.4, "unclassified": 0.4,
+        }
+        fill_ratio = 0.55  # inner fill is 55% of casing width
+    else:
+        # City: fine, elegant lines that create a dense grid pattern
+        casing_widths = {
+            "motorway": 0.9, "motorway_link": 0.7,
+            "trunk": 0.8, "trunk_link": 0.6,
+            "primary": 0.7, "primary_link": 0.5,
+            "secondary": 0.5, "secondary_link": 0.4,
+            "tertiary": 0.35, "tertiary_link": 0.25,
+            "residential": 0.2, "unclassified": 0.2,
+        }
+        fill_ratio = 0.5
 
     lines.append('    <g id="streets">')
 
-    # Major roads — clearly visible but proportional
-    for coords, road_class, width, name in streets_data.get("major_roads", []):
+    # Collect all road paths grouped by class for proper layering
+    # Draw casings first (bottom layer), then fills (top layer)
+    # This prevents casing from one road covering the fill of another
+    major_paths = []
+    minor_paths = []
+
+    for coords, road_class, _width, name in streets_data.get("major_roads", []):
         if len(coords) < 2:
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
-        sw = round(width * 1.8, 2)
+        cw = casing_widths.get(road_class, 0.5)
+        major_paths.append((path_d, road_class, cw))
+
+    for coords, road_class, _width, name in streets_data.get("minor_roads", []):
+        if len(coords) < 2:
+            continue
+        board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
+        path_d = _coords_to_open_path(board_coords)
+        cw = casing_widths.get(road_class, 0.2)
+        minor_paths.append((path_d, road_class, cw))
+
+    # Layer 1: Minor road casings (bottom)
+    for path_d, road_class, cw in minor_paths:
         lines.append(
             f'      <path d="{path_d}"'
-            f' fill="none" stroke="{theme["street_major"]}" stroke-width="{sw}"'
+            f' fill="none" stroke="{minor_color}" stroke-width="{cw}"'
             f' stroke-linecap="round" stroke-linejoin="round"/>'
         )
 
-    # Minor roads — thin grid that fills the city area
-    for coords, road_class, width, name in streets_data.get("minor_roads", []):
-        if len(coords) < 2:
-            continue
-        board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
-        path_d = _coords_to_open_path(board_coords)
-        sw = round(width * 1.2, 2)
+    # Layer 2: Minor road fills
+    for path_d, road_class, cw in minor_paths:
+        fw = round(cw * fill_ratio, 2)
         lines.append(
             f'      <path d="{path_d}"'
-            f' fill="none" stroke="{theme["street_minor"]}" stroke-width="{sw}"'
+            f' fill="none" stroke="{land_color}" stroke-width="{fw}"'
+            f' stroke-linecap="round" stroke-linejoin="round"/>'
+        )
+
+    # Layer 3: Major road casings (on top of minor roads)
+    for path_d, road_class, cw in major_paths:
+        lines.append(
+            f'      <path d="{path_d}"'
+            f' fill="none" stroke="{major_color}" stroke-width="{cw}"'
+            f' stroke-linecap="round" stroke-linejoin="round"/>'
+        )
+
+    # Layer 4: Major road fills (topmost)
+    for path_d, road_class, cw in major_paths:
+        fw = round(cw * fill_ratio, 2)
+        fill_color = "#ffffff" if is_province else land_color
+        lines.append(
+            f'      <path d="{path_d}"'
+            f' fill="none" stroke="{fill_color}" stroke-width="{fw}"'
             f' stroke-linecap="round" stroke-linejoin="round"/>'
         )
 
@@ -931,12 +1127,11 @@ def _render_streets(lines: list[str], streets_data: dict, processed: dict, outpu
     transform = processed.get("transform")
     is_print = output_mode == "print"
 
-    # Print mode: modest scale-up for visible poster output.
-    # CNC base widths (0.3–1.2 mm) need a small bump for print, but 3x was
-    # way too heavy — roads became dominant black bands.  Use separate scales
-    # for major vs minor to preserve the premium road hierarchy.
-    major_width_scale = 1.8 if is_print else 1.0
-    minor_width_scale = 1.2 if is_print else 1.0
+    # Print mode: scale down CNC base widths for thin, elegant poster lines.
+    # CNC widths (0.3–1.2 mm) are too heavy for prints — premium map posters
+    # use delicate line work. Major 0.5x, minor 0.35x.
+    major_width_scale = 0.5 if is_print else 1.0
+    minor_width_scale = 0.35 if is_print else 1.0
 
     lines.append("  <!-- Layer: detail_lines (streets) -->")
     lines.append('  <!-- Toolpath: Engrave, 1/8" ball nose, 0.03"-0.05" -->')
@@ -1223,23 +1418,25 @@ def _render_pin_icon(lines: list[str], cx: float, cy: float, r: float):
 
 
 def _render_heart_icon(lines: list[str], cx: float, cy: float, r: float):
-    """CNC-friendly heart shape built from straight lines (no curves)."""
-    # Heart approximated with line segments for CNC compatibility
+    """Heart shape using smooth SVG cubic bezier curves."""
     s = r * 1.2
-    pts = [
-        (cx, cy + s * 0.9),           # bottom point
-        (cx - s * 1.0, cy - s * 0.1),  # left
-        (cx - s * 0.8, cy - s * 0.7),  # upper left
-        (cx - s * 0.3, cy - s * 0.9),  # top left indent
-        (cx, cy - s * 0.5),            # top center dip
-        (cx + s * 0.3, cy - s * 0.9),  # top right indent
-        (cx + s * 0.8, cy - s * 0.7),  # upper right
-        (cx + s * 1.0, cy - s * 0.1),  # right
-    ]
-    d = f"M{round(pts[0][0], 2)},{round(pts[0][1], 2)}"
-    for px, py in pts[1:]:
-        d += f" L{round(px, 2)},{round(py, 2)}"
-    d += " Z"
+    # Smooth heart using cubic Bezier curves
+    # Start at bottom tip, draw left lobe then right lobe
+    d = (
+        f"M{round(cx, 2)},{round(cy + s * 0.85, 2)} "
+        f"C{round(cx - s * 0.1, 2)},{round(cy + s * 0.6, 2)} "
+        f" {round(cx - s * 1.0, 2)},{round(cy + s * 0.2, 2)} "
+        f" {round(cx - s * 1.0, 2)},{round(cy - s * 0.2, 2)} "
+        f"C{round(cx - s * 1.0, 2)},{round(cy - s * 0.7, 2)} "
+        f" {round(cx - s * 0.55, 2)},{round(cy - s * 0.95, 2)} "
+        f" {round(cx, 2)},{round(cy - s * 0.5, 2)} "
+        f"C{round(cx + s * 0.55, 2)},{round(cy - s * 0.95, 2)} "
+        f" {round(cx + s * 1.0, 2)},{round(cy - s * 0.7, 2)} "
+        f" {round(cx + s * 1.0, 2)},{round(cy - s * 0.2, 2)} "
+        f"C{round(cx + s * 1.0, 2)},{round(cy + s * 0.2, 2)} "
+        f" {round(cx + s * 0.1, 2)},{round(cy + s * 0.6, 2)} "
+        f" {round(cx, 2)},{round(cy + s * 0.85, 2)} Z"
+    )
     lines.append(
         f'      <path d="{d}"'
         f' fill="#e74c3c" stroke="#1a1a1a" stroke-width="0.35"'
@@ -1330,35 +1527,42 @@ def _render_heart_marker(
     board_h: float,
     font_size_mm: float,
 ):
-    """Render a heart icon at a specific board location (for romantic/gift maps)."""
+    """Render a heart icon at a specific board location (for romantic/gift maps).
+
+    Heart size scales proportionally to the smaller board dimension so it
+    looks balanced on any print size (8x10 through 24x36).
+    """
     hx, hy = heart_mm
     # Skip if outside board
     if hx < 0 or hx > board_w or hy < 0 or hy > board_h:
         return
 
-    r = font_size_mm * 0.4  # heart size
+    # Scale heart to ~2% of the smaller board dimension
+    s = min(board_w, board_h) * 0.02
+    stroke_w = round(s * 0.06, 2)  # proportional stroke
+
     lines.append("  <!-- Layer: heart_marker -->")
     lines.append('  <g id="heart_marker">')
 
-    # Heart shape (same as heart icon but larger and filled red)
-    s = r * 1.5
-    pts = [
-        (hx, hy + s * 0.9),
-        (hx - s * 1.0, hy - s * 0.1),
-        (hx - s * 0.8, hy - s * 0.7),
-        (hx - s * 0.3, hy - s * 0.9),
-        (hx, hy - s * 0.5),
-        (hx + s * 0.3, hy - s * 0.9),
-        (hx + s * 0.8, hy - s * 0.7),
-        (hx + s * 1.0, hy - s * 0.1),
-    ]
-    d = f"M{round(pts[0][0], 2)},{round(pts[0][1], 2)}"
-    for px, py in pts[1:]:
-        d += f" L{round(px, 2)},{round(py, 2)}"
-    d += " Z"
+    # Smooth heart using cubic Bezier curves
+    d = (
+        f"M{round(hx, 2)},{round(hy + s * 0.85, 2)} "
+        f"C{round(hx - s * 0.1, 2)},{round(hy + s * 0.6, 2)} "
+        f" {round(hx - s * 1.0, 2)},{round(hy + s * 0.2, 2)} "
+        f" {round(hx - s * 1.0, 2)},{round(hy - s * 0.2, 2)} "
+        f"C{round(hx - s * 1.0, 2)},{round(hy - s * 0.7, 2)} "
+        f" {round(hx - s * 0.55, 2)},{round(hy - s * 0.95, 2)} "
+        f" {round(hx, 2)},{round(hy - s * 0.5, 2)} "
+        f"C{round(hx + s * 0.55, 2)},{round(hy - s * 0.95, 2)} "
+        f" {round(hx + s * 1.0, 2)},{round(hy - s * 0.7, 2)} "
+        f" {round(hx + s * 1.0, 2)},{round(hy - s * 0.2, 2)} "
+        f"C{round(hx + s * 1.0, 2)},{round(hy + s * 0.2, 2)} "
+        f" {round(hx + s * 0.1, 2)},{round(hy + s * 0.6, 2)} "
+        f" {round(hx, 2)},{round(hy + s * 0.85, 2)} Z"
+    )
     lines.append(
         f'    <path d="{d}"'
-        f' fill="#e74c3c" stroke="#c0392b" stroke-width="0.5"'
+        f' fill="#e74c3c" stroke="#c0392b" stroke-width="{stroke_w}"'
         f' stroke-linejoin="round"/>'
     )
 

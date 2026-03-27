@@ -9,9 +9,15 @@ from app.config import settings
 from app.logging_config import log
 from app.services.cache import cache_get, cache_set, make_geometry_key
 
-OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+OVERPASS_ENDPOINTS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.openstreetmap.fr/api/interpreter",
+]
+OVERPASS_URL = OVERPASS_ENDPOINTS[0]  # backward compat
 NOMINATIM_LOOKUP_URL = "https://nominatim.openstreetmap.org/lookup"
-NOMINATIM_HEADERS = {"User-Agent": "MapForgeCNC/1.0 (mapforge-cnc-app)"}
+NOMINATIM_HEADERS = {"User-Agent": "MapForgeCNC/1.0 (https://mapforge-production.up.railway.app; mapforge map generator)"}
+OVERPASS_HEADERS = {"User-Agent": "MapForgeCNC/1.0 (https://mapforge-production.up.railway.app; mapforge map generator)"}
 
 OSM_TYPE_MAP = {"node": "N", "way": "W", "relation": "R"}
 
@@ -92,13 +98,22 @@ async def _fetch_via_overpass(osm_id: int, osm_type: str) -> MultiPolygon | Poly
     out skel qt;
     """
 
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(OVERPASS_URL, data={"data": query})
-            resp.raise_for_status()
-            data = resp.json()
-    except (httpx.HTTPError, httpx.ProxyError) as e:
-        log.warning(f"Overpass request failed for {osm_type}/{osm_id}: {e}")
+    data = None
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        for endpoint in OVERPASS_ENDPOINTS:
+            try:
+                resp = await client.post(endpoint, data={"data": query}, headers=OVERPASS_HEADERS)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("elements"):
+                        break
+                    data = None
+                else:
+                    log.warning(f"Overpass HTTP {resp.status_code} from {endpoint} for {osm_type}/{osm_id}")
+            except Exception as e:
+                log.warning(f"Overpass request to {endpoint} failed for {osm_type}/{osm_id}: {e}")
+
+    if data is None:
         return None
 
     elements = data.get("elements", [])

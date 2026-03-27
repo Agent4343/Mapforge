@@ -1,5 +1,5 @@
 /**
- * MapForge CNC — API client with auth support
+ * MapForge — API client with auth support
  */
 
 const API_BASE = "/api/v1";
@@ -157,7 +157,7 @@ async function generateSVG(params) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
-    timeout: 120000,
+    timeout: 180000,
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
@@ -171,7 +171,7 @@ async function generatePin(params) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
-    timeout: 120000,
+    timeout: 180000,
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
@@ -208,6 +208,12 @@ async function downloadDXF(fileId) {
   return resp.blob();
 }
 
+async function downloadSTL(fileId) {
+  const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}?format=stl`);
+  if (!resp.ok) throw new Error("STL download failed");
+  return resp.blob();
+}
+
 async function downloadThumbnail(fileId) {
   const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}/thumbnail`);
   if (!resp.ok) throw new Error("Thumbnail download failed");
@@ -218,6 +224,32 @@ async function downloadPrintPNG(fileId) {
   const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}?format=png`);
   if (!resp.ok) throw new Error("Print PNG download failed");
   return resp.blob();
+}
+
+async function downloadEtsyListing(fileId) {
+  const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}/etsy`);
+  if (!resp.ok) throw new Error("Etsy listing image download failed");
+  return resp.blob();
+}
+
+async function downloadPreview(fileId) {
+  const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}/preview`);
+  if (!resp.ok) throw new Error("Preview download failed");
+  return resp.blob();
+}
+
+async function downloadEtsyPackage(fileId) {
+  const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}/etsy-package`, {
+    timeout: 60000,
+  });
+  if (!resp.ok) throw new Error("Etsy package download failed");
+  return resp.blob();
+}
+
+async function getPrintSizes() {
+  const resp = await fetchWithTimeout(`${API_BASE}/print-sizes`);
+  if (!resp.ok) throw new Error("Failed to load print sizes");
+  return resp.json();
 }
 
 // --- Library ---
@@ -364,6 +396,59 @@ async function aiDescribe(locationName, style, country = "", isCity = false, pro
   return resp.json();
 }
 
+// --- Etsy Integration ---
+
+async function getEtsyStatus() {
+  const resp = await fetchWithTimeout(`${API_BASE}/etsy/status`, {
+    headers: { Authorization: `Bearer ${authToken}` },
+  });
+  if (!resp.ok) return { connected: false };
+  return resp.json();
+}
+
+async function connectEtsy() {
+  const resp = await fetchWithTimeout(`${API_BASE}/etsy/connect`, {
+    headers: { Authorization: `Bearer ${authToken}` },
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Failed to start Etsy connection"));
+  }
+  return resp.json();
+}
+
+async function disconnectEtsy() {
+  const resp = await fetchWithTimeout(`${API_BASE}/etsy/disconnect`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${authToken}` },
+  });
+  if (!resp.ok) throw new Error("Failed to disconnect Etsy");
+  return resp.json();
+}
+
+async function publishToEtsy(fileId, title, description, price, tags) {
+  const resp = await fetchWithTimeout(`${API_BASE}/etsy/publish`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${authToken}`,
+    },
+    body: JSON.stringify({
+      file_id: fileId,
+      title,
+      description,
+      price: parseFloat(price),
+      tags: typeof tags === "string" ? tags.split(",").map((t) => t.trim()).filter(Boolean) : tags,
+    }),
+    timeout: 60000,
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Failed to publish to Etsy"));
+  }
+  return resp.json();
+}
+
 async function getAdminStats() {
   const resp = await fetchWithTimeout(`${API_BASE}/admin/stats`, {
     headers: { Authorization: `Bearer ${authToken}` },
@@ -375,13 +460,98 @@ async function getAdminStats() {
   return resp.json();
 }
 
+// --- Admin Etsy Settings ---
+
+async function getEtsySettings() {
+  const resp = await fetchWithTimeout(`${API_BASE}/admin/etsy-settings`);
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Failed to load Etsy settings"));
+  }
+  return resp.json();
+}
+
+async function saveEtsySettings(apiKey, apiSecret, redirectUri) {
+  const resp = await fetchWithTimeout(`${API_BASE}/admin/etsy-settings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      api_key: apiKey,
+      api_secret: apiSecret,
+      redirect_uri: redirectUri,
+    }),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Failed to save Etsy settings"));
+  }
+  return resp.json();
+}
+
+async function clearEtsySettings() {
+  const resp = await fetchWithTimeout(`${API_BASE}/admin/etsy-settings`, {
+    method: "DELETE",
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Failed to clear Etsy settings"));
+  }
+  return resp.json();
+}
+
+// --- Design Credits (Etsy-paid customers) ---
+
+async function redeemCredit(token) {
+  const resp = await fetchWithTimeout(`${API_BASE}/orders/redeem/${token}`);
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Invalid design credit"));
+  }
+  return resp.json();
+}
+
+async function generateForCredit(token, designConfig) {
+  const resp = await fetchWithTimeout(`${API_BASE}/orders/generate/${token}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ design_config: designConfig }),
+    timeout: 120000,
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Generation failed"));
+  }
+  return resp.json();
+}
+
+async function getCreditStatus(token) {
+  const resp = await fetchWithTimeout(`${API_BASE}/orders/status/${token}`);
+  if (!resp.ok) throw new Error("Credit not found");
+  return resp.json();
+}
+
+async function downloadCreditFile(token, format = "png") {
+  const resp = await fetchWithTimeout(`${API_BASE}/orders/download/${token}?format=${format}`, {
+    timeout: 60000,
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Download failed"));
+  }
+  return resp.blob();
+}
+
 export {
   setToken, getToken, register, login, logout, getProfile, requestPasswordReset, resetPassword, subscribe,
   searchLocations, generateSVG, generatePin, batchGenerate,
-  downloadSVG, downloadDXF, downloadThumbnail, downloadPrintPNG,
+  downloadSVG, downloadDXF, downloadSTL, downloadThumbnail, downloadPrintPNG,
+  downloadEtsyListing, downloadEtsyPackage, downloadPreview, getPrintSizes,
   getLibrary, deleteLibraryFile,
   browseMarketplace, createListing, purchaseListing,
   getMyPurchases, updateListing, removeListing,
   getSellerDashboard, submitReview, getReviews,
-  aiDescribe, getAdminStats,
+  aiDescribe,
+  getEtsyStatus, connectEtsy, disconnectEtsy, publishToEtsy,
+  getAdminStats, getEtsySettings, saveEtsySettings, clearEtsySettings,
+  redeemCredit, generateForCredit, getCreditStatus, downloadCreditFile,
 };

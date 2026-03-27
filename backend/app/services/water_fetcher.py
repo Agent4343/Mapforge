@@ -2,7 +2,7 @@
 
 Fetches lakes, rivers, coastlines, and other water bodies within a bounding box
 for rendering on community, city, and park maps.
-Races multiple Overpass endpoints concurrently for speed and reliability.
+Uses sequential endpoint fallback with proper identification headers.
 """
 
 import asyncio
@@ -14,56 +14,63 @@ from app.logging_config import log
 OVERPASS_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.openstreetmap.fr/api/interpreter",
     "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
 ]
 
+REQUEST_HEADERS = {
+    "User-Agent": "MapForgeCNC/1.0 (https://mapforge-production.up.railway.app; mapforge map generator)",
+}
 
-async def _fetch_one_endpoint(endpoint: str, query: str) -> dict | None:
+
+async def _try_endpoint(client: httpx.AsyncClient, endpoint: str, query: str) -> dict | None:
     """Try a single Overpass endpoint. Returns valid data or None."""
     try:
-        async with httpx.AsyncClient(timeout=55.0) as client:
-            resp = await client.post(endpoint, data={"data": query})
-            resp.raise_for_status()
-            data = resp.json()
+        resp = await client.post(endpoint, data={"data": query}, headers=REQUEST_HEADERS)
+
+        if resp.status_code != 200:
+            log.warning(f"Overpass HTTP {resp.status_code} from {endpoint}")
+            return None
+
+        data = resp.json()
 
         if "remark" in data:
-            log.warning(f"Overpass remark from {endpoint}: {data['remark']}")
+            log.warning(f"Overpass remark from {endpoint}: {data['remark'][:120]}")
             return None
 
         if not data.get("elements"):
-            log.warning(f"Overpass returned no/empty elements from {endpoint}")
+            log.warning(f"Overpass returned 0 elements from {endpoint}")
             return None
 
-        log.info(f"Overpass success from {endpoint}: {len(data['elements'])} elements")
+        log.info(f"Overpass OK from {endpoint}: {len(data['elements'])} elements")
         return data
 
+    except httpx.TimeoutException:
+        log.warning(f"Overpass timeout from {endpoint}")
+        return None
     except Exception as e:
-        log.warning(f"Overpass request to {endpoint} failed: {e}")
+        log.warning(f"Overpass error from {endpoint}: {type(e).__name__}: {e}")
         return None
 
 
 async def _fetch_overpass_with_retry(query: str) -> dict | None:
-    """Race all Overpass endpoints concurrently — first valid response wins."""
-    tasks = {
-        asyncio.create_task(_fetch_one_endpoint(ep, query)): ep
-        for ep in OVERPASS_ENDPOINTS
-    }
-    pending = set(tasks.keys())
+    """Try Overpass endpoints sequentially with a total time budget."""
+    import time
+    start = time.monotonic()
+    budget = 20.0  # keep tight to fit within Railway's request timeout
 
-    try:
-        while pending:
-            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-            for task in done:
-                result = task.result()
-                if result is not None:
-                    for t in pending:
-                        t.cancel()
-                    return result
-    except Exception as e:
-        log.error(f"Unexpected error racing Overpass endpoints: {e}")
-    finally:
-        for t in pending:
-            t.cancel()
+    async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+        for endpoint in OVERPASS_ENDPOINTS:
+            elapsed = time.monotonic() - start
+            if elapsed >= budget:
+                break
+            remaining = budget - elapsed
+            if remaining < 5:
+                break
+            client.timeout = httpx.Timeout(min(15.0, remaining))
+            result = await _try_endpoint(client, endpoint, query)
+            if result is not None:
+                return result
 
     log.error("All Overpass endpoints failed for water fetch")
     return None

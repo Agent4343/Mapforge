@@ -32,6 +32,11 @@ class User(Base):
     stripe_subscription_id = Column(String(255), nullable=True)
     stripe_connect_account_id = Column(String(255), nullable=True)
     stripe_payouts_enabled = Column(Boolean, default=False)
+    etsy_access_token = Column(Text, nullable=True)
+    etsy_refresh_token = Column(Text, nullable=True)
+    etsy_token_expires_at = Column(DateTime(timezone=True), nullable=True)
+    etsy_shop_id = Column(String(255), nullable=True)
+    etsy_shop_name = Column(String(255), nullable=True)
     generation_count_this_month = Column(Integer, default=0)
     month_reset_date = Column(DateTime(timezone=True), default=_utcnow)
     created_at = Column(DateTime(timezone=True), default=_utcnow)
@@ -127,6 +132,60 @@ class PasswordResetToken(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False)
     used = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), default=_utcnow)
+
+
+class DesignCredit(Base):
+    """A design credit purchased via Etsy.
+
+    When a customer buys on Etsy, a credit is created with a unique token.
+    The customer uses the token to access the design tool and download their files.
+
+    Flow: Etsy purchase → webhook creates credit → customer redeems token →
+          designs map → generates files → downloads (no second payment).
+    """
+    __tablename__ = "design_credits"
+
+    id = Column(String(16), primary_key=True, default=_uuid)
+    # Etsy order info
+    etsy_receipt_id = Column(String(100), nullable=True, index=True)
+    etsy_shop_id = Column(String(100), nullable=True)
+    etsy_buyer_email = Column(String(255), nullable=True)
+    seller_id = Column(String(36), ForeignKey("users.id"), nullable=True)
+    # Product purchased on Etsy
+    product_type = Column(String(20), nullable=True)  # lake, city, province, etc.
+    product_tier = Column(String(20), default="standard")  # standard, premium, deluxe
+    etsy_listing_title = Column(String(500), nullable=True)
+    price_cents = Column(Integer, nullable=True)
+    # Redemption
+    redeem_token = Column(String(64), nullable=False, unique=True, index=True)
+    status = Column(String(20), default="unused")  # unused, designing, generating, completed, expired
+    # Design configuration (saved when customer finishes designing)
+    design_config = Column(Text, nullable=True)
+    location_name = Column(String(255), nullable=True)
+    # Generated file
+    file_id = Column(String(16), ForeignKey("generated_files.id"), nullable=True)
+    # Download tracking
+    download_count = Column(Integer, default=0)
+    max_downloads = Column(Integer, default=5)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    redeemed_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    file = relationship("GeneratedFile", foreign_keys=[file_id])
+    seller = relationship("User", foreign_keys=[seller_id])
+
+
+class AppSettings(Base):
+    """Key-value store for application settings (Etsy API keys, etc.).
+
+    Stored in the database so admin can configure via UI without redeploying.
+    Falls back to environment variables if not set in DB.
+    """
+    __tablename__ = "app_settings"
+
+    key = Column(String(100), primary_key=True)
+    value = Column(Text, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
 
 class Review(Base):

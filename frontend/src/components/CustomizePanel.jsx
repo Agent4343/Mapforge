@@ -31,30 +31,11 @@ export default function CustomizePanel({ config, onChange, user }) {
   }
 
   const isPro = user?.tier === "pro" || user?.tier === "admin";
-  const isPrint = config.outputMode === "print";
+  const isPrint = true; // Always print/poster mode
 
   return (
     <div className="customize-section">
       <h2>Customize</h2>
-
-      {/* Output Mode Toggle */}
-      <div className="control-group">
-        <label>Output Mode</label>
-        <div className="mode-toggle">
-          <button
-            className={`mode-toggle-btn${!isPrint ? " active" : ""}`}
-            onClick={() => update("outputMode", "cnc")}
-          >
-            CNC / Laser
-          </button>
-          <button
-            className={`mode-toggle-btn${isPrint ? " active" : ""}`}
-            onClick={() => update("outputMode", "print")}
-          >
-            Print / Poster
-          </button>
-        </div>
-      </div>
 
       {/* Display Text */}
       <div className="control-group">
@@ -128,19 +109,6 @@ export default function CustomizePanel({ config, onChange, user }) {
             </select>
           </div>
 
-          {!isPrint && (
-            <div className="control-group">
-              <label>Cut Style</label>
-              <select
-                value={config.style}
-                onChange={(e) => update("style", e.target.value)}
-              >
-                <option value="outline">Outline (Profile)</option>
-                <option value="filled">Filled (Pocket)</option>
-                <option value="engraved">Engraved (V-Carve)</option>
-              </select>
-            </div>
-          )}
         </div>
 
         {config.boardSize === "custom" && (
@@ -279,20 +247,6 @@ export default function CustomizePanel({ config, onChange, user }) {
             </select>
           </div>
 
-          {!isPrint && (
-            <div className="control-group">
-              <label>Format</label>
-              <select
-                value={config.exportFormat}
-                onChange={(e) => update("exportFormat", e.target.value)}
-              >
-                <option value="svg">SVG</option>
-                <option value="dxf" disabled={!user || user.tier === "free"}>
-                  DXF {!user || user.tier === "free" ? "(Maker+)" : ""}
-                </option>
-              </select>
-            </div>
-          )}
         </div>
 
         <div className="control-group">
@@ -393,6 +347,52 @@ export default function CustomizePanel({ config, onChange, user }) {
               onChange={(e) => update("numDepthBands", Number(e.target.value))}
             />
           </div>
+        </div>
+      )}
+
+      {/* Print Production — DPI, bleed, crop marks for professional printing */}
+      {isPrint && (
+        <div className="customize-group">
+          <div className="customize-group-label">Print Production</div>
+
+          <div className="control-group">
+            <label>Print DPI</label>
+            <select
+              value={config.printDPI || 300}
+              onChange={(e) => update("printDPI", Number(e.target.value))}
+            >
+              <option value={300}>300 DPI (Standard)</option>
+              <option value={600}>600 DPI (High Quality)</option>
+            </select>
+          </div>
+
+          <div className="toggle-row">
+            <label>Include Bleed (3mm)</label>
+            <label className="toggle-switch">
+              <input
+                type="checkbox"
+                checked={config.includeBleed || false}
+                onChange={(e) => update("includeBleed", e.target.checked)}
+              />
+              <span className="toggle-slider" />
+            </label>
+          </div>
+
+          <div className="toggle-row">
+            <label>Include Crop Marks</label>
+            <label className="toggle-switch">
+              <input
+                type="checkbox"
+                checked={config.includeCropMarks || false}
+                onChange={(e) => update("includeCropMarks", e.target.checked)}
+              />
+              <span className="toggle-slider" />
+            </label>
+          </div>
+
+          <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: "8px 0 0" }}>
+            Enable bleed and crop marks for professional print shops. Standard prints do not need these.
+          </p>
         </div>
       )}
     </div>

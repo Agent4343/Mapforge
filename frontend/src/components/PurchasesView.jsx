@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { getMyPurchases, downloadSVG, downloadDXF } from "../services/api.js";
+import { getMyPurchases, downloadSVG } from "../services/api.js";
 
 export default function PurchasesView({ onBack }) {
   const [purchases, setPurchases] = useState([]);
@@ -21,7 +21,7 @@ export default function PurchasesView({ onBack }) {
 
   async function handleDownload(fileId, format) {
     try {
-      const blob = format === "dxf" ? await downloadDXF(fileId) : await downloadSVG(fileId);
+      const blob = await downloadSVG(fileId);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -47,7 +47,7 @@ export default function PurchasesView({ onBack }) {
       {error && <div className="error-message">{error}<button className="link-btn" onClick={() => setError(null)} style={{ marginLeft: 8 }}>dismiss</button></div>}
 
       {purchases.length === 0 ? (
-        <p className="empty-state">No purchases yet. Browse the Marketplace to find CNC-ready designs.</p>
+        <p className="empty-state">No purchases yet. Browse the Marketplace to find print-ready map designs.</p>
       ) : (
         <div className="marketplace-grid">
           {purchases.map((p) => (
@@ -63,10 +63,7 @@ export default function PurchasesView({ onBack }) {
               )}
               <div className="export-buttons" style={{ marginTop: 8 }}>
                 <button className="btn btn-primary" onClick={() => handleDownload(p.file_id, "svg")}>
-                  SVG
-                </button>
-                <button className="btn btn-secondary" onClick={() => handleDownload(p.file_id, "dxf")}>
-                  DXF
+                  Download SVG
                 </button>
               </div>
             </div>

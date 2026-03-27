@@ -1,11 +1,13 @@
-"""Admin dashboard router — platform stats for admin users."""
+"""Admin dashboard router — platform stats and settings for admin users."""
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.db_models import GeneratedFile, MarketplaceListing, Purchase, User
+from app.services.app_settings import get_setting, set_setting, delete_setting
 from app.services.auth import get_current_user
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
@@ -78,3 +80,67 @@ async def admin_stats(
         "recent_files": recent_files,
         "users_by_tier": users_by_tier,
     }
+
+
+# --- Etsy API Settings ---
+
+ETSY_SETTING_KEYS = ["ETSY_API_KEY", "ETSY_API_SECRET", "ETSY_REDIRECT_URI"]
+
+
+class EtsySettingsRequest(BaseModel):
+    api_key: str = ""
+    api_secret: str = ""
+    redirect_uri: str = ""
+
+
+@router.get("/etsy-settings")
+async def get_etsy_settings(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get current Etsy API settings (admin only). Secrets are masked."""
+    _require_admin(user)
+
+    api_key = await get_setting(db, "ETSY_API_KEY") or ""
+    api_secret = await get_setting(db, "ETSY_API_SECRET") or ""
+    redirect_uri = await get_setting(db, "ETSY_REDIRECT_URI") or ""
+
+    return {
+        "api_key": api_key[:8] + "..." if len(api_key) > 8 else api_key,
+        "api_secret": "••••••••" if api_secret else "",
+        "redirect_uri": redirect_uri,
+        "configured": bool(api_key and api_secret),
+    }
+
+
+@router.post("/etsy-settings")
+async def save_etsy_settings(
+    req: EtsySettingsRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Save Etsy API credentials to the database (admin only)."""
+    _require_admin(user)
+
+    if req.api_key:
+        await set_setting(db, "ETSY_API_KEY", req.api_key.strip())
+    if req.api_secret:
+        await set_setting(db, "ETSY_API_SECRET", req.api_secret.strip())
+    if req.redirect_uri:
+        await set_setting(db, "ETSY_REDIRECT_URI", req.redirect_uri.strip())
+
+    return {"status": "saved"}
+
+
+@router.delete("/etsy-settings")
+async def clear_etsy_settings(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Clear Etsy API credentials from the database (admin only)."""
+    _require_admin(user)
+
+    for key in ETSY_SETTING_KEYS:
+        await delete_setting(db, key)
+
+    return {"status": "cleared"}

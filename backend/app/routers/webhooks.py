@@ -1,12 +1,18 @@
-"""Stripe webhook handler for subscription, payment, and payout events."""
+"""Stripe and Etsy webhook handlers for subscription, payment, and order events."""
+
+import base64
+import hashlib
+import hmac
+import time
 
 from fastapi import APIRouter, Request, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import async_session
 from app.logging_config import log
-from app.models.db_models import User, Purchase, MarketplaceListing
+from app.models.db_models import User, Purchase, MarketplaceListing, DesignCredit
 from app.services.payments import verify_webhook_signature, create_transfer
 
 router = APIRouter(prefix="/api/v1/webhooks", tags=["webhooks"])
@@ -28,7 +34,8 @@ async def stripe_webhook(request: Request):
     try:
         event = verify_webhook_signature(payload, sig_header)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Webhook verification failed: {e}")
+        log.error(f"Stripe webhook verification failed: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=400, detail="Invalid webhook signature")
 
     event_type = event.get("type", "")
     data = event.get("data", {}).get("object", {})
@@ -198,7 +205,7 @@ async def _handle_marketplace_payment(db: AsyncSession, data: dict):
             log.error(f"Failed to transfer to seller {seller.username}: {e}")
 
     purchase.status = "completed"
-    listing.sale_count += 1
+    listing.sale_count += 1  # increment for async payments that were initially "pending"
     await db.commit()
 
 
@@ -218,3 +225,208 @@ async def _handle_account_updated(db: AsyncSession, data: dict):
     user.stripe_payouts_enabled = payouts_enabled
     await db.commit()
     log.info(f"Account {account_id} updated: payouts={payouts_enabled}, charges={charges_enabled}")
+
+
+# =============================================================================
+# Etsy Webhooks
+# =============================================================================
+
+def _verify_etsy_signature(payload: bytes, headers: dict) -> bool:
+    """Verify Etsy webhook signature using HMAC-SHA256.
+
+    Per Etsy docs:
+      signed_content = webhook-id + "." + webhook-timestamp + "." + raw_body
+      secret_bytes = base64_decode(secret.split("_")[1])
+      expected_sig = base64_encode(HMAC_SHA256(secret_bytes, signed_content))
+    """
+    secret = settings.ETSY_WEBHOOK_SECRET
+    if not secret:
+        log.warning("ETSY_WEBHOOK_SECRET not set — rejecting webhook (configure secret to enable)")
+        return False
+
+    webhook_id = headers.get("webhook-id", "")
+    webhook_timestamp = headers.get("webhook-timestamp", "")
+    webhook_signature = headers.get("webhook-signature", "")
+
+    if not webhook_id or not webhook_timestamp or not webhook_signature:
+        return False
+
+    # Reject stale timestamps (>5 min drift)
+    try:
+        ts = int(webhook_timestamp)
+        if abs(time.time() - ts) > 300:
+            log.warning("Etsy webhook rejected: stale timestamp (%d vs %d)", ts, int(time.time()))
+            return False
+    except ValueError:
+        return False
+
+    # Derive secret key: remove "whsec_" prefix, base64-decode
+    secret_part = secret.split("_", 1)[-1] if "_" in secret else secret
+    try:
+        secret_bytes = base64.b64decode(secret_part)
+    except Exception:
+        log.error("Failed to decode ETSY_WEBHOOK_SECRET")
+        return False
+
+    # Compute expected signature
+    signed_content = f"{webhook_id}.{webhook_timestamp}.{payload.decode('utf-8')}"
+    expected = base64.b64encode(
+        hmac.new(secret_bytes, signed_content.encode("utf-8"), hashlib.sha256).digest()
+    ).decode("ascii")
+
+    # Compare against all signatures in the header (space-separated)
+    for sig in webhook_signature.split(" "):
+        # Signatures may have a version prefix like "v1,"
+        sig_value = sig.split(",", 1)[-1] if "," in sig else sig
+        if hmac.compare_digest(expected, sig_value):
+            return True
+
+    return False
+
+
+@router.post("/etsy")
+async def etsy_webhook(request: Request):
+    """Handle Etsy webhook events (order.paid, order.shipped, etc.).
+
+    Etsy sends real-time notifications when orders are placed, shipped,
+    or cancelled. We sync these events back to the seller's dashboard.
+    """
+    payload = await request.body()
+    headers = dict(request.headers)
+
+    if not _verify_etsy_signature(payload, headers):
+        raise HTTPException(status_code=400, detail="Invalid Etsy webhook signature")
+
+    import json
+    try:
+        event = json.loads(payload)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    event_type = event.get("event_type", "")
+    data = event.get("data", event)
+    shop_id = str(data.get("shop_id", ""))
+
+    log.info(f"Etsy webhook: {event_type} for shop {shop_id}")
+
+    async with async_session() as db:
+        if event_type == "order.paid":
+            await _handle_etsy_order_paid(db, data, shop_id)
+        elif event_type == "order.canceled":
+            await _handle_etsy_order_canceled(db, data, shop_id)
+        elif event_type == "order.shipped":
+            log.info(f"Etsy order shipped for shop {shop_id}")
+        elif event_type == "order.delivered":
+            log.info(f"Etsy order delivered for shop {shop_id}")
+        else:
+            log.info(f"Unhandled Etsy event: {event_type}")
+
+    return {"status": "ok"}
+
+
+async def _handle_etsy_order_paid(db: AsyncSession, data: dict, shop_id: str):
+    """Handle Etsy order.paid — create a design credit for the customer.
+
+    When a customer buys on Etsy, we auto-create a DesignCredit with a unique
+    token. The token is included in the Etsy digital download file so the
+    customer can access the design tool and download their custom map.
+    """
+    import secrets
+
+    # Find the seller (your account) who owns this Etsy shop
+    result = await db.execute(
+        select(User).where(User.etsy_shop_id == shop_id)
+    )
+    seller = result.scalar_one_or_none()
+    if not seller:
+        log.warning(f"Etsy order.paid: no user found for shop {shop_id}")
+        return
+
+    # Extract order details from the webhook payload
+    receipt_id = str(data.get("receipt_id", data.get("resource_id", "")))
+    buyer_email = data.get("buyer_email", "")
+    listing_title = data.get("title", "")
+    price_raw = data.get("grandtotal", data.get("subtotal", {}))
+    price_cents = 0
+    if isinstance(price_raw, dict):
+        # Etsy sends price as {"amount": 1299, "divisor": 100, "currency_code": "USD"}
+        price_cents = int(price_raw.get("amount", 0))
+    elif isinstance(price_raw, (int, float)):
+        price_cents = int(price_raw * 100)
+
+    # Determine product type from listing title (basic heuristic)
+    title_lower = (listing_title or "").lower()
+    product_type = "lake"  # default
+    for pt in ("province", "city", "park", "community", "name_sign"):
+        if pt.replace("_", " ") in title_lower:
+            product_type = pt
+            break
+
+    # Create the design credit
+    token = secrets.token_urlsafe(32)
+    credit = DesignCredit(
+        etsy_receipt_id=receipt_id,
+        etsy_shop_id=shop_id,
+        etsy_buyer_email=buyer_email,
+        seller_id=seller.id,
+        product_type=product_type,
+        etsy_listing_title=listing_title,
+        price_cents=price_cents,
+        redeem_token=token,
+        status="unused",
+    )
+    db.add(credit)
+    await db.commit()
+
+    frontend_url = settings.FRONTEND_URL or "https://mapforge-production.up.railway.app"
+    design_url = f"{frontend_url}?credit={token}"
+
+    log.info(
+        f"Design credit created for Etsy order {receipt_id} "
+        f"(shop {shop_id}, buyer {buyer_email}): {design_url}"
+    )
+
+    # Send the design link to the buyer via Etsy message
+    if seller.etsy_access_token and receipt_id:
+        try:
+            from app.services.etsy_client import send_buyer_message, get_valid_token
+            from app.services.app_settings import get_etsy_credentials
+
+            creds = await get_etsy_credentials(db)
+            access_token = await get_valid_token(seller, creds=creds)
+            await db.commit()  # persist any refreshed tokens
+
+            message = (
+                f"Thank you for your purchase! Here is your custom map design link:\n\n"
+                f"{design_url}\n\n"
+                f"Click the link above to:\n"
+                f"1. Choose any location in the world\n"
+                f"2. Customize colors, style, and text\n"
+                f"3. Download your print-ready files\n\n"
+                f"You can redesign up to 5 times. Enjoy!"
+            )
+            sent = await send_buyer_message(
+                access_token=access_token,
+                shop_id=shop_id,
+                receipt_id=receipt_id,
+                message=message,
+                creds=creds,
+            )
+            if sent:
+                log.info(f"Design link sent to buyer via Etsy message for receipt {receipt_id}")
+            else:
+                log.warning(f"Could not auto-send design link for receipt {receipt_id} — seller should send manually")
+        except Exception as e:
+            log.warning(f"Failed to send Etsy message for receipt {receipt_id}: {e}")
+
+
+async def _handle_etsy_order_canceled(db: AsyncSession, data: dict, shop_id: str):
+    """Handle Etsy order.canceled — log the cancellation."""
+    result = await db.execute(
+        select(User).where(User.etsy_shop_id == shop_id)
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        return
+
+    log.info(f"Etsy order canceled for user {user.username} (shop {shop_id})")

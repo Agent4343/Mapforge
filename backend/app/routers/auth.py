@@ -221,11 +221,12 @@ async def seller_onboard(
     else:
         account_id = user.stripe_connect_account_id
 
-    # Create onboarding link
+    # Create onboarding link using configured frontend URL
+    base_url = settings.FRONTEND_URL or "http://localhost:5173"
     onboarding_url = await create_account_onboarding_link(
         account_id=account_id,
-        refresh_url="https://mapforge.app/seller/onboard",
-        return_url="https://mapforge.app/seller/dashboard",
+        refresh_url=f"{base_url}/seller/onboard",
+        return_url=f"{base_url}/seller/dashboard",
     )
 
     return {"onboarding_url": onboarding_url}

@@ -1,17 +1,22 @@
-import { useState } from "react";
-import { createListing, aiDescribe } from "../services/api.js";
+import { useState, useEffect } from "react";
+import { createListing, aiDescribe, getEtsyStatus, connectEtsy, disconnectEtsy, publishToEtsy } from "../services/api.js";
 
 export default function ExportPanel({
   result,
   onGenerate,
   onDownload,
   onDownloadDXF,
+  onDownloadSTL,
   onDownloadThumbnail,
   onDownloadPrintPNG,
+  onDownloadEtsyListing,
+  onDownloadEtsyPackage,
+  onDownloadPreview,
   canGenerate,
   generating,
   user,
-  outputMode,
+  printDPI,
+  etsyShopUrl,
 }) {
   const [showListForm, setShowListForm] = useState(false);
   const [listTitle, setListTitle] = useState("");
@@ -22,8 +27,48 @@ export default function ExportPanel({
   const [listSuccess, setListSuccess] = useState(false);
   const [listing, setListing] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
+  const [downloading, setDownloading] = useState(null);
+  const [downloadDone, setDownloadDone] = useState(null);
 
-  const isPrint = outputMode === "print";
+  // Etsy connection state
+  const [etsyStatus, setEtsyStatus] = useState({ connected: false });
+  const [etsyPublishing, setEtsyPublishing] = useState(false);
+  const [etsyResult, setEtsyResult] = useState(null);
+
+  const isPrint = true;
+
+  useEffect(() => {
+    if (user) {
+      getEtsyStatus().then(setEtsyStatus).catch(() => {});
+    }
+  }, [user]);
+
+  // Check for ?etsy_connected=1 in URL (OAuth callback redirect)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("etsy_connected") === "1") {
+      getEtsyStatus().then(setEtsyStatus).catch(() => {});
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
+
+  async function handleDownloadWithFeedback(fn, key) {
+    setDownloading(key);
+    setDownloadDone(null);
+    try {
+      await fn();
+      setDownloadDone(key);
+      setTimeout(() => setDownloadDone(null), 1500);
+    } finally {
+      setDownloading(null);
+    }
+  }
+
+  function dlLabel(label, key) {
+    if (downloading === key) return <span className="generate-btn-content"><span className="spinner-inline" /> Downloading...</span>;
+    if (downloadDone === key) return `\u2713 ${label}`;
+    return label;
+  }
 
   async function handleList() {
     if (!result) return;
@@ -69,18 +114,60 @@ export default function ExportPanel({
       if (ai.description) setListDesc(ai.description);
       if (ai.tags) setListTags(ai.tags);
     } catch (err) {
-      setListError("AI: " + err.message);
+      setListError(err.message);
     } finally {
       setAiLoading(false);
     }
   }
 
+  async function handleConnectEtsy() {
+    try {
+      const { auth_url } = await connectEtsy();
+      window.location.href = auth_url;
+    } catch (err) {
+      setListError(err.message);
+    }
+  }
+
+  async function handleDisconnectEtsy() {
+    try {
+      await disconnectEtsy();
+      setEtsyStatus({ connected: false });
+    } catch (err) {
+      setListError(err.message);
+    }
+  }
+
+  async function handlePublishToEtsy() {
+    if (!result) return;
+    setEtsyPublishing(true);
+    setListError(null);
+    setEtsyResult(null);
+    try {
+      const res = await publishToEtsy(
+        result.file_id,
+        listTitle || result.location_name,
+        listDesc || `Beautiful CNC-ready map of ${result.location_name}. Digital download includes SVG source file.`,
+        parseFloat(listPrice) || 9.99,
+        listTags,
+      );
+      setEtsyResult(res);
+    } catch (err) {
+      setListError(err.message);
+    } finally {
+      setEtsyPublishing(false);
+    }
+  }
+
   const canSell = user && (user.tier === "maker" || user.tier === "pro" || user.tier === "admin");
+
+  const isAdmin = user?.tier === "admin";
 
   return (
     <div className="export-section">
-      <h2>{isPrint ? "Generate & Download" : "Export"}</h2>
+      <h2>Generate & Download</h2>
 
+      {/* Generate button — available to everyone for previewing */}
       <button
         className="btn btn-primary btn-full generate-btn"
         onClick={onGenerate}
@@ -90,24 +177,63 @@ export default function ExportPanel({
           <span className="generate-btn-content">
             <span className="spinner-inline" /> Generating...
           </span>
-        ) : isPrint ? (
-          "Generate Map"
         ) : (
-          "Generate SVG"
+          "Generate Map"
         )}
       </button>
 
       {!canGenerate && !result && (
-        <p className="export-hint">Select a location above to generate</p>
+        <p className="export-hint">Select a location above to generate a preview</p>
       )}
 
+      {/* Etsy Connection Status — visible to admin anytime */}
+      {isAdmin && user && !result && (
+        <div className="etsy-connection-section">
+          {etsyStatus.connected ? (
+            <div className="etsy-connected">
+              <span className="etsy-badge">Etsy Connected: {etsyStatus.shop_name || "Your Shop"}</span>
+              <button className="btn btn-sm btn-secondary" onClick={handleDisconnectEtsy}>
+                Disconnect
+              </button>
+            </div>
+          ) : (
+            <button className="btn btn-etsy btn-full" onClick={handleConnectEtsy}>
+              Connect Etsy Shop
+            </button>
+          )}
+          {etsyStatus.connected && (
+            <p className="export-hint">Generate a map above, then publish it to Etsy.</p>
+          )}
+        </div>
+      )}
+
+      {/* Non-admin visitors: show "Buy on Etsy" CTA after they generate a preview */}
+      {result && !isAdmin && etsyShopUrl && (
+        <div className="etsy-cta-section">
+          <div className="etsy-cta-card">
+            <h3>Love your design?</h3>
+            <p>Get your print-ready files — high-resolution PNG, SVG source, and mockup image.</p>
+            <a
+              href={etsyShopUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn-etsy btn-full etsy-buy-btn"
+            >
+              Buy on Etsy — Get Your Files
+            </a>
+            <p className="etsy-cta-note">
+              After purchase, you'll receive a unique link to download your custom print-ready files.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* File stats — visible to everyone after generating a preview */}
       {result && (
-        <>
-          {/* File Stats */}
-          <div className="file-stats-grid">
+        <div className="file-stats-grid">
             <div className="file-stat">
               <span className="file-stat-label">Size</span>
-              <span className="file-stat-value">{result.dimensions_mm[0]}&times;{result.dimensions_mm[1]}mm</span>
+              <span className="file-stat-value">{Math.round(result.dimensions_mm[0] * 10) / 10}&times;{Math.round(result.dimensions_mm[1] * 10) / 10}mm</span>
             </div>
             <div className="file-stat">
               <span className="file-stat-label">Nodes</span>
@@ -121,65 +247,97 @@ export default function ExportPanel({
               <span className="file-stat-label">Layers</span>
               <span className="file-stat-value">{result.layer_count}</span>
             </div>
-          </div>
+            {isPrint && result.print_pixels && (
+              <div className="file-stat">
+                <span className="file-stat-label">Pixels</span>
+                <span className="file-stat-value">{result.print_pixels[0]}&times;{result.print_pixels[1]}</span>
+              </div>
+            )}
+            {isPrint && result.print_dpi && (
+              <div className="file-stat">
+                <span className="file-stat-label">DPI</span>
+                <span className="file-stat-value">{result.print_dpi}</span>
+              </div>
+            )}
+        </div>
+      )}
 
-          {/* Download Buttons */}
+      {/* Download buttons + Etsy tools — admin only */}
+      {result && isAdmin && (
+        <>
           <div className="export-download-section">
             <div className="export-buttons">
-              {isPrint ? (
-                <>
                   {result.print_png_available && (
-                    <button className="btn btn-primary" onClick={onDownloadPrintPNG}>
-                      Download Print PNG (300 DPI)
+                    <button className="btn btn-primary" disabled={!!downloading} onClick={() => handleDownloadWithFeedback(onDownloadPrintPNG, "print")}>
+                      {dlLabel(`Download Print PNG (${printDPI || 300} DPI)`, "print")}
                     </button>
                   )}
-                  {result.thumbnail_available && (
-                    <button className="btn btn-secondary" onClick={onDownloadThumbnail}>
-                      Etsy Mockup PNG
+                  {result.etsy_listing_available && (
+                    <button className="btn btn-secondary" disabled={!!downloading} onClick={() => handleDownloadWithFeedback(onDownloadEtsyListing, "etsy")}>
+                      {dlLabel("Etsy Listing (2700x2025)", "etsy")}
                     </button>
                   )}
-                  <button className="btn btn-secondary" onClick={onDownload}>
-                    SVG Source
+                  <button className="btn btn-primary" disabled={!!downloading} onClick={() => handleDownloadWithFeedback(onDownloadEtsyPackage, "etsy-pkg")}>
+                    {dlLabel("Etsy Export Package (ZIP)", "etsy-pkg")}
                   </button>
-                </>
-              ) : (
-                <>
-                  <button className="btn btn-secondary" onClick={onDownload}>
-                    SVG
+                  {result.thumbnail_available && (
+                    <button className="btn btn-secondary" disabled={!!downloading} onClick={() => handleDownloadWithFeedback(onDownloadThumbnail, "mockup")}>
+                      {dlLabel("Etsy Mockup PNG", "mockup")}
+                    </button>
+                  )}
+                  <button className="btn btn-secondary" disabled={!!downloading} onClick={() => handleDownloadWithFeedback(onDownloadPreview, "preview")}>
+                    {dlLabel("Watermarked Preview", "preview")}
+                  </button>
+                  <button className="btn btn-secondary" disabled={!!downloading} onClick={() => handleDownloadWithFeedback(onDownload, "svg")}>
+                    {dlLabel("SVG Source", "svg")}
                   </button>
                   {result.dxf_available && (
-                    <button className="btn btn-secondary" onClick={onDownloadDXF}>
-                      DXF
+                    <button className="btn btn-secondary" disabled={!!downloading} onClick={() => handleDownloadWithFeedback(onDownloadDXF, "dxf")}>
+                      {dlLabel("DXF (VCarve/CAM)", "dxf")}
                     </button>
                   )}
-                  {result.thumbnail_available && (
-                    <button className="btn btn-secondary" onClick={onDownloadThumbnail}>
-                      Mockup PNG
+                  {result.stl_available && (
+                    <button className="btn btn-secondary btn-3d" disabled={!!downloading} onClick={() => handleDownloadWithFeedback(onDownloadSTL, "stl")}>
+                      {dlLabel("3D STL (Bathymetric)", "stl")}
                     </button>
                   )}
-                  {result.print_png_available && (
-                    <button className="btn btn-secondary" onClick={onDownloadPrintPNG}>
-                      Print 300DPI
-                    </button>
-                  )}
-                </>
-              )}
             </div>
           </div>
 
-          {/* AI + Marketplace Section */}
+          {/* Etsy Connection Status */}
+          {user && (
+            <div className="etsy-connection-section">
+              {etsyStatus.connected ? (
+                <div className="etsy-connected">
+                  <span className="etsy-badge">Etsy Connected: {etsyStatus.shop_name || "Your Shop"}</span>
+                  <button className="btn btn-sm btn-secondary" onClick={handleDisconnectEtsy}>
+                    Disconnect
+                  </button>
+                </div>
+              ) : (
+                <button className="btn btn-etsy btn-full" onClick={handleConnectEtsy}>
+                  Connect Etsy Shop
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Sell / Publish Section */}
           {canSell && !showListForm && (
-            <button
-              className="btn btn-marketplace btn-full"
-              onClick={() => {
-                setListTitle(result.location_name);
-                setShowListForm(true);
-                setListSuccess(false);
-                setListError(null);
-              }}
-            >
-              Sell on Marketplace
-            </button>
+            <div className="sell-buttons">
+              <button
+                className="btn btn-marketplace btn-full"
+                onClick={() => {
+                  setListTitle(result.location_name);
+                  setShowListForm(true);
+                  setListSuccess(false);
+                  setListError(null);
+                  setEtsyResult(null);
+                }}
+              >
+                {etsyStatus.connected ? "Sell on Marketplace / Etsy" : "Sell on Marketplace"}
+              </button>
+            </div>
           )}
 
           {showListForm && (
@@ -226,7 +384,7 @@ export default function ExportPanel({
                 <textarea
                   value={listDesc}
                   onChange={(e) => setListDesc(e.target.value)}
-                  placeholder="Describe the design, wood recommendations, CNC settings..."
+                  placeholder="Describe the design, style, and what makes it unique..."
                   maxLength={2000}
                   rows={5}
                   className="list-textarea"
@@ -238,27 +396,51 @@ export default function ExportPanel({
                   type="text"
                   value={listTags}
                   onChange={(e) => setListTags(e.target.value)}
-                  placeholder="lake, cottage, muskoka, cnc"
+                  placeholder="lake, cottage, muskoka, wall art, map print"
                   maxLength={500}
                 />
               </div>
               {listError && <div className="error-message">{listError}</div>}
               {listSuccess && <div className="success-message">Listed on Marketplace!</div>}
-              <button
-                className="btn btn-primary btn-full"
-                onClick={handleList}
-                disabled={listing || listSuccess}
-              >
-                {listing ? "Listing..." : listSuccess ? "Listed!" : "Publish Listing"}
-              </button>
+              {etsyResult && (
+                <div className="success-message">
+                  Draft listing created on Etsy!{" "}
+                  <a href={etsyResult.listing_url} target="_blank" rel="noopener noreferrer">
+                    View on Etsy
+                  </a>
+                </div>
+              )}
+
+              <div className="list-form-actions">
+                <button
+                  className="btn btn-primary btn-full"
+                  onClick={handleList}
+                  disabled={listing || listSuccess}
+                >
+                  {listing ? "Listing..." : listSuccess ? "Listed!" : "Publish to Marketplace"}
+                </button>
+
+                {etsyStatus.connected && (
+                  <button
+                    className="btn btn-etsy btn-full"
+                    onClick={handlePublishToEtsy}
+                    disabled={etsyPublishing || !!etsyResult}
+                  >
+                    {etsyPublishing ? (
+                      <span className="generate-btn-content">
+                        <span className="spinner-inline" /> Publishing to Etsy...
+                      </span>
+                    ) : etsyResult ? (
+                      "Published to Etsy!"
+                    ) : (
+                      "Publish to Etsy (Draft)"
+                    )}
+                  </button>
+                )}
+              </div>
             </div>
           )}
 
-          {!canSell && user && user.tier === "free" && (
-            <p className="export-hint">
-              Upgrade to Maker to sell on the marketplace.
-            </p>
-          )}
         </>
       )}
     </div>

@@ -81,10 +81,13 @@ async def browse_marketplace(
     result = await db.execute(query)
     rows = result.all()
 
-    listings = [
-        _listing_response(listing, file, seller)
-        for listing, file, seller in rows
-    ]
+    listings = []
+    for listing, file, seller in rows:
+        listing.view_count += 1  # track impressions
+        listings.append(_listing_response(listing, file, seller))
+
+    if rows:
+        await db.commit()
 
     return MarketplaceResponse(listings=listings, total=total, page=page, per_page=per_page)
 
@@ -173,27 +176,35 @@ async def purchase_listing(
     platform_fee = int(listing.price_cents * fee_pct / 100)
     seller_payout = listing.price_cents - platform_fee
 
-    # Create payment
-    payment = await create_payment_intent(
-        customer_id=user.stripe_customer_id or "",
-        amount_cents=listing.price_cents,
-        metadata={"listing_id": listing.id, "buyer_id": user.id},
-    )
-
-    # Record purchase
+    # Record purchase first so we have an ID for payment metadata
     purchase = Purchase(
         listing_id=listing.id,
         buyer_id=user.id,
         price_cents=listing.price_cents,
         platform_fee_cents=platform_fee,
         seller_payout_cents=seller_payout,
-        stripe_payment_intent_id=payment["id"],
-        status="completed" if payment["status"] == "succeeded" else "pending",
+        stripe_payment_intent_id="",  # filled after payment created
+        status="pending",
     )
     db.add(purchase)
+    await db.flush()  # generate ID without committing
 
-    # Update listing stats
-    listing.sale_count += 1
+    # Create payment with purchase_id in metadata for webhook processing
+    payment = await create_payment_intent(
+        customer_id=user.stripe_customer_id or "",
+        amount_cents=listing.price_cents,
+        metadata={
+            "listing_id": listing.id,
+            "buyer_id": user.id,
+            "purchase_id": purchase.id,
+        },
+    )
+
+    # Update purchase with payment details
+    purchase.stripe_payment_intent_id = payment["id"]
+    if payment["status"] == "succeeded":
+        purchase.status = "completed"
+        listing.sale_count += 1  # only increment on immediate success
 
     await db.commit()
     await db.refresh(purchase)

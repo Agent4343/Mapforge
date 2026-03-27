@@ -20,8 +20,8 @@ class Settings:
     # Database
     DATABASE_URL: str = _fixup_db_url(os.getenv("DATABASE_URL", "sqlite+aiosqlite:////tmp/mapforge.db"))
 
-    # Auth
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "mapforge-dev-secret-change-in-production")
+    # Auth — SECRET_KEY must be set in production via environment variable
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
     ALGORITHM: str = "HS256"
 
@@ -51,6 +51,9 @@ class Settings:
     # CORS
     FRONTEND_URL: str = os.getenv("FRONTEND_URL", "")
 
+    # Etsy shop URL (shown to customers as the purchase link)
+    ETSY_SHOP_URL: str = os.getenv("ETSY_SHOP_URL", "")
+
     # Redis (optional caching layer)
     REDIS_URL: str = os.getenv("REDIS_URL", "")
     CACHE_TTL_SEARCH: int = 3600  # 1 hour
@@ -66,8 +69,14 @@ class Settings:
     # AI Description Generation (Claude API)
     ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
 
-    # Admin
-    ADMIN_EMAILS: list[str] = ["mathesonashley@hotmail.com"]
+    # Etsy API (OAuth 2.0 — register at https://www.etsy.com/developers)
+    ETSY_API_KEY: str = os.getenv("ETSY_API_KEY", "")
+    ETSY_API_SECRET: str = os.getenv("ETSY_API_SECRET", "")
+    ETSY_REDIRECT_URI: str = os.getenv("ETSY_REDIRECT_URI", "http://localhost:8000/api/v1/etsy/callback")
+    ETSY_WEBHOOK_SECRET: str = os.getenv("ETSY_WEBHOOK_SECRET", "")
+
+    # Admin — set via ADMIN_EMAILS env var (comma-separated)
+    ADMIN_EMAILS: list[str] = [e.strip() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()]
 
     # Seller payouts
     STRIPE_PAYOUT_DELAY_DAYS: int = 7  # Days before payout to sellers

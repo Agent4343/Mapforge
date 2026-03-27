@@ -78,14 +78,14 @@ function applyPrintColors(svg, themeName) {
   return result;
 }
 
-export default function SVGPreview({ svgContent, loading, error, outputMode, colorTheme }) {
+export default function SVGPreview({ svgContent, loading, error, colorTheme }) {
   const [zoom, setZoom] = useState(100);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
   const containerRef = useRef(null);
 
-  const isPrint = outputMode === "print";
+  const isPrint = true; // Always print/poster mode
   const theme = THEME_COLOR_MAPS[colorTheme] || THEME_COLOR_MAPS.classic;
 
   // Make SVG responsive for in-browser display. SVGs with physical mm units
@@ -97,18 +97,18 @@ export default function SVGPreview({ svgContent, loading, error, outputMode, col
 
     let svg = svgContent;
 
-    // Make SVG responsive: replace mm dimensions with CSS-friendly values
-    // The viewBox attribute preserves aspect ratio and internal coordinates
+    // Make SVG responsive: set width to 100% and remove fixed height
+    // so the viewBox attribute controls aspect ratio naturally
     svg = svg.replace(/width="[\d.]+mm"/, 'width="100%"');
-    svg = svg.replace(/height="[\d.]+mm"/, 'height="auto"');
+    svg = svg.replace(/height="[\d.]+mm"/, '');
 
     // In print mode with a backend-generated print SVG, use as-is (already themed)
     if (isPrint && svg.includes('id="mat_border"')) return svg;
 
-    // CNC mode — return as-is (no color remap needed)
+    // Return as-is if no color remap needed
     if (!isPrint) return svg;
 
-    // Fallback: legacy CNC SVG shown in print mode — apply client-side remap
+    // Fallback: apply client-side color remap for older SVGs
     return applyPrintColors(svg, colorTheme || "classic");
   }, [svgContent, isPrint, colorTheme]);
 
@@ -174,7 +174,7 @@ export default function SVGPreview({ svgContent, loading, error, outputMode, col
     return (
       <div className="loading-overlay">
         <div className="spinner" />
-        <p>{isPrint ? "Generating print-ready map..." : "Generating CNC-ready SVG..."}</p>
+        <p>Generating print-ready map...</p>
         <p style={{ fontSize: "10px", color: "var(--text-muted)" }}>
           Fetching geometry, streets, and water features...
         </p>
@@ -193,16 +193,19 @@ export default function SVGPreview({ svgContent, loading, error, outputMode, col
   if (!svgContent) {
     return (
       <div className="preview-empty">
-        <div className="preview-empty-icon">&#9670;</div>
+        <div className="preview-empty-icon" style={{ fontSize: "36px", opacity: 0.2 }}>
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+            <circle cx="12" cy="10" r="3"/>
+          </svg>
+        </div>
         <p>
           Search for a location and click
           <br />
-          <strong>{isPrint ? "Generate Map" : "Generate SVG"}</strong> to preview
+          <strong>Generate Map</strong> to preview
         </p>
         <p style={{ fontSize: "10px", color: "var(--text-muted)", marginTop: "4px" }}>
-          {isPrint
-            ? "Generate colorful street maps for Etsy & print shops"
-            : "Canada, US, and Global locations supported"}
+          Street maps for Etsy, print shops &amp; wall art
         </p>
       </div>
     );
