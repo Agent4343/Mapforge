@@ -147,23 +147,23 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     bounds = geom.bounds  # minx, miny, maxx, maxy
     bbox = (bounds[1], bounds[0], bounds[3], bounds[2])
 
-    # For large areas (provinces, states), only fetch major roads —
-    # residential streets on a province-scale map are too dense to render
-    # well and the Overpass query would be enormous.
+    # Size thresholds for street fetching:
+    #   Cities (<1 deg²): full streets with all road types
+    #   Small provinces (1-30 deg²): full streets — PEI, Nova Scotia, New Brunswick
+    #   Medium provinces (30-80 deg²): major roads only — Saskatchewan, Manitoba
+    #   Very large provinces (>80 deg²): skip streets — Ontario, Quebec, BC, Alberta
     bbox_area_deg2 = (bounds[2] - bounds[0]) * (bounds[3] - bounds[1])
-    is_large_area = bbox_area_deg2 > 4.0  # roughly > 200km x 200km
-    is_very_large_area = bbox_area_deg2 > 25.0  # provinces like Ontario
+    is_medium_area = bbox_area_deg2 > 30.0
+    is_very_large_area = bbox_area_deg2 > 80.0
 
     if is_very_large_area and need_streets:
-        # Skip streets entirely for very large areas — Overpass can't handle it
-        # and streets look like noise at province scale
         log.info(f"Very large area ({bbox_area_deg2:.1f} deg²) — skipping street fetch entirely")
         need_streets = False
-        warnings.append("Street overlay is not available for areas this large. Streets work best with cities and communities.")
-    elif is_large_area and need_streets:
-        log.info(f"Large area ({bbox_area_deg2:.1f} deg²) — fetching major roads only")
+        warnings.append("Street overlay is not available for areas this large. Streets work best with cities and smaller provinces.")
+    elif is_medium_area and need_streets:
+        log.info(f"Medium area ({bbox_area_deg2:.1f} deg²) — fetching major roads only")
 
-    include_minor_streets = req.product_type.value in street_types and not is_large_area
+    include_minor_streets = not is_medium_area
 
     async def _get_streets():
         cache_key = _bbox_cache_key("streets", bbox)
