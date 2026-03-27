@@ -20,7 +20,7 @@ import OrderStatus from "./components/OrderStatus.jsx";
 import {
   generateSVG, generatePin, downloadSVG, downloadDXF, downloadSTL,
   downloadThumbnail, downloadPrintPNG,
-  downloadEtsyListing, downloadEtsyPackage, downloadPreview,
+  downloadEtsyListing, downloadEtsyPackage, downloadPreview, downloadWallMockup,
   getProfile, logout, getToken, subscribe,
   redeemCredit,
 } from "./services/api.js";
@@ -507,6 +507,16 @@ export default function App() {
     }
   }, [result, config.text]);
 
+  const handleDownloadWallMockup = useCallback(async (style = "light_wall") => {
+    if (!result) return;
+    try {
+      const blob = await downloadWallMockup(result.file_id, style);
+      _triggerDownload(blob, config.text + "_wall_mockup_" + style, "png");
+    } catch (err) {
+      setError(err.message);
+    }
+  }, [result, config.text]);
+
   function _triggerDownload(blob, name, ext) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -758,6 +768,7 @@ export default function App() {
             onDownloadEtsyListing={handleDownloadEtsyListing}
             onDownloadEtsyPackage={handleDownloadEtsyPackage}
             onDownloadPreview={handleDownloadPreview}
+            onDownloadWallMockup={handleDownloadWallMockup}
             canGenerate={!!selectedResult || (config.productType === "name_sign" && !!pinCoords)}
             generating={generating}
             user={user}

@@ -34,9 +34,9 @@ from app.services.contour_fetcher import fetch_contour_lines, generate_depth_ban
 from app.services.file_storage import store_file, retrieve_file
 from app.services.thumbnail_generator import (
     generate_thumbnail, generate_print_image, generate_etsy_listing_image,
-    generate_watermarked_preview, calculate_print_pixels,
+    generate_watermarked_preview, generate_wall_mockup, calculate_print_pixels,
     remap_poster_theme,
-    COLOR_THEMES, PRINT_SIZE_PIXELS,
+    COLOR_THEMES, MOCKUP_STYLES, PRINT_SIZE_PIXELS,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["generate"])
@@ -862,6 +862,58 @@ async def download_preview(
     )
 
 
+@router.get("/download/{file_id}/wall-mockup")
+async def download_wall_mockup(
+    file_id: str,
+    style: str = "light_wall",
+    db: AsyncSession = Depends(get_db),
+):
+    """Download a lifestyle wall mockup — the map poster framed on a wall.
+
+    Query params:
+        style: One of 'light_wall', 'dark_wall', 'white_wall', 'brick_wall'.
+    """
+    result = await db.execute(
+        select(GeneratedFile).where(GeneratedFile.id == file_id)
+    )
+    file_record = result.scalar_one_or_none()
+    if not file_record:
+        raise HTTPException(status_code=404, detail="File not found.")
+
+    svg_bytes = await retrieve_file(file_record.svg_storage_key)
+    if svg_bytes is None:
+        raise HTTPException(status_code=404, detail="SVG file not found in storage.")
+
+    if style not in MOCKUP_STYLES:
+        style = "light_wall"
+
+    try:
+        mockup_bytes = generate_wall_mockup(
+            svg_bytes.decode("utf-8"),
+            output_width=3000,
+            output_height=2400,
+            mockup_style=style,
+        )
+    except Exception as e:
+        log.error(f"Wall mockup generation failed: {e}")
+        raise HTTPException(status_code=500, detail="Mockup generation failed.")
+
+    filename = _seo_filename(file_record.location_name, "png", suffix=f"wall-mockup-{style}")
+    return Response(
+        content=mockup_bytes,
+        media_type="image/png",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
+
+
+@router.get("/mockup-styles")
+async def list_mockup_styles():
+    """List available wall mockup styles."""
+    return {key: {"label": val["label"]} for key, val in MOCKUP_STYLES.items()}
+
+
 @router.get("/print-sizes")
 async def list_print_sizes():
     """List available print sizes with pixel dimensions at 300 and 600 DPI."""
@@ -1069,6 +1121,20 @@ async def download_etsy_package(
             thumb_bytes = await retrieve_file(file_record.thumbnail_key)
             if thumb_bytes:
                 zf.writestr(f"{seo_name}-mockup.png", thumb_bytes)
+
+        # 4b. Wall mockups (framed on wall — lifestyle photos for listings)
+        if svg_bytes:
+            try:
+                for mockup_style in ("light_wall", "dark_wall"):
+                    mockup_png = generate_wall_mockup(
+                        svg_bytes.decode("utf-8"),
+                        output_width=3000,
+                        output_height=2400,
+                        mockup_style=mockup_style,
+                    )
+                    zf.writestr(f"{seo_name}-wall-mockup-{mockup_style}.png", mockup_png)
+            except Exception as e:
+                log.warning(f"Wall mockup generation failed (non-fatal): {e}")
 
         # 5. AI-generated listing text (title, description, tags)
         is_city = file_record.product_type == "city"

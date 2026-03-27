@@ -238,6 +238,15 @@ async function downloadPreview(fileId) {
   return resp.blob();
 }
 
+async function downloadWallMockup(fileId, style = "light_wall") {
+  const resp = await fetchWithTimeout(
+    `${API_BASE}/download/${fileId}/wall-mockup?style=${encodeURIComponent(style)}`,
+    { timeout: 45000 },
+  );
+  if (!resp.ok) throw new Error("Wall mockup download failed");
+  return resp.blob();
+}
+
 async function downloadEtsyPackage(fileId) {
   const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}/etsy-package`, {
     timeout: 60000,
@@ -545,7 +554,7 @@ export {
   setToken, getToken, register, login, logout, getProfile, requestPasswordReset, resetPassword, subscribe,
   searchLocations, generateSVG, generatePin, batchGenerate,
   downloadSVG, downloadDXF, downloadSTL, downloadThumbnail, downloadPrintPNG,
-  downloadEtsyListing, downloadEtsyPackage, downloadPreview, getPrintSizes,
+  downloadEtsyListing, downloadEtsyPackage, downloadPreview, downloadWallMockup, getPrintSizes,
   getLibrary, deleteLibraryFile,
   browseMarketplace, createListing, purchaseListing,
   getMyPurchases, updateListing, removeListing,

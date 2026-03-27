@@ -12,6 +12,7 @@ export default function ExportPanel({
   onDownloadEtsyListing,
   onDownloadEtsyPackage,
   onDownloadPreview,
+  onDownloadWallMockup,
   canGenerate,
   generating,
   user,
@@ -285,6 +286,12 @@ export default function ExportPanel({
                       {dlLabel("Etsy Mockup PNG", "mockup")}
                     </button>
                   )}
+                  <button className="btn btn-secondary" disabled={!!downloading} onClick={() => handleDownloadWithFeedback(() => onDownloadWallMockup("light_wall"), "mockup-light")}>
+                    {dlLabel("Wall Mockup (Light)", "mockup-light")}
+                  </button>
+                  <button className="btn btn-secondary" disabled={!!downloading} onClick={() => handleDownloadWithFeedback(() => onDownloadWallMockup("dark_wall"), "mockup-dark")}>
+                    {dlLabel("Wall Mockup (Dark)", "mockup-dark")}
+                  </button>
                   <button className="btn btn-secondary" disabled={!!downloading} onClick={() => handleDownloadWithFeedback(onDownloadPreview, "preview")}>
                     {dlLabel("Watermarked Preview", "preview")}
                   </button>
