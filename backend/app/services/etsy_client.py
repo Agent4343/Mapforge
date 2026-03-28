@@ -68,8 +68,12 @@ def is_configured(creds: Optional[dict] = None) -> bool:
 
 
 def _api_key_header(creds: Optional[dict] = None) -> str:
-    """Build the x-api-key header value: keystring."""
-    return _get_api_key(creds)
+    """Build the x-api-key header value: keystring:shared_secret.
+
+    As of February 2026, Etsy requires both the keystring and shared secret
+    in the x-api-key header, separated by a colon.
+    """
+    return f"{_get_api_key(creds)}:{_get_api_secret(creds)}"
 
 
 def extract_etsy_user_id(access_token: str) -> str:
