@@ -130,7 +130,7 @@ def generate_auth_url(user_id: str, creds: Optional[dict] = None) -> str:
         "response_type": "code",
         "client_id": _get_api_key(creds),
         "redirect_uri": _get_redirect_uri(creds),
-        "scope": "listings_w listings_r shops_r images_w listings_d",
+        "scope": "listings_w listings_r shops_r listings_d",
         "state": user_id,
         "code_challenge": code_challenge,
         "code_challenge_method": "S256",
