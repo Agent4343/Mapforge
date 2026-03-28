@@ -32,6 +32,34 @@ from app.services.file_storage import retrieve_file
 router = APIRouter(prefix="/api/v1/etsy", tags=["etsy"])
 
 
+async def _ensure_shop_info(user: User, db: AsyncSession, creds: dict | None = None):
+    """Lazily fetch and save Etsy shop info if we have a token but no shop_id.
+
+    This handles the case where the OAuth callback succeeded but get_shop()
+    failed (e.g. Etsy API timeout). Rather than blocking the user permanently,
+    retry fetching shop info when they actually need it.
+    """
+    if user.etsy_shop_id:
+        return  # Already have it
+
+    if not user.etsy_access_token:
+        raise HTTPException(status_code=400, detail="Etsy not connected. Connect your shop first.")
+
+    try:
+        access_token = await get_valid_token(user, creds=creds)
+        shop = await get_shop(access_token, creds=creds)
+        user.etsy_shop_id = str(shop["shop_id"])
+        user.etsy_shop_name = shop.get("shop_name", "")
+        await db.commit()
+        log.info("Recovered Etsy shop info: %s (%s)", user.etsy_shop_name, user.etsy_shop_id)
+    except Exception as e:
+        log.error("Failed to recover Etsy shop info: %s", e)
+        raise HTTPException(
+            status_code=400,
+            detail="Could not fetch your Etsy shop info. Try disconnecting and reconnecting your Etsy account.",
+        )
+
+
 # --- Schemas ---
 
 class EtsyPublishRequest(BaseModel):
@@ -219,8 +247,8 @@ async def etsy_publish(
     if not user.etsy_access_token:
         raise HTTPException(status_code=400, detail="Etsy not connected. Connect your shop first.")
 
-    if not user.etsy_shop_id:
-        raise HTTPException(status_code=400, detail="No Etsy shop found. Reconnect your Etsy account.")
+    # Lazily recover shop info if the callback didn't save it
+    await _ensure_shop_info(user, db, creds)
 
     # Get the generated file
     result = await db.execute(
@@ -378,8 +406,9 @@ async def showcase_publish(
         raise HTTPException(status_code=503, detail="Etsy integration is not configured.")
     if not user.etsy_access_token:
         raise HTTPException(status_code=400, detail="Etsy not connected. Connect your shop first.")
-    if not user.etsy_shop_id:
-        raise HTTPException(status_code=400, detail="No Etsy shop found. Reconnect your Etsy account.")
+
+    # Lazily recover shop info if the callback didn't save it
+    await _ensure_shop_info(user, db, creds)
 
     city = req.city
 
