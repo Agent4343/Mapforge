@@ -132,7 +132,7 @@ async def etsy_callback(
     await db.commit()
 
     # Redirect back to the app frontend
-    frontend_url = settings.FRONTEND_URL or "http://localhost:3000"
+    frontend_url = settings.FRONTEND_URL or "https://mapforge-production.up.railway.app"
     return RedirectResponse(url=f"{frontend_url}?etsy_connected=1")
 
 
