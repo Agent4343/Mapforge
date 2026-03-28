@@ -240,7 +240,6 @@ async def get_shop(access_token: str, creds: Optional[dict] = None) -> dict:
     headers = _auth_headers(access_token, creds)
 
     async with httpx.AsyncClient() as client:
-        # First get the user to confirm the token works
         resp = await _request_with_retry(
             client, "GET",
             f"{ETSY_API_BASE}/application/users/{user_id}/shops",
@@ -249,15 +248,21 @@ async def get_shop(access_token: str, creds: Optional[dict] = None) -> dict:
         )
 
     if resp.status_code != 200:
-        raise ValueError(f"Failed to fetch Etsy shop: {resp.status_code}")
+        logger.error("Etsy get_shop failed: %d %s", resp.status_code, resp.text[:500])
+        raise ValueError(f"Failed to fetch Etsy shop: {resp.status_code} — {resp.text[:200]}")
 
     data = resp.json()
+    logger.info("Etsy get_shop response keys: %s", list(data.keys()) if isinstance(data, dict) else type(data))
+
     # The response may be a single shop object or have results array
     if isinstance(data, dict) and "shop_id" in data:
         return data
-    results = data.get("results", [data] if "shop_id" in data else [])
+    # Etsy v3 wraps results in a "results" array for getShopByOwnerUserId
+    results = data.get("results", [])
     if not results:
-        raise ValueError("No Etsy shop found for this account.")
+        # Some Etsy accounts don't have a shop yet
+        logger.warning("Etsy get_shop: no results in response: %s", str(data)[:300])
+        raise ValueError("No Etsy shop found for this account. Make sure you have an active Etsy shop.")
 
     return results[0]
 

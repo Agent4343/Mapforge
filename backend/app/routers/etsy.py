@@ -47,6 +47,15 @@ async def _ensure_shop_info(user: User, db: AsyncSession, creds: dict | None = N
 
     try:
         access_token = await get_valid_token(user, creds=creds)
+        await db.commit()  # persist any refreshed tokens
+    except ValueError as e:
+        log.error("Etsy token refresh failed during shop recovery: %s", e)
+        raise HTTPException(
+            status_code=401,
+            detail=f"Etsy token expired. Please disconnect and reconnect your Etsy account. ({e})",
+        )
+
+    try:
         shop = await get_shop(access_token, creds=creds)
         user.etsy_shop_id = str(shop["shop_id"])
         user.etsy_shop_name = shop.get("shop_name", "")
@@ -56,7 +65,7 @@ async def _ensure_shop_info(user: User, db: AsyncSession, creds: dict | None = N
         log.error("Failed to recover Etsy shop info: %s", e)
         raise HTTPException(
             status_code=400,
-            detail="Could not fetch your Etsy shop info. Try disconnecting and reconnecting your Etsy account.",
+            detail=f"Could not fetch your Etsy shop info: {e}",
         )
 
 
