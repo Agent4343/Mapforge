@@ -1,6 +1,7 @@
 """Etsy integration router — OAuth 2.0 connection and listing publishing."""
 
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
@@ -12,6 +13,7 @@ from app.config import settings
 from app.database import get_db
 from app.logging_config import log
 from app.models.db_models import GeneratedFile, User
+from app.models.schemas import GenerateRequest, ProductType, CutStyle, BoardSize, FontFamily
 from app.services.app_settings import get_etsy_credentials
 from app.services.auth import get_current_user
 from app.services.etsy_client import (
@@ -38,6 +40,35 @@ class EtsyPublishRequest(BaseModel):
     description: str = Field(..., max_length=5000)
     price: float = Field(..., ge=0.20, le=99.99)
     tags: list[str] = Field(default_factory=list, max_length=13)
+
+
+class ShowcaseCity(BaseModel):
+    name: str
+    osm_id: int
+    osm_type: str = "relation"
+    product_type: str = "city"
+    country: str = ""
+    province: str = ""
+
+
+class ShowcasePublishRequest(BaseModel):
+    city: ShowcaseCity
+    color_theme: str = "classic"
+    poster_layout: str = "classic"
+    font_family: str = "sans"
+    board_size: str = "print_16x20"
+    price: float = Field(9.99, ge=0.20, le=99.99)
+    title: Optional[str] = None
+    description: Optional[str] = None
+    tags: Optional[str] = None
+
+
+class ShowcasePublishResponse(BaseModel):
+    listing_id: int
+    listing_url: str
+    file_id: str
+    location_name: str
+    status: str = "draft"
 
 
 class EtsyPublishResponse(BaseModel):
@@ -295,5 +326,251 @@ async def etsy_publish(
     return EtsyPublishResponse(
         listing_id=listing_id,
         listing_url=listing_url,
+        status="draft",
+    )
+
+
+# --- Showcase Preset Cities ---
+
+SHOWCASE_CITIES = [
+    ShowcaseCity(name="New York City", osm_id=175905, osm_type="relation", product_type="city", country="us", province="New York"),
+    ShowcaseCity(name="London", osm_id=65606, osm_type="relation", product_type="city", country="gb", province="England"),
+    ShowcaseCity(name="Paris", osm_id=7444, osm_type="relation", product_type="city", country="fr", province="Île-de-France"),
+    ShowcaseCity(name="Tokyo", osm_id=1543125, osm_type="relation", product_type="city", country="jp", province="Tokyo"),
+    ShowcaseCity(name="Toronto", osm_id=324211, osm_type="relation", product_type="city", country="ca", province="Ontario"),
+    ShowcaseCity(name="San Francisco", osm_id=111968, osm_type="relation", product_type="city", country="us", province="California"),
+    ShowcaseCity(name="Chicago", osm_id=122604, osm_type="relation", product_type="city", country="us", province="Illinois"),
+    ShowcaseCity(name="Sydney", osm_id=5750005, osm_type="relation", product_type="city", country="au", province="New South Wales"),
+    ShowcaseCity(name="Amsterdam", osm_id=47811, osm_type="relation", product_type="city", country="nl", province="North Holland"),
+    ShowcaseCity(name="Barcelona", osm_id=347950, osm_type="relation", product_type="city", country="es", province="Catalonia"),
+    ShowcaseCity(name="Rome", osm_id=41485, osm_type="relation", product_type="city", country="it", province="Lazio"),
+    ShowcaseCity(name="Berlin", osm_id=62422, osm_type="relation", product_type="city", country="de", province="Berlin"),
+    ShowcaseCity(name="Halifax", osm_id=10178893, osm_type="relation", product_type="city", country="ca", province="Nova Scotia"),
+    ShowcaseCity(name="Vancouver", osm_id=1852574, osm_type="relation", product_type="city", country="ca", province="British Columbia"),
+    ShowcaseCity(name="Los Angeles", osm_id=207359, osm_type="relation", product_type="city", country="us", province="California"),
+    ShowcaseCity(name="Miami", osm_id=1216769, osm_type="relation", product_type="city", country="us", province="Florida"),
+]
+
+
+@router.get("/showcase-cities")
+async def get_showcase_cities(user: User = Depends(get_current_user)):
+    """Get list of preset showcase cities for quick Etsy publishing. Admin only."""
+    if user.tier != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required.")
+    return [c.model_dump() for c in SHOWCASE_CITIES]
+
+
+@router.post("/showcase-publish", response_model=ShowcasePublishResponse)
+async def showcase_publish(
+    req: ShowcasePublishRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate a map for a showcase city and publish it to Etsy as a draft listing.
+
+    Admin only. This is a one-click workflow: generate map → AI description → publish to Etsy.
+    """
+    if user.tier != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required.")
+
+    creds = await get_etsy_credentials(db)
+    if not is_configured(creds):
+        raise HTTPException(status_code=503, detail="Etsy integration is not configured.")
+    if not user.etsy_access_token:
+        raise HTTPException(status_code=400, detail="Etsy not connected. Connect your shop first.")
+    if not user.etsy_shop_id:
+        raise HTTPException(status_code=400, detail="No Etsy shop found. Reconnect your Etsy account.")
+
+    city = req.city
+
+    # 1. Generate the map using the same core engine
+    from app.routers.generate import _do_generate
+    gen_req = GenerateRequest(
+        osm_id=city.osm_id,
+        osm_type=city.osm_type,
+        product_type=ProductType(city.product_type),
+        board_size=BoardSize(req.board_size),
+        style=CutStyle.filled,
+        text=city.name,
+        subtitle="",
+        show_coordinates=True,
+        font_family=FontFamily(req.font_family),
+        color_theme=req.color_theme,
+        poster_layout=req.poster_layout,
+        show_compass=False,
+        show_scale_bar=False,
+        gradient_water=True,
+        land_shadow=True,
+        include_streets=True,
+        print_dpi=300,
+    )
+
+    try:
+        gen_result = await _do_generate(gen_req, user, db)
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error("Showcase generation failed for %s: %s", city.name, e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Map generation failed for {city.name}: {e}")
+
+    if not gen_result.file_id:
+        raise HTTPException(status_code=500, detail="Map generation did not produce a saved file.")
+
+    # 2. Generate AI title/description/tags (or use provided ones)
+    title = req.title
+    description = req.description
+    tags_str = req.tags
+
+    if not title or not description:
+        try:
+            from app.services.ai_description_generator import generate_full_listing as ai_generate_listing
+            ai_result = await ai_generate_listing(
+                location_name=city.name,
+                style="filled",
+                country=city.country,
+                is_city=True,
+                province=city.province,
+                has_streets=True,
+            )
+            if not title:
+                title = ai_result.get("title", f"{city.name} Map Print - City Street Map Poster")
+            if not description:
+                description = ai_result.get("description", f"Beautiful map poster of {city.name}. High-quality digital download with street-level detail.")
+            if not tags_str:
+                tags_str = ai_result.get("tags", f"{city.name} map, city map, map print, wall art, poster")
+        except Exception as e:
+            log.warning("AI description failed for showcase %s: %s", city.name, e)
+            if not title:
+                title = f"{city.name} Map Print - City Street Map Poster Wall Art"
+            if not description:
+                description = (
+                    f"Beautiful map poster of {city.name}. "
+                    "Detailed street-level map art perfect for home decor. "
+                    "High-quality digital download includes print-ready PNG and SVG source file. "
+                    "Map data © OpenStreetMap contributors."
+                )
+            if not tags_str:
+                tags_str = f"{city.name} map, city map, map print, wall art, poster, street map, home decor"
+
+    tag_list = [t.strip() for t in tags_str.split(",") if t.strip()][:13]
+
+    # 3. Get the generated file record for image uploads
+    result = await db.execute(
+        select(GeneratedFile).where(GeneratedFile.id == gen_result.file_id)
+    )
+    file_record = result.scalar_one_or_none()
+    if not file_record:
+        raise HTTPException(status_code=500, detail="Generated file not found in database.")
+
+    # 4. Get valid Etsy token
+    try:
+        access_token = await get_valid_token(user, creds=creds)
+        await db.commit()
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+    shop_id = user.etsy_shop_id
+
+    # 5. Create draft listing on Etsy
+    try:
+        listing = await create_draft_listing(
+            access_token=access_token,
+            shop_id=shop_id,
+            title=title[:140],
+            description=description,
+            price=req.price,
+            tags=tag_list,
+            creds=creds,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=502, detail=f"Etsy API error: {e}")
+
+    listing_id = listing["listing_id"]
+
+    # 6. Upload listing images
+    etsy_key = file_record.svg_storage_key.replace("svg/", "etsy/").replace(".svg", "_etsy.png")
+    etsy_img = await retrieve_file(etsy_key)
+    if etsy_img:
+        try:
+            await upload_listing_image(
+                access_token=access_token,
+                shop_id=shop_id,
+                listing_id=listing_id,
+                image_bytes=etsy_img,
+                filename=f"{city.name.replace(' ', '_')}_listing.png",
+                creds=creds,
+            )
+        except ValueError as e:
+            log.warning("Showcase image upload failed: %s", e)
+
+    # Upload thumbnail as second image
+    if file_record.thumbnail_key:
+        thumb_bytes = await retrieve_file(file_record.thumbnail_key)
+        if thumb_bytes:
+            try:
+                await upload_listing_image(
+                    access_token=access_token,
+                    shop_id=shop_id,
+                    listing_id=listing_id,
+                    image_bytes=thumb_bytes,
+                    filename=f"{city.name.replace(' ', '_')}_mockup.png",
+                    rank=2,
+                    creds=creds,
+                )
+            except ValueError as e:
+                log.warning("Showcase thumbnail upload failed: %s", e)
+
+    # Upload wall mockup as third image
+    try:
+        from app.services.thumbnail_generator import generate_wall_mockup
+        if file_record.svg_storage_key:
+            svg_bytes = await retrieve_file(file_record.svg_storage_key)
+            if svg_bytes:
+                mockup_bytes = generate_wall_mockup(svg_bytes.decode("utf-8"), style="light_wall")
+                await upload_listing_image(
+                    access_token=access_token,
+                    shop_id=shop_id,
+                    listing_id=listing_id,
+                    image_bytes=mockup_bytes,
+                    filename=f"{city.name.replace(' ', '_')}_wall_mockup.png",
+                    rank=3,
+                    creds=creds,
+                )
+    except Exception as e:
+        log.warning("Showcase wall mockup upload failed: %s", e)
+
+    # 7. Upload instruction file + set as digital download
+    try:
+        from app.services.etsy_client import generate_instruction_file
+        instruction_bytes = generate_instruction_file(
+            shop_name=user.etsy_shop_name or "MapForgeDesign",
+            frontend_url=settings.FRONTEND_URL or "https://mapforge-production.up.railway.app",
+        )
+        await upload_listing_file(
+            access_token=access_token,
+            shop_id=shop_id,
+            listing_id=listing_id,
+            file_bytes=instruction_bytes,
+            filename="MapForge_Your_Custom_Map_Instructions.txt",
+            creds=creds,
+        )
+        await update_listing_type(
+            access_token=access_token,
+            shop_id=shop_id,
+            listing_id=listing_id,
+            listing_type="download",
+            creds=creds,
+        )
+    except ValueError as e:
+        log.warning("Showcase digital file upload failed: %s", e)
+
+    listing_url = f"https://www.etsy.com/listing/{listing_id}"
+    log.info("Showcase published: %s → Etsy listing %d", city.name, listing_id)
+
+    return ShowcasePublishResponse(
+        listing_id=listing_id,
+        listing_url=listing_url,
+        file_id=gen_result.file_id,
+        location_name=city.name,
         status="draft",
     )

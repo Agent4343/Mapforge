@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { createListing, aiDescribe, getEtsyStatus, connectEtsy, disconnectEtsy, publishToEtsy } from "../services/api.js";
+import { createListing, aiDescribe, getEtsyStatus, connectEtsy, disconnectEtsy, publishToEtsy, getShowcaseCities, showcasePublish } from "../services/api.js";
 
 export default function ExportPanel({
   result,
@@ -36,6 +36,16 @@ export default function ExportPanel({
   const [etsyPublishing, setEtsyPublishing] = useState(false);
   const [etsyResult, setEtsyResult] = useState(null);
 
+  // Showcase state
+  const [showcaseCities, setShowcaseCities] = useState([]);
+  const [showShowcase, setShowShowcase] = useState(false);
+  const [showcasePublishing, setShowcasePublishing] = useState(null); // city name being published
+  const [showcaseResults, setShowcaseResults] = useState({}); // {cityName: {listing_url, ...}}
+  const [showcaseError, setShowcaseError] = useState(null);
+  const [showcaseTheme, setShowcaseTheme] = useState("classic");
+  const [showcaseLayout, setShowcaseLayout] = useState("classic");
+  const [showcasePrice, setShowcasePrice] = useState("9.99");
+
   const isPrint = true;
 
   useEffect(() => {
@@ -52,6 +62,30 @@ export default function ExportPanel({
       window.history.replaceState({}, "", window.location.pathname);
     }
   }, []);
+
+  // Load showcase cities when admin opens the showcase panel
+  useEffect(() => {
+    if (showShowcase && showcaseCities.length === 0 && isAdmin) {
+      getShowcaseCities().then(setShowcaseCities).catch(() => {});
+    }
+  }, [showShowcase]);
+
+  async function handleShowcasePublish(city) {
+    setShowcasePublishing(city.name);
+    setShowcaseError(null);
+    try {
+      const res = await showcasePublish(city, {
+        color_theme: showcaseTheme,
+        poster_layout: showcaseLayout,
+        price: parseFloat(showcasePrice) || 9.99,
+      });
+      setShowcaseResults((prev) => ({ ...prev, [city.name]: res }));
+    } catch (err) {
+      setShowcaseError(`${city.name}: ${err.message}`);
+    } finally {
+      setShowcasePublishing(null);
+    }
+  }
 
   async function handleDownloadWithFeedback(fn, key) {
     setDownloading(key);
@@ -202,8 +236,121 @@ export default function ExportPanel({
               Connect Etsy Shop
             </button>
           )}
-          {etsyStatus.connected && (
-            <p className="export-hint">Generate a map above, then publish it to Etsy.</p>
+          {etsyStatus.connected && !showShowcase && (
+            <div>
+              <p className="export-hint">Generate a map above, then publish it to Etsy.</p>
+              <button
+                className="btn btn-marketplace btn-full"
+                style={{ marginTop: "8px" }}
+                onClick={() => setShowShowcase(true)}
+              >
+                Push Showcase Maps to Etsy
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Showcase Maps Panel — admin only, push preset cities to Etsy */}
+      {isAdmin && showShowcase && etsyStatus.connected && (
+        <div className="showcase-panel">
+          <div className="list-form-header">
+            <h3>Showcase Maps</h3>
+            <button className="list-form-close" onClick={() => setShowShowcase(false)}>&times;</button>
+          </div>
+          <p className="export-hint">One-click generate + publish maps to your Etsy shop as draft listings.</p>
+
+          <div className="showcase-options">
+            <div className="control-group">
+              <label>Theme</label>
+              <select value={showcaseTheme} onChange={(e) => setShowcaseTheme(e.target.value)}>
+                <option value="classic">Classic</option>
+                <option value="modern_dark">Modern Dark</option>
+                <option value="midnight">Midnight</option>
+                <option value="rose_gold">Rose Gold</option>
+                <option value="sage">Sage</option>
+                <option value="minimal">Minimal</option>
+                <option value="ocean_depths">Ocean Depths</option>
+                <option value="sunset_warm">Sunset Warm</option>
+                <option value="nordic_frost">Nordic Frost</option>
+                <option value="desert_sand">Desert Sand</option>
+                <option value="forest_green">Forest Green</option>
+                <option value="lavender_mist">Lavender Mist</option>
+                <option value="charcoal_gold">Charcoal Gold</option>
+                <option value="coastal_blue">Coastal Blue</option>
+                <option value="vintage_sepia">Vintage Sepia</option>
+              </select>
+            </div>
+            <div className="control-group">
+              <label>Layout</label>
+              <select value={showcaseLayout} onChange={(e) => setShowcaseLayout(e.target.value)}>
+                <option value="classic">Classic</option>
+                <option value="minimal">Minimal</option>
+                <option value="editorial">Editorial</option>
+                <option value="bold">Bold</option>
+                <option value="vintage">Vintage</option>
+              </select>
+            </div>
+            <div className="control-group">
+              <label>Price (USD)</label>
+              <input
+                type="number"
+                min="1.99"
+                max="99.99"
+                step="0.01"
+                value={showcasePrice}
+                onChange={(e) => setShowcasePrice(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {showcaseError && <div className="error-message">{showcaseError}</div>}
+
+          <div className="showcase-cities-grid">
+            {showcaseCities.map((city) => {
+              const published = showcaseResults[city.name];
+              const isPublishing = showcasePublishing === city.name;
+              return (
+                <div key={city.osm_id} className="showcase-city-card">
+                  <span className="showcase-city-name">{city.name}</span>
+                  <span className="showcase-city-region">{city.province}, {city.country.toUpperCase()}</span>
+                  {published ? (
+                    <a
+                      href={published.listing_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn btn-sm btn-secondary showcase-done-btn"
+                    >
+                      View on Etsy
+                    </a>
+                  ) : (
+                    <button
+                      className="btn btn-sm btn-etsy"
+                      disabled={!!showcasePublishing}
+                      onClick={() => handleShowcasePublish(city)}
+                    >
+                      {isPublishing ? (
+                        <span className="generate-btn-content">
+                          <span className="spinner-inline" /> Publishing...
+                        </span>
+                      ) : (
+                        "Publish"
+                      )}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {showcaseCities.length === 0 && (
+            <p className="export-hint">Loading showcase cities...</p>
+          )}
+
+          {Object.keys(showcaseResults).length > 0 && (
+            <p className="success-message">
+              {Object.keys(showcaseResults).length} listing(s) published as drafts on Etsy!
+            </p>
           )}
         </div>
       )}

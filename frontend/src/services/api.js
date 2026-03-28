@@ -458,6 +458,44 @@ async function publishToEtsy(fileId, title, description, price, tags) {
   return resp.json();
 }
 
+async function getShowcaseCities() {
+  const resp = await fetchWithTimeout(`${API_BASE}/etsy/showcase-cities`, {
+    headers: { Authorization: `Bearer ${authToken}` },
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Failed to load showcase cities"));
+  }
+  return resp.json();
+}
+
+async function showcasePublish(city, options = {}) {
+  const resp = await fetchWithTimeout(`${API_BASE}/etsy/showcase-publish`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${authToken}`,
+    },
+    body: JSON.stringify({
+      city,
+      color_theme: options.color_theme || "classic",
+      poster_layout: options.poster_layout || "classic",
+      font_family: options.font_family || "sans",
+      board_size: options.board_size || "print_16x20",
+      price: options.price || 9.99,
+      title: options.title || null,
+      description: options.description || null,
+      tags: options.tags || null,
+    }),
+    timeout: 180000,
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Showcase publish failed"));
+  }
+  return resp.json();
+}
+
 async function getAdminStats() {
   const resp = await fetchWithTimeout(`${API_BASE}/admin/stats`, {
     headers: { Authorization: `Bearer ${authToken}` },
@@ -561,6 +599,7 @@ export {
   getSellerDashboard, submitReview, getReviews,
   aiDescribe,
   getEtsyStatus, connectEtsy, disconnectEtsy, publishToEtsy,
+  getShowcaseCities, showcasePublish,
   getAdminStats, getEtsySettings, saveEtsySettings, clearEtsySettings,
   redeemCredit, generateForCredit, getCreditStatus, downloadCreditFile,
 };
