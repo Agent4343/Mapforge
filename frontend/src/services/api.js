@@ -496,6 +496,17 @@ async function showcasePublish(city, options = {}) {
   return resp.json();
 }
 
+async function getEtsyDebug() {
+  const resp = await fetchWithTimeout(`${API_BASE}/admin/etsy-debug`, {
+    headers: { Authorization: `Bearer ${authToken}` },
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Debug check failed"));
+  }
+  return resp.json();
+}
+
 async function getAdminStats() {
   const resp = await fetchWithTimeout(`${API_BASE}/admin/stats`, {
     headers: { Authorization: `Bearer ${authToken}` },
@@ -600,6 +611,6 @@ export {
   aiDescribe,
   getEtsyStatus, connectEtsy, disconnectEtsy, publishToEtsy,
   getShowcaseCities, showcasePublish,
-  getAdminStats, getEtsySettings, saveEtsySettings, clearEtsySettings,
+  getEtsyDebug, getAdminStats, getEtsySettings, saveEtsySettings, clearEtsySettings,
   redeemCredit, generateForCredit, getCreditStatus, downloadCreditFile,
 };
