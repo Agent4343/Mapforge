@@ -82,6 +82,15 @@ async def etsy_connect(
         raise HTTPException(status_code=503, detail="Etsy integration is not configured. Set ETSY_API_KEY and ETSY_API_SECRET.")
 
     auth_url = generate_auth_url(user.id, creds=creds)
+
+    # Persist the PKCE verifier to the database so it survives server restarts.
+    # The in-memory _pkce_store is set by generate_auth_url; copy it to the user row.
+    from app.services.etsy_client import _pkce_store
+    verifier = _pkce_store.get(user.id)
+    if verifier:
+        user.etsy_pkce_verifier = verifier
+        await db.commit()
+
     return {"auth_url": auth_url}
 
 
@@ -111,10 +120,18 @@ async def etsy_callback(
 
     creds = await get_etsy_credentials(db)
 
+    # Restore PKCE verifier from database if not in memory (e.g. after server restart)
+    from app.services.etsy_client import _pkce_store
+    if user_id not in _pkce_store and user.etsy_pkce_verifier:
+        _pkce_store[user_id] = user.etsy_pkce_verifier
+
     try:
         tokens = await exchange_code(user_id, code, creds=creds)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    # Clear the stored verifier
+    user.etsy_pkce_verifier = None
 
     # Save tokens
     user.etsy_access_token = tokens["access_token"]
