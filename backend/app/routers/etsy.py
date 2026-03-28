@@ -410,6 +410,17 @@ async def showcase_publish(
     if user.tier != "admin":
         raise HTTPException(status_code=403, detail="Admin access required.")
 
+    try:
+        return await _do_showcase_publish(req, user, db)
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error("Showcase publish failed for %s: %s", req.city.name, e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Showcase publish failed for {req.city.name}: {type(e).__name__}: {e}")
+
+
+async def _do_showcase_publish(req: ShowcasePublishRequest, user: User, db: AsyncSession) -> ShowcasePublishResponse:
+
     creds = await get_etsy_credentials(db)
     if not is_configured(creds):
         raise HTTPException(status_code=503, detail="Etsy integration is not configured.")
