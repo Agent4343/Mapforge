@@ -123,13 +123,23 @@ async def _fetch_with_fallback(query: str, timeout_per_endpoint: float = 20.0, t
             result = await _try_endpoint(client, endpoint, query)
             if result is not None:
                 return result
+
+    # Second chance: wait and retry the primary endpoint
+    log.warning("All Overpass endpoints failed for streets — waiting 3s for second chance")
+    await asyncio.sleep(3.0)
+    async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
+        result = await _try_endpoint(client, OVERPASS_ENDPOINTS[0], query)
+        if result is not None:
+            log.info("Second-chance street fetch succeeded")
+            return result
+
     return None
 
 
 def _build_area_query(area_id: int, highway_filter: str) -> str:
     """Build an Overpass area query (for relations with known OSM ID)."""
     return (
-        f'[out:json][timeout:45];'
+        f'[out:json][timeout:30];'
         f'area({area_id})->.a;'
         f'way["highway"~"^({highway_filter})$"](area.a);'
         f'out body;>;out skel qt;'
@@ -140,7 +150,7 @@ def _build_bbox_query(bbox: tuple, highway_filter: str) -> str:
     """Build an Overpass bbox query."""
     south, west, north, east = bbox
     return (
-        f'[out:json][timeout:45];'
+        f'[out:json][timeout:30];'
         f'way["highway"~"^({highway_filter})$"]({south},{west},{north},{east});'
         f'out body;>;out skel qt;'
     )

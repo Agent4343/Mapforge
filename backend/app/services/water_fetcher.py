@@ -93,7 +93,17 @@ async def _fetch_overpass_with_retry(query: str) -> dict | None:
             if result is not None:
                 return result
 
-    log.error("All Overpass endpoints failed for water fetch")
+    # Second chance: wait 3 seconds and try the primary endpoint one more time.
+    # Often Overpass is just momentarily busy and recovers quickly.
+    log.warning("All Overpass endpoints failed for water — waiting 3s for second chance")
+    await asyncio.sleep(3.0)
+    async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
+        result = await _try_endpoint(client, OVERPASS_ENDPOINTS[0], query)
+        if result is not None:
+            log.info("Second-chance water fetch succeeded")
+            return result
+
+    log.error("All Overpass endpoints failed for water fetch (including retry)")
     return None
 
 
@@ -111,20 +121,10 @@ async def fetch_water_features(
     """
     south, west, north, east = bbox
 
-    query = f"""
-    [out:json][timeout:45];
-    (
-      way["natural"="water"]({south},{west},{north},{east});
-      way["natural"="coastline"]({south},{west},{north},{east});
-      way["waterway"~"^(river|stream|canal)$"]({south},{west},{north},{east});
-      relation["natural"="water"]({south},{west},{north},{east});
-      way["water"~"^(lake|reservoir|pond|river)$"]({south},{west},{north},{east});
-      relation["water"~"^(lake|reservoir|pond|river)$"]({south},{west},{north},{east});
-    );
-    out body;
-    >;
-    out skel qt;
-    """
+    # Simplified query — combine water selectors to reduce Overpass load.
+    # Using a shorter timeout (30s instead of 45s) to fail faster and try
+    # the next endpoint sooner.
+    query = f"""[out:json][timeout:30];(way["natural"="water"]({south},{west},{north},{east});way["natural"="coastline"]({south},{west},{north},{east});way["waterway"~"^(river|stream|canal)$"]({south},{west},{north},{east});relation["natural"="water"]({south},{west},{north},{east});way["water"~"^(lake|reservoir|pond)$"]({south},{west},{north},{east});relation["water"~"^(lake|reservoir|pond)$"]({south},{west},{north},{east}););out body;>;out skel qt;"""
 
     log.info(f"Fetching water features for bbox: {bbox}")
 
