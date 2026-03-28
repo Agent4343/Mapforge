@@ -73,7 +73,15 @@ def _api_key_header(creds: Optional[dict] = None) -> str:
     As of February 2026, Etsy requires both the keystring and shared secret
     in the x-api-key header, separated by a colon.
     """
-    return f"{_get_api_key(creds)}:{_get_api_secret(creds)}"
+    key = (_get_api_key(creds) or "").strip()
+    secret = (_get_api_secret(creds) or "").strip()
+    if not key or not secret:
+        logger.error("Etsy API credentials incomplete: key=%s, secret=%s",
+                     bool(key), bool(secret))
+    header_val = f"{key}:{secret}"
+    # Log a masked version for debugging (first 8 chars of each)
+    logger.debug("x-api-key header: %s...:%s...", key[:8], secret[:8])
+    return header_val
 
 
 def extract_etsy_user_id(access_token: str) -> str:
@@ -252,7 +260,11 @@ async def get_shop(access_token: str, creds: Optional[dict] = None) -> dict:
         )
 
     if resp.status_code != 200:
-        logger.error("Etsy get_shop failed: %d %s", resp.status_code, resp.text[:500])
+        # Log the key format (masked) for debugging auth issues
+        hdr = headers.get("x-api-key", "")
+        parts = hdr.split(":")
+        masked = f"{parts[0][:8]}...({len(parts[0])}chars):{parts[1][:8]}...({len(parts[1])}chars)" if len(parts) == 2 else f"INVALID_FORMAT({hdr[:20]})"
+        logger.error("Etsy get_shop failed: %d %s | x-api-key format: %s", resp.status_code, resp.text[:500], masked)
         raise ValueError(f"Failed to fetch Etsy shop: {resp.status_code} — {resp.text[:200]}")
 
     data = resp.json()
