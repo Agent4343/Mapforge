@@ -182,7 +182,7 @@ export default function ExportPanel({
       const res = await publishToEtsy(
         result.file_id,
         listTitle || result.location_name,
-        listDesc || `Beautiful CNC-ready map of ${result.location_name}. Digital download includes SVG source file.`,
+        listDesc || `Beautiful map poster of ${result.location_name}. High-quality digital download includes print-ready PNG and SVG vector source file.`,
         parseFloat(listPrice) || 9.99,
         listTags,
       );
@@ -352,6 +352,14 @@ export default function ExportPanel({
               {Object.keys(showcaseResults).length} listing(s) published as drafts on Etsy!
             </p>
           )}
+
+          <div className="showcase-info">
+            <p className="export-hint" style={{ marginTop: "12px", fontSize: "11px", lineHeight: "1.5" }}>
+              <strong>Pre-made maps</strong> — buyers get the actual PNG + SVG files instantly after purchase.
+              <br />
+              <strong>Custom maps</strong> — use the regular "Sell on Marketplace / Etsy" button after generating any map. Buyers get a design credit to create their own.
+            </p>
+          </div>
         </div>
       )}
 

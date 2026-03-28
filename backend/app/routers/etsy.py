@@ -539,21 +539,50 @@ async def showcase_publish(
     except Exception as e:
         log.warning("Showcase wall mockup upload failed: %s", e)
 
-    # 7. Upload instruction file + set as digital download
+    # 7. Upload actual map files as digital downloads (pre-made, not instruction file)
+    #    Showcase maps are ready-to-print — buyers get the real files immediately.
+    file_rank = 1
+
+    # Upload print-ready PNG as primary download
+    if file_record.print_png_key:
+        print_png_bytes = await retrieve_file(file_record.print_png_key)
+        if print_png_bytes:
+            try:
+                safe_name = city.name.replace(" ", "_").replace(",", "")
+                await upload_listing_file(
+                    access_token=access_token,
+                    shop_id=shop_id,
+                    listing_id=listing_id,
+                    file_bytes=print_png_bytes,
+                    filename=f"{safe_name}_Map_Print_300DPI.png",
+                    rank=file_rank,
+                    creds=creds,
+                )
+                file_rank += 1
+            except ValueError as e:
+                log.warning("Showcase PNG file upload failed: %s", e)
+
+    # Upload SVG source as second download
+    if file_record.svg_storage_key:
+        svg_bytes = await retrieve_file(file_record.svg_storage_key)
+        if svg_bytes:
+            try:
+                safe_name = city.name.replace(" ", "_").replace(",", "")
+                await upload_listing_file(
+                    access_token=access_token,
+                    shop_id=shop_id,
+                    listing_id=listing_id,
+                    file_bytes=svg_bytes,
+                    filename=f"{safe_name}_Map_Vector.svg",
+                    rank=file_rank,
+                    creds=creds,
+                )
+                file_rank += 1
+            except ValueError as e:
+                log.warning("Showcase SVG file upload failed: %s", e)
+
+    # Mark listing as digital download
     try:
-        from app.services.etsy_client import generate_instruction_file
-        instruction_bytes = generate_instruction_file(
-            shop_name=user.etsy_shop_name or "MapForgeDesign",
-            frontend_url=settings.FRONTEND_URL or "https://mapforge-production.up.railway.app",
-        )
-        await upload_listing_file(
-            access_token=access_token,
-            shop_id=shop_id,
-            listing_id=listing_id,
-            file_bytes=instruction_bytes,
-            filename="MapForge_Your_Custom_Map_Instructions.txt",
-            creds=creds,
-        )
         await update_listing_type(
             access_token=access_token,
             shop_id=shop_id,
@@ -562,7 +591,7 @@ async def showcase_publish(
             creds=creds,
         )
     except ValueError as e:
-        log.warning("Showcase digital file upload failed: %s", e)
+        log.warning("Showcase listing type update failed: %s", e)
 
     listing_url = f"https://www.etsy.com/listing/{listing_id}"
     log.info("Showcase published: %s → Etsy listing %d", city.name, listing_id)
