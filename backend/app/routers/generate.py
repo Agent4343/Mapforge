@@ -213,14 +213,24 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         return None
 
     # Fetch streets, water, and contours concurrently to minimise total wall time.
-    # Running them in parallel avoids sequential Overpass round-trips that can
-    # push total generation time past Railway's 60-second proxy timeout.
+    # Streets and water are staggered by 0.5s to reduce Overpass load —
+    # hitting the same server with two heavy queries simultaneously often
+    # causes both to fail with 429/timeout.
     contour_data = None
+
+    async def _get_streets_staggered():
+        return await _get_streets()
+
+    async def _get_water_staggered():
+        if need_streets:
+            await asyncio.sleep(0.5)  # stagger to reduce Overpass contention
+        return await _get_water()
+
     tasks = []
     if need_streets:
-        tasks.append(("streets", _get_streets()))
+        tasks.append(("streets", _get_streets_staggered()))
     if need_water:
-        tasks.append(("water", _get_water()))
+        tasks.append(("water", _get_water_staggered()))
     if req.include_contours:
         tasks.append(("contours", _get_contours()))
 

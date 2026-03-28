@@ -53,9 +53,15 @@ async def _try_endpoint(client: httpx.AsyncClient, endpoint: str, query: str) ->
         resp = await client.post(endpoint, data={"data": query}, headers=REQUEST_HEADERS)
 
         if resp.status_code == 429:
-            retry_after = resp.headers.get("retry-after", "5")
-            log.warning(f"Overpass 429 from {endpoint}, retry-after={retry_after}")
-            return None
+            retry_after = int(resp.headers.get("retry-after", "5"))
+            retry_after = min(retry_after, 8)  # cap wait to 8 seconds
+            log.warning(f"Overpass 429 from {endpoint}, waiting {retry_after}s and retrying")
+            await asyncio.sleep(retry_after)
+            # Retry once after waiting
+            resp = await client.post(endpoint, data={"data": query}, headers=REQUEST_HEADERS)
+            if resp.status_code != 200:
+                log.warning(f"Overpass retry still failed: HTTP {resp.status_code}")
+                return None
 
         if resp.status_code == 504:
             log.warning(f"Overpass 504 timeout from {endpoint}")
@@ -70,10 +76,8 @@ async def _try_endpoint(client: httpx.AsyncClient, endpoint: str, query: str) ->
         if "remark" in data:
             remark = data["remark"]
             log.warning(f"Overpass remark from {endpoint}: {remark[:120]}")
-            # "runtime error" usually means query too complex/large
             if "runtime" in remark.lower() or "timeout" in remark.lower():
                 return None
-            # Other remarks (e.g. "Area ... not found") — still no data
             return None
 
         if not data.get("elements"):
@@ -94,22 +98,26 @@ async def _try_endpoint(client: httpx.AsyncClient, endpoint: str, query: str) ->
 async def _fetch_with_fallback(query: str, timeout_per_endpoint: float = 20.0, total_budget: float = 30.0) -> dict | None:
     """Try Overpass endpoints sequentially with a hard total time limit.
 
-    Each endpoint gets a limited timeout. The entire operation is bounded
-    by total_budget so we never block the HTTP response for too long.
+    Each endpoint gets a limited timeout. A small delay between attempts
+    avoids hammering Overpass when it's under load. If an endpoint returns
+    429, we honor the retry-after header and try again.
     """
     start = time.monotonic()
     async with httpx.AsyncClient(timeout=timeout_per_endpoint, follow_redirects=True) as client:
-        for endpoint in OVERPASS_ENDPOINTS:
+        for i, endpoint in enumerate(OVERPASS_ENDPOINTS):
             elapsed = time.monotonic() - start
             if elapsed >= total_budget:
                 log.warning(f"Street fetch budget exhausted ({elapsed:.0f}s)")
                 break
 
             remaining = total_budget - elapsed
-            # Reduce timeout if we're running low on budget
             ep_timeout = min(timeout_per_endpoint, remaining)
             if ep_timeout < 5:
                 break
+
+            # Small delay between endpoint attempts to reduce Overpass load
+            if i > 0:
+                await asyncio.sleep(1.0)
 
             client.timeout = httpx.Timeout(ep_timeout)
             result = await _try_endpoint(client, endpoint, query)
