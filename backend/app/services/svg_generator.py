@@ -1009,12 +1009,12 @@ def _generate_vintage_map_svg(
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # Vintage color palette — monochrome ink on parchment
-    ink = "#2a2018"          # Dark brown-black ink
-    ink_light = "#4a3828"    # Lighter ink for minor features
-    ink_faint = "#6a5848"    # Faint ink for detail roads
-    parchment = "#f0e6d0"   # Base parchment color
-    parchment_dark = "#d8c8a8"  # Aged/stained areas
-    water_outline = "#3a3020"   # Water boundary ink
+    ink = "#1e1810"          # Dark brown-black ink
+    ink_light = "#3a2e20"    # Lighter ink for minor features
+    ink_faint = "#5a4a38"    # Faint ink for detail roads
+    parchment = "#e8dcc0"   # Base parchment color
+    parchment_edge = "#c8b890"  # Darker edge color for vignette
+    water_tint = "#d0c4a4"  # Subtle darker tint for water areas
 
     # Layout: text at bottom (15% of height), map fills the rest
     margin = round(board_w * 0.04, 2)
@@ -1098,28 +1098,36 @@ def _generate_vintage_map_svg(
     if include_bleed:
         lines.append(f'  <g transform="translate({bleed}, {bleed})">')
 
-    # --- Aged parchment texture via SVG filters ---
+    # --- Aged parchment via gradients (cairosvg-compatible, no SVG filters) ---
     lines.append("  <defs>")
-    # Paper grain texture filter
-    lines.append('    <filter id="paper_grain" x="0%" y="0%" width="100%" height="100%">')
-    lines.append('      <feTurbulence type="fractalNoise" baseFrequency="0.04" numOctaves="5" seed="3" result="noise"/>')
-    lines.append('      <feColorMatrix type="saturate" values="0" in="noise" result="gray_noise"/>')
-    lines.append(f'      <feFlood flood-color="{parchment}" result="base"/>')
-    lines.append('      <feBlend mode="multiply" in="base" in2="gray_noise" result="paper"/>')
-    lines.append('    </filter>')
-    # Stain/aging spots filter
-    lines.append('    <filter id="age_stains" x="0%" y="0%" width="100%" height="100%">')
-    lines.append('      <feTurbulence type="fractalNoise" baseFrequency="0.008" numOctaves="3" seed="7" result="stain_noise"/>')
-    lines.append('      <feColorMatrix type="matrix" values="0 0 0 0 0.55  0 0 0 0 0.45  0 0 0 0 0.3  0 0 0 1 0" in="stain_noise" result="colored_stains"/>')
-    lines.append('      <feComponentTransfer in="colored_stains" result="stains">')
-    lines.append('        <feFuncA type="linear" slope="0.3" intercept="-0.05"/>')
-    lines.append('      </feComponentTransfer>')
-    lines.append('    </filter>')
-    # Edge darkening vignette
-    lines.append('    <radialGradient id="vignette_grad" cx="50%" cy="45%" r="65%">')
-    lines.append(f'      <stop offset="40%" stop-color="{parchment}" stop-opacity="0"/>')
-    lines.append(f'      <stop offset="100%" stop-color="#4a3828" stop-opacity="0.35"/>')
+    # Edge darkening vignette — large radial gradient for aged edges
+    lines.append('    <radialGradient id="vig" cx="50%" cy="45%" r="70%">')
+    lines.append(f'      <stop offset="30%" stop-color="{parchment}" stop-opacity="0"/>')
+    lines.append(f'      <stop offset="85%" stop-color="{parchment_edge}" stop-opacity="0.5"/>')
+    lines.append(f'      <stop offset="100%" stop-color="#8a7a5a" stop-opacity="0.6"/>')
     lines.append('    </radialGradient>')
+    # Corner darkening — extra aging in corners
+    lines.append('    <radialGradient id="corner_tl" cx="0%" cy="0%" r="60%">')
+    lines.append(f'      <stop offset="0%" stop-color="#6a5a3a" stop-opacity="0.25"/>')
+    lines.append(f'      <stop offset="100%" stop-color="{parchment}" stop-opacity="0"/>')
+    lines.append('    </radialGradient>')
+    lines.append('    <radialGradient id="corner_br" cx="100%" cy="100%" r="60%">')
+    lines.append(f'      <stop offset="0%" stop-color="#6a5a3a" stop-opacity="0.3"/>')
+    lines.append(f'      <stop offset="100%" stop-color="{parchment}" stop-opacity="0"/>')
+    lines.append('    </radialGradient>')
+    # Subtle speckle pattern for paper grain
+    lines.append(f'    <pattern id="grain" width="3" height="3" patternUnits="userSpaceOnUse">')
+    lines.append(f'      <circle cx="0.8" cy="1.2" r="0.15" fill="#a09070" opacity="0.12"/>')
+    lines.append(f'      <circle cx="2.4" cy="0.4" r="0.1" fill="#907858" opacity="0.1"/>')
+    lines.append(f'      <circle cx="1.6" cy="2.6" r="0.12" fill="#b0a080" opacity="0.08"/>')
+    lines.append(f'    </pattern>')
+    # Larger stain-like spots pattern
+    lines.append(f'    <pattern id="stains" width="40" height="40" patternUnits="userSpaceOnUse">')
+    lines.append(f'      <circle cx="8" cy="12" r="5" fill="#b8a878" opacity="0.08"/>')
+    lines.append(f'      <circle cx="28" cy="6" r="3" fill="#a89868" opacity="0.06"/>')
+    lines.append(f'      <circle cx="18" cy="30" r="6" fill="#c0a870" opacity="0.07"/>')
+    lines.append(f'      <circle cx="35" cy="25" r="4" fill="#a89060" opacity="0.05"/>')
+    lines.append(f'    </pattern>')
     # Clip for map content
     lines.append(
         f'    <clipPath id="map_clip">'
@@ -1129,29 +1137,35 @@ def _generate_vintage_map_svg(
     lines.append("  </defs>")
     lines.append("")
 
-    # Layer 1: Parchment base with paper grain texture
+    # Layer 1: Parchment background built from layered gradients
     lines.append('  <g id="parchment_background">')
-    lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="{parchment}" filter="url(#paper_grain)"/>')
-    # Age stains overlay
-    lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="{parchment_dark}" filter="url(#age_stains)"/>')
+    # Base color
+    lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="{parchment}"/>')
+    # Paper grain speckle
+    lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#grain)"/>')
+    # Coffee stain spots
+    lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#stains)"/>')
     # Edge vignette
-    lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#vignette_grad)"/>')
+    lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#vig)"/>')
+    # Corner aging
+    lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#corner_tl)"/>')
+    lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#corner_br)"/>')
     lines.append("  </g>")
     lines.append("")
 
     # Layer 2: Decorative double-line border
-    border_outer = round(margin * 0.6, 2)
-    border_inner = round(margin * 0.75, 2)
+    border_outer = round(margin * 0.55, 2)
+    border_inner = round(margin * 0.72, 2)
     lines.append('  <g id="decorative_border">')
     lines.append(
         f'    <rect x="{border_outer}" y="{border_outer}"'
         f' width="{round(board_w - 2 * border_outer, 2)}" height="{round(board_h - 2 * border_outer, 2)}"'
-        f' fill="none" stroke="{ink}" stroke-width="0.6"/>'
+        f' fill="none" stroke="{ink}" stroke-width="0.7"/>'
     )
     lines.append(
         f'    <rect x="{border_inner}" y="{border_inner}"'
         f' width="{round(board_w - 2 * border_inner, 2)}" height="{round(board_h - 2 * border_inner, 2)}"'
-        f' fill="none" stroke="{ink}" stroke-width="0.25"/>'
+        f' fill="none" stroke="{ink}" stroke-width="0.3"/>'
     )
     lines.append("  </g>")
     lines.append("")
@@ -1159,7 +1173,7 @@ def _generate_vintage_map_svg(
     # All map content clipped to map area
     lines.append(f'  <g clip-path="url(#map_clip)">')
 
-    # Layer 3: Water features — outline only, no fill (paper shows through)
+    # Layer 3: Water features — subtle tinted fill so water is distinguishable
     if water_data:
         transform = processed.get("transform")
         lines.append('    <g id="water_features">')
@@ -1170,8 +1184,8 @@ def _generate_vintage_map_svg(
             path_d = _coords_to_path(board_coords)
             lines.append(
                 f'      <path d="{path_d}"'
-                f' fill="none" stroke="{water_outline}" stroke-width="0.4"'
-                f' stroke-linejoin="round" opacity="0.7"/>'
+                f' fill="{water_tint}" stroke="{ink_light}" stroke-width="0.5"'
+                f' stroke-linejoin="round"/>'
             )
             path_count += 1
         for coords, water_type, name in water_data.get("waterways", []):
@@ -1179,55 +1193,60 @@ def _generate_vintage_map_svg(
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
             path_d = _coords_to_open_path(board_coords)
-            width = 0.5 if water_type in ("river", "coastline") else 0.25
+            width = 0.7 if water_type in ("river", "coastline") else 0.35
             lines.append(
                 f'      <path d="{path_d}"'
-                f' fill="none" stroke="{water_outline}" stroke-width="{width}"'
-                f' stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>'
+                f' fill="none" stroke="{ink_light}" stroke-width="{width}"'
+                f' stroke-linecap="round" stroke-linejoin="round"/>'
             )
             path_count += 1
         lines.append("    </g>")
 
-    # Layer 4: Land boundary — subtle thin outline (no fill)
-    lines.append('    <g id="land_boundary" opacity="0.3">')
-    for exterior, holes in polygons:
-        path_d = _coords_to_path(exterior)
-        for hole in holes:
-            path_d += " " + _coords_to_path(hole)
-        lines.append(
-            f'      <path d="{path_d}"'
-            f' fill="none" stroke="{ink_light}" stroke-width="0.3"'
-            f' fill-rule="evenodd" stroke-linejoin="round"/>'
-        )
-        path_count += 1
-    lines.append("    </g>")
+    # No land boundary outlines — the streets define the shape,
+    # admin boundary polygons look ugly as geometric lines
 
-    # Layer 5: Streets — monochrome line art, ALL roads visible
+    # Layer 4: Streets — bold monochrome line art, ALL roads visible
+    # Auto-detect sparse maps and boost widths accordingly
     if streets_data:
         transform = processed.get("transform")
         lines.append('    <g id="streets">')
 
-        # Width table: simple strokes, no casing. Every road type gets a width.
-        vintage_widths = {
-            "motorway": 0.8, "motorway_link": 0.6,
-            "trunk": 0.7, "trunk_link": 0.5,
-            "primary": 0.6, "primary_link": 0.4,
-            "secondary": 0.45, "secondary_link": 0.35,
-            "tertiary": 0.3, "tertiary_link": 0.25,
-            "residential": 0.18, "unclassified": 0.18,
-            "living_street": 0.18, "service": 0.12, "track": 0.12,
-            "pedestrian": 0.1, "footway": 0.08, "cycleway": 0.08,
-            "path": 0.08, "steps": 0.06, "bridleway": 0.08,
-        }
+        total_roads = len(streets_data.get("major_roads", [])) + len(streets_data.get("minor_roads", []))
+        is_sparse = total_roads < 120
 
-        # Draw all roads as simple monochrome strokes — minor first, major on top
+        # Width table — sparse maps get ~2x thicker lines for visual impact
+        if is_sparse:
+            vintage_widths = {
+                "motorway": 1.6, "motorway_link": 1.2,
+                "trunk": 1.4, "trunk_link": 1.0,
+                "primary": 1.2, "primary_link": 0.8,
+                "secondary": 0.9, "secondary_link": 0.7,
+                "tertiary": 0.6, "tertiary_link": 0.5,
+                "residential": 0.4, "unclassified": 0.4,
+                "living_street": 0.4, "service": 0.3, "track": 0.25,
+                "pedestrian": 0.2, "footway": 0.15, "cycleway": 0.15,
+                "path": 0.15, "steps": 0.12, "bridleway": 0.15,
+            }
+        else:
+            vintage_widths = {
+                "motorway": 1.0, "motorway_link": 0.8,
+                "trunk": 0.9, "trunk_link": 0.7,
+                "primary": 0.8, "primary_link": 0.55,
+                "secondary": 0.6, "secondary_link": 0.45,
+                "tertiary": 0.4, "tertiary_link": 0.3,
+                "residential": 0.22, "unclassified": 0.22,
+                "living_street": 0.22, "service": 0.15, "track": 0.15,
+                "pedestrian": 0.12, "footway": 0.1, "cycleway": 0.1,
+                "path": 0.1, "steps": 0.08, "bridleway": 0.1,
+            }
+
+        # Draw all roads — minor first, major on top
         for coords, road_class, _width, name in streets_data.get("minor_roads", []):
             if len(coords) < 2:
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
             path_d = _coords_to_open_path(board_coords)
-            w = vintage_widths.get(road_class, 0.12)
-            # Detail roads (footways, paths) get lighter ink
+            w = vintage_widths.get(road_class, 0.15)
             color = ink_faint if road_class in ("footway", "cycleway", "path", "steps", "bridleway") else ink_light
             lines.append(
                 f'      <path d="{path_d}"'
@@ -1241,7 +1260,7 @@ def _generate_vintage_map_svg(
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
             path_d = _coords_to_open_path(board_coords)
-            w = vintage_widths.get(road_class, 0.4)
+            w = vintage_widths.get(road_class, 0.5)
             lines.append(
                 f'      <path d="{path_d}"'
                 f' fill="none" stroke="{ink}" stroke-width="{w}"'
@@ -1251,7 +1270,7 @@ def _generate_vintage_map_svg(
 
         lines.append("    </g>")
 
-    # Vintage compass rose (bottom-right, ornate style)
+    # Vintage compass rose (bottom-right, smaller)
     if show_compass:
         _add_vintage_compass(lines, map_x, map_y, map_w, map_h, ink, ink_light)
 
@@ -1338,9 +1357,9 @@ def _add_vintage_compass(
     ink_light: str,
 ) -> None:
     """Add an ornate vintage-style compass rose."""
-    size = min(map_w, map_h) * 0.07
-    cx = round(map_x + map_w - size * 2, 2)
-    cy = round(map_y + map_h - size * 2, 2)
+    size = min(map_w, map_h) * 0.04
+    cx = round(map_x + map_w - size * 3, 2)
+    cy = round(map_y + map_h - size * 3, 2)
 
     lines.append(f'    <g id="compass_rose" opacity="0.5">')
     # Outer circle
