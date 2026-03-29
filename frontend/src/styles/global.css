@@ -7,6 +7,8 @@
   --bg-input: #2a2a2a;
   --crimson: #c0392b;
   --crimson-hover: #e74c3c;
+  --crimson-dim: rgba(192, 57, 43, 0.15);
+  --crimson-glow: rgba(192, 57, 43, 0.35);
   --text-primary: #e8e8e8;
   --text-secondary: #999999;
   --text-muted: #666666;
@@ -16,6 +18,23 @@
   --font-heading: "Space Grotesk", sans-serif;
   --font-mono: "JetBrains Mono", monospace;
   --font-body: "Space Grotesk", sans-serif;
+
+  /* Map-specific tokens */
+  --map-marker-core: #c0392b;
+  --map-marker-ring: rgba(192, 57, 43, 0.45);
+  --map-marker-glow: rgba(192, 57, 43, 0.18);
+  --map-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.55);
+  --map-shadow-md: 0 4px 20px rgba(0, 0, 0, 0.65);
+  --map-shadow-lg: 0 8px 40px rgba(0, 0, 0, 0.75);
+  --map-border-radius: 8px;
+  --map-preview-height: 196px;
+  --map-gradient-overlay: linear-gradient(
+    to bottom,
+    rgba(13, 13, 13, 0.18) 0%,
+    transparent 30%,
+    transparent 70%,
+    rgba(13, 13, 13, 0.28) 100%
+  );
 }
 
 * {
@@ -99,6 +118,7 @@ body {
   justify-content: center;
   padding: 24px;
   background:
+    radial-gradient(ellipse at 50% 0%, rgba(192, 57, 43, 0.04) 0%, transparent 60%),
     repeating-conic-gradient(#1a1a1a 0% 25%, #171717 0% 50%) 0 0 / 20px 20px;
 }
 
@@ -155,17 +175,26 @@ body {
   border: 1px solid var(--border);
   border-radius: 6px;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: border-color 0.18s ease, background 0.18s ease,
+    box-shadow 0.18s ease, transform 0.12s ease;
+  position: relative;
 }
 
 .search-result-item:hover {
   border-color: var(--crimson);
-  background: #2a2222;
+  background: #2a2020;
+  box-shadow: 0 2px 12px rgba(192, 57, 43, 0.12), inset 0 0 0 1px rgba(192, 57, 43, 0.08);
+  transform: translateY(-1px);
+}
+
+.search-result-item:active {
+  transform: translateY(0);
 }
 
 .search-result-item.selected {
   border-color: var(--crimson);
-  background: #2a1a1a;
+  background: linear-gradient(135deg, #2a1a1a, #221515);
+  box-shadow: 0 0 0 1px rgba(192, 57, 43, 0.2), 0 4px 16px rgba(192, 57, 43, 0.1);
 }
 
 .result-name {
@@ -311,18 +340,33 @@ body {
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background 0.18s ease, border-color 0.18s ease,
+    box-shadow 0.18s ease, transform 0.12s ease, color 0.18s ease;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  position: relative;
+  overflow: hidden;
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
 }
 
 .btn-primary {
   background: var(--crimson);
   color: white;
+  box-shadow: 0 2px 8px rgba(192, 57, 43, 0.3);
 }
 
 .btn-primary:hover:not(:disabled) {
   background: var(--crimson-hover);
+  box-shadow: 0 4px 16px rgba(231, 76, 60, 0.45);
+  transform: translateY(-1px);
+}
+
+.btn-primary:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 1px 4px rgba(192, 57, 43, 0.3);
 }
 
 .btn-primary:disabled {
@@ -330,6 +374,7 @@ body {
   color: #888;
   cursor: not-allowed;
   opacity: 0.7;
+  box-shadow: none;
 }
 
 .btn-secondary {
@@ -340,6 +385,9 @@ body {
 
 .btn-secondary:hover {
   border-color: var(--text-secondary);
+  background: #2c2c2c;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  transform: translateY(-1px);
 }
 
 .btn-full {
@@ -353,10 +401,21 @@ body {
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' fill='%23d4a056' /%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='0.15'/%3E%3C/svg%3E")
     repeat;
   border-radius: 8px;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+  box-shadow:
+    0 8px 40px rgba(0, 0, 0, 0.7),
+    0 2px 8px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.04);
   overflow: hidden;
   max-width: 100%;
   max-height: 80vh;
+  transition: box-shadow 0.3s ease;
+}
+
+.preview-container:hover {
+  box-shadow:
+    0 12px 56px rgba(0, 0, 0, 0.8),
+    0 4px 16px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(255, 255, 255, 0.06);
 }
 
 .preview-container svg {
@@ -364,12 +423,12 @@ body {
   width: 100%;
   height: auto;
   max-height: 80vh;
-  animation: previewFadeIn 0.4s ease;
+  animation: previewFadeIn 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 
 @keyframes previewFadeIn {
-  from { opacity: 0; transform: scale(0.98); }
-  to { opacity: 1; transform: scale(1); }
+  from { opacity: 0; transform: scale(0.97) translateY(4px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
 }
 
 .preview-empty {
@@ -2677,4 +2736,181 @@ body {
   color: var(--success) !important;
   border-color: var(--success) !important;
   font-size: 11px !important;
+}
+
+/* ============================================================
+   Map Preview — Enhanced Styles
+   ============================================================ */
+
+/* Wrapper provides the outer glow + border treatment */
+.map-preview-wrapper {
+  position: relative;
+  margin-top: 10px;
+  border-radius: var(--map-border-radius);
+  /* Subtle crimson ambient glow */
+  box-shadow:
+    0 0 0 1px rgba(192, 57, 43, 0.2),
+    var(--map-shadow-md),
+    0 0 32px rgba(192, 57, 43, 0.06);
+  transition: box-shadow 0.3s ease;
+}
+
+.map-preview-wrapper:hover {
+  box-shadow:
+    0 0 0 1px rgba(192, 57, 43, 0.35),
+    var(--map-shadow-lg),
+    0 0 48px rgba(192, 57, 43, 0.1);
+}
+
+/* Gradient vignette overlay — sits above the map tiles, below controls */
+.map-preview-wrapper::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: var(--map-border-radius);
+  background: var(--map-gradient-overlay);
+  pointer-events: none;
+  z-index: 400;
+}
+
+/* The Leaflet map canvas itself */
+.map-preview {
+  width: 100%;
+  height: var(--map-preview-height);
+  border-radius: var(--map-border-radius);
+  overflow: hidden;
+  border: 1px solid #3a3a3a;
+  display: block;
+  animation: mapFadeIn 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+@keyframes mapFadeIn {
+  from { opacity: 0; transform: scale(0.99); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* ============================================================
+   Map Utility Classes
+   ============================================================ */
+
+/* Pulsing dot animation — applied via JS if needed */
+@keyframes markerPulse {
+  0%   { transform: scale(1);   opacity: 0.8; }
+  50%  { transform: scale(1.4); opacity: 0.4; }
+  100% { transform: scale(1);   opacity: 0.8; }
+}
+
+/* Loading shimmer for map container */
+.map-preview-loading {
+  background: linear-gradient(
+    90deg,
+    var(--bg-card) 25%,
+    #2a2a2a 50%,
+    var(--bg-card) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease infinite;
+}
+
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Panel transition animations */
+.search-section,
+.customize-section,
+.export-section {
+  animation: panelSlideIn 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+@keyframes panelSlideIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Enhanced search results count badge */
+.search-results-count {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.search-results-count::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--crimson);
+  box-shadow: 0 0 6px var(--crimson-glow);
+  flex-shrink: 0;
+}
+
+/* Depth card — used for map-adjacent info panels */
+.map-info-card {
+  background: linear-gradient(135deg, #1e1e1e, #1a1a1a);
+  border: 1px solid #3a3a3a;
+  border-radius: 6px;
+  padding: 10px 14px;
+  box-shadow: var(--map-shadow-sm);
+}
+
+/* Nav button refinements */
+.nav-btn {
+  transition: color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease;
+}
+
+.nav-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-card);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+/* Library / marketplace card depth on hover */
+.library-card,
+.marketplace-card {
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.15s ease;
+}
+
+.library-card:hover,
+.marketplace-card:hover {
+  border-color: var(--crimson);
+  box-shadow: 0 4px 20px rgba(192, 57, 43, 0.1), 0 2px 8px rgba(0, 0, 0, 0.4);
+  transform: translateY(-2px);
+}
+
+/* Landing showcase card depth */
+.landing-showcase-card {
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.15s ease;
+}
+
+.landing-showcase-card:hover {
+  border-color: var(--crimson);
+  box-shadow: 0 4px 24px rgba(192, 57, 43, 0.12);
+  transform: translateY(-2px);
+}
+
+/* Spinner refinement — crimson glow */
+.spinner {
+  box-shadow: 0 0 8px rgba(192, 57, 43, 0.25);
+}
+
+/* Error message depth */
+.error-message {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+/* Toggle slider glow when active */
+.toggle-switch input:checked + .toggle-slider {
+  box-shadow: 0 0 8px rgba(192, 57, 43, 0.4);
+}
+
+/* Input focus glow */
+.search-input:focus,
+.control-group input:focus,
+.control-group select:focus,
+.list-textarea:focus,
+.input-with-count input:focus {
+  box-shadow: 0 0 0 2px rgba(192, 57, 43, 0.15);
 }
