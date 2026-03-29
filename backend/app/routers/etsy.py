@@ -482,11 +482,11 @@ async def _do_showcase_publish(req: ShowcasePublishRequest, user: User, db: Asyn
                 has_streets=True,
             )
             if not title:
-                title = ai_result.get("title", f"{city.name} Map Print - City Street Map Poster")
+                title = ai_result.get("title") or f"{city.name} Map Print - City Street Map Poster"
             if not description:
-                description = ai_result.get("description", f"Beautiful map poster of {city.name}. High-quality digital download with street-level detail.")
+                description = ai_result.get("description") or f"Beautiful map poster of {city.name}. High-quality digital download with street-level detail."
             if not tags_str:
-                tags_str = ai_result.get("tags", f"{city.name} map, city map, map print, wall art, poster")
+                tags_str = ai_result.get("tags") or f"{city.name} map, city map, map print, wall art, poster"
         except Exception as e:
             log.warning("AI description failed for showcase %s: %s", city.name, e)
             if not title:
@@ -501,6 +501,7 @@ async def _do_showcase_publish(req: ShowcasePublishRequest, user: User, db: Asyn
             if not tags_str:
                 tags_str = f"{city.name} map, city map, map print, wall art, poster, street map, home decor"
 
+    tags_str = tags_str or f"{city.name} map, city map, map print, wall art, poster"
     tag_list = [t.strip() for t in tags_str.split(",") if t.strip()][:13]
 
     # 3. Get the generated file record for image uploads
