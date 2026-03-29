@@ -1266,12 +1266,21 @@ def _generate_vintage_map_svg(
         total_water_polys = len(water_data.get("water_polygons", []))
         # Skip waterway lines for dense maps — they look like roads and add noise
         skip_waterway_lines = (total_waterways > 200) or is_province or is_large_area
+        # Filter small water polygons for dense maps — tiny ponds create speckle noise
+        filter_small_water = total_water_polys > 100
 
         lines.append('    <g id="water_features">')
         for coords, water_type, name in water_data.get("water_polygons", []):
             if len(coords) < 3:
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
+            # Skip tiny ponds on dense maps — they create distracting speckle
+            if filter_small_water:
+                xs = [p[0] for p in board_coords]
+                ys = [p[1] for p in board_coords]
+                poly_area = (max(xs) - min(xs)) * (max(ys) - min(ys))
+                if poly_area < 4.0:  # smaller than ~2mm x 2mm
+                    continue
             path_d = _coords_to_path(board_coords)
             lines.append(
                 f'      <path d="{path_d}"'
@@ -1336,11 +1345,11 @@ def _generate_vintage_map_svg(
                 allowed_roads.add("tertiary")
                 allowed_roads.add("tertiary_link")
             vintage_widths = {
-                "motorway": 2.5, "motorway_link": 1.6,
-                "trunk": 2.2, "trunk_link": 1.4,
-                "primary": 1.8, "primary_link": 1.2,
-                "secondary": 1.2, "secondary_link": 0.8,
-                "tertiary": 0.7, "tertiary_link": 0.5,
+                "motorway": 1.8, "motorway_link": 1.2,
+                "trunk": 1.6, "trunk_link": 1.0,
+                "primary": 1.3, "primary_link": 0.9,
+                "secondary": 0.9, "secondary_link": 0.6,
+                "tertiary": 0.6, "tertiary_link": 0.4,
             }
             skip_minor_roads = True
         elif is_dense_map:
