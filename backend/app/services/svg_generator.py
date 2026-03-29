@@ -1258,40 +1258,52 @@ def _generate_vintage_map_svg(
         lines.append("    </g>")
 
     # Layer 5: Inland water features — lakes, rivers on top of land
-    # For dense maps (provinces/islands), only show water polygons (lakes/bays),
-    # skip individual waterway lines (streams/rivers) to avoid visual clutter
+    # For dense maps (provinces/islands), only show LARGE water polygons,
+    # skip small/medium ponds, all waterway lines, and hatching on small lakes
     if water_data:
         transform = processed.get("transform")
         total_waterways = len(water_data.get("waterways", []))
         total_water_polys = len(water_data.get("water_polygons", []))
-        # Skip waterway lines for dense maps — they look like roads and add noise
+        # Skip waterway lines for dense maps — they look like roads
         skip_waterway_lines = (total_waterways > 200) or is_province or is_large_area
-        # Filter small water polygons for dense maps — tiny ponds create speckle noise
+        # Filter water polygons for dense maps
         filter_small_water = total_water_polys > 100
+        # Minimum area threshold scales with density: province = very aggressive
+        min_water_area = 25.0 if (is_province or total_water_polys > 500) else 8.0
 
         lines.append('    <g id="water_features">')
         for coords, water_type, name in water_data.get("water_polygons", []):
             if len(coords) < 3:
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
-            # Skip tiny ponds on dense maps — they create distracting speckle
+            # Filter small water bodies — calculate bounding box area in mm²
             if filter_small_water:
                 xs = [p[0] for p in board_coords]
                 ys = [p[1] for p in board_coords]
                 poly_area = (max(xs) - min(xs)) * (max(ys) - min(ys))
-                if poly_area < 4.0:  # smaller than ~2mm x 2mm
+                if poly_area < min_water_area:
                     continue
+                is_large = poly_area > 100.0  # ~10mm x 10mm
+            else:
+                is_large = True
             path_d = _coords_to_path(board_coords)
-            lines.append(
-                f'      <path d="{path_d}"'
-                f' fill="{water_tint}" stroke="{coastline_color}" stroke-width="0.3"'
-                f' stroke-linejoin="round"/>'
-            )
-            # Add hatching inside water polygons too
-            lines.append(
-                f'      <path d="{path_d}"'
-                f' fill="url(#water_hatch)" stroke="none"/>'
-            )
+            # Only large water bodies get outline stroke — small ones just fill
+            if is_large:
+                lines.append(
+                    f'      <path d="{path_d}"'
+                    f' fill="{water_tint}" stroke="{coastline_color}" stroke-width="0.25"'
+                    f' stroke-linejoin="round"/>'
+                )
+                lines.append(
+                    f'      <path d="{path_d}"'
+                    f' fill="url(#water_hatch)" stroke="none"/>'
+                )
+            else:
+                # Medium water bodies: fill only, no outline or hatching
+                lines.append(
+                    f'      <path d="{path_d}"'
+                    f' fill="{water_tint}" stroke="none"/>'
+                )
             path_count += 1
         if not skip_waterway_lines:
             for coords, water_type, name in water_data.get("waterways", []):
