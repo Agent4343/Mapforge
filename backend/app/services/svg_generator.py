@@ -1302,9 +1302,17 @@ def _generate_vintage_map_svg(
         is_sparse = total_roads < 120
 
         # Auto-detect map density by road count — this works regardless of product_type
-        # Cape Breton Island as "province" has 1000+ roads = dense province
+        # Cape Breton Island as "city" has 24000+ roads = very dense
         is_dense_map = total_roads > 400
         is_very_dense = total_roads > 800
+
+        import logging as _logging
+        _logging.getLogger("mapforge").info(
+            "Vintage streets: total=%d major=%d minor=%d dense=%s very_dense=%s province=%s product=%s",
+            total_roads, len(streets_data.get("major_roads", [])),
+            len(streets_data.get("minor_roads", [])),
+            is_dense_map, is_very_dense, is_province, product_type,
+        )
 
         # Road classes by filtering tier
         detail_classes = {"footway", "cycleway", "path", "steps", "bridleway"}
