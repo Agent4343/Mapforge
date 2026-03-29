@@ -701,8 +701,11 @@ def _generate_print_svg(
         lines.append("    </g>")
 
     # Clip streets and water to the boundary polygon so they don't bleed
-    # outside the geographic area (applies to cities AND provinces with streets)
-    clip_to_boundary = boundary_paths and (is_street_map or (streets_data and (streets_data.get("major_roads") or streets_data.get("minor_roads"))))
+    # outside the geographic area. Skip boundary clipping for community/park
+    # maps where streets are fetched from an expanded area — we WANT them
+    # to extend beyond the boundary to fill the map.
+    is_expanded_area = product_type in ("community", "park")
+    clip_to_boundary = boundary_paths and not is_expanded_area and (is_street_map or (streets_data and (streets_data.get("major_roads") or streets_data.get("minor_roads"))))
     if clip_to_boundary:
         lines.append('    <g clip-path="url(#boundary_clip)">')
 
@@ -1115,18 +1118,21 @@ def _generate_vintage_map_svg(
     lines.append(f'      <stop offset="0%" stop-color="#6a5a3a" stop-opacity="0.3"/>')
     lines.append(f'      <stop offset="100%" stop-color="{parchment}" stop-opacity="0"/>')
     lines.append('    </radialGradient>')
-    # Subtle speckle pattern for paper grain
-    lines.append(f'    <pattern id="grain" width="3" height="3" patternUnits="userSpaceOnUse">')
-    lines.append(f'      <circle cx="0.8" cy="1.2" r="0.15" fill="#a09070" opacity="0.12"/>')
-    lines.append(f'      <circle cx="2.4" cy="0.4" r="0.1" fill="#907858" opacity="0.1"/>')
-    lines.append(f'      <circle cx="1.6" cy="2.6" r="0.12" fill="#b0a080" opacity="0.08"/>')
+    # Subtle speckle pattern for paper grain — large tile to avoid visible repeat
+    lines.append(f'    <pattern id="grain" width="12" height="12" patternUnits="userSpaceOnUse">')
+    lines.append(f'      <circle cx="1.5" cy="3" r="0.12" fill="#a09070" opacity="0.06"/>')
+    lines.append(f'      <circle cx="7" cy="1" r="0.08" fill="#907858" opacity="0.05"/>')
+    lines.append(f'      <circle cx="4" cy="8" r="0.1" fill="#b0a080" opacity="0.04"/>')
+    lines.append(f'      <circle cx="10" cy="5.5" r="0.09" fill="#988868" opacity="0.05"/>')
+    lines.append(f'      <circle cx="2.5" cy="10.5" r="0.07" fill="#a89878" opacity="0.04"/>')
+    lines.append(f'      <circle cx="9" cy="10" r="0.11" fill="#a09060" opacity="0.05"/>')
     lines.append(f'    </pattern>')
-    # Larger stain-like spots pattern
-    lines.append(f'    <pattern id="stains" width="40" height="40" patternUnits="userSpaceOnUse">')
-    lines.append(f'      <circle cx="8" cy="12" r="5" fill="#b8a878" opacity="0.08"/>')
-    lines.append(f'      <circle cx="28" cy="6" r="3" fill="#a89868" opacity="0.06"/>')
-    lines.append(f'      <circle cx="18" cy="30" r="6" fill="#c0a870" opacity="0.07"/>')
-    lines.append(f'      <circle cx="35" cy="25" r="4" fill="#a89060" opacity="0.05"/>')
+    # Larger stain-like spots — very subtle, large tile
+    lines.append(f'    <pattern id="stains" width="80" height="80" patternUnits="userSpaceOnUse">')
+    lines.append(f'      <circle cx="15" cy="22" r="8" fill="#b8a878" opacity="0.04"/>')
+    lines.append(f'      <circle cx="55" cy="10" r="5" fill="#a89868" opacity="0.03"/>')
+    lines.append(f'      <circle cx="35" cy="60" r="10" fill="#c0a870" opacity="0.035"/>')
+    lines.append(f'      <circle cx="68" cy="50" r="6" fill="#a89060" opacity="0.025"/>')
     lines.append(f'    </pattern>')
     # Clip for map content
     lines.append(

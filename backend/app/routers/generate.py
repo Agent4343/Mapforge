@@ -154,6 +154,29 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     bounds = geom.bounds  # minx, miny, maxx, maxy
     bbox = (bounds[1], bounds[0], bounds[3], bounds[2])
 
+    # For small communities, expand the street fetch area beyond the boundary
+    # so surrounding roads fill the map instead of leaving it empty
+    is_community = req.product_type.value in ("community", "park")
+    street_bbox = bbox
+    street_osm_id = req.osm_id
+    street_osm_type = req.osm_type
+    if is_community:
+        # Expand bbox by 50% in each direction for more surrounding road context
+        lat_span = bounds[3] - bounds[1]
+        lon_span = bounds[2] - bounds[0]
+        expand_lat = lat_span * 0.5
+        expand_lon = lon_span * 0.5
+        street_bbox = (
+            bounds[1] - expand_lat,  # south
+            bounds[0] - expand_lon,  # west
+            bounds[3] + expand_lat,  # north
+            bounds[2] + expand_lon,  # east
+        )
+        # Force bbox query instead of area query so we get roads OUTSIDE the boundary
+        street_osm_id = None
+        street_osm_type = None
+        log.info(f"Community map: expanded street bbox by 50% for surrounding road context")
+
     # Size thresholds for street fetching:
     #   Cities (<1 deg²): full streets with all road types
     #   Small provinces (1-30 deg²): full streets — PEI, Nova Scotia, New Brunswick
@@ -175,15 +198,15 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     include_minor_streets = not is_medium_area and not (is_province and not req.include_streets)
 
     async def _get_streets():
-        cache_key = _bbox_cache_key("streets", bbox)
+        cache_key = _bbox_cache_key("streets", street_bbox)
         if cache_key in _overpass_cache:
             log.info("Using cached street data")
             return _overpass_cache[cache_key]
         result = await fetch_streets(
-            bbox=bbox,
+            bbox=street_bbox,
             include_minor=include_minor_streets,
-            osm_id=req.osm_id,
-            osm_type=req.osm_type,
+            osm_id=street_osm_id,
+            osm_type=street_osm_type,
         )
         has_data = result and (result.get("major_roads") or result.get("minor_roads"))
         if has_data:
