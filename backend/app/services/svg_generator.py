@@ -1024,9 +1024,11 @@ def _generate_vintage_map_svg(
     water_tint = "#c8b898"  # Noticeably darker tint for water/ocean areas
     coastline_color = "#4a3a28"  # Subtle brown for coastline outline
 
-    # Determine map scale from product_type and road count
-    is_large_area = product_type in ("province", "community", "park")
+    # Determine map scale from product_type — only provinces get aggressive filtering
+    # Small communities (Little Narrows) should show ALL roads even though
+    # the expanded bbox fetches thousands of roads from surrounding areas
     is_province = product_type == "province"
+    is_large_area = is_province  # only true provinces, NOT communities/parks
 
     # Layout: text at bottom (15% of height), map fills the rest
     margin = round(board_w * 0.04, 2)
@@ -1218,7 +1220,7 @@ def _generate_vintage_map_svg(
     lines.append("    </g>")
 
     # Layer 4: Land polygons — filled with parchment so land stands out from water
-    coastline_width = "0.8" if (is_province or is_large_area) else "0.5"
+    coastline_width = "0.8" if is_province else "0.4"
     if polygons:
         lines.append('    <g id="land_polygons">')
         for exterior, holes in polygons:
@@ -1264,12 +1266,11 @@ def _generate_vintage_map_svg(
         transform = processed.get("transform")
         total_waterways = len(water_data.get("waterways", []))
         total_water_polys = len(water_data.get("water_polygons", []))
-        # Skip waterway lines for dense maps — they look like roads
-        skip_waterway_lines = (total_waterways > 200) or is_province or is_large_area
-        # Filter water polygons for dense maps
-        filter_small_water = total_water_polys > 100
-        # Minimum area threshold scales with density: province = very aggressive
-        min_water_area = 25.0 if (is_province or total_water_polys > 500) else 8.0
+        # Skip waterway lines only for provinces — at community/city zoom they add detail
+        skip_waterway_lines = is_province or total_waterways > 5000
+        # Filter small water polygons only for provinces or extremely dense water data
+        filter_small_water = is_province or total_water_polys > 2000
+        min_water_area = 25.0 if is_province else 2.0
 
         lines.append('    <g id="water_features">')
         for coords, water_type, name in water_data.get("water_polygons", []):
@@ -1330,27 +1331,21 @@ def _generate_vintage_map_svg(
         total_roads = len(streets_data.get("major_roads", [])) + len(streets_data.get("minor_roads", []))
         is_sparse = total_roads < 120
 
-        # Auto-detect map density by road count — this works regardless of product_type
-        # Cape Breton Island as "city" has 24000+ roads = very dense
-        is_dense_map = total_roads > 400
-        is_very_dense = total_roads > 800
-
         import logging as _logging
         _logging.getLogger("mapforge").info(
-            "Vintage streets: total=%d major=%d minor=%d dense=%s very_dense=%s province=%s product=%s",
+            "Vintage streets: total=%d major=%d minor=%d province=%s product=%s",
             total_roads, len(streets_data.get("major_roads", [])),
             len(streets_data.get("minor_roads", [])),
-            is_dense_map, is_very_dense, is_province, product_type,
+            is_province, product_type,
         )
 
         # Road classes by filtering tier
         detail_classes = {"footway", "cycleway", "path", "steps", "bridleway"}
-        clutter_classes = {"service", "track", "pedestrian", "living_street"}
 
-        # Dense maps (400+ roads): aggressive filtering — highways only
-        # This catches provinces, large islands, etc. regardless of product_type
-        if is_very_dense or is_province:
-            # 800+ roads or explicit province: ONLY major highways
+        # Province scale: aggressive filtering — highways only
+        # Only for actual provinces (Cape Breton Island, Nova Scotia, etc.)
+        # NOT for communities — they need all roads visible at their zoom level
+        if is_province:
             allowed_roads = {"motorway", "motorway_link", "trunk", "trunk_link",
                              "primary", "primary_link", "secondary", "secondary_link"}
             if total_roads < 300:
@@ -1362,20 +1357,6 @@ def _generate_vintage_map_svg(
                 "primary": 1.3, "primary_link": 0.9,
                 "secondary": 0.9, "secondary_link": 0.6,
                 "tertiary": 0.6, "tertiary_link": 0.4,
-            }
-            skip_minor_roads = True
-        elif is_dense_map:
-            # 400-800 roads: show major + tertiary, skip residential/detail
-            allowed_roads = {"motorway", "motorway_link", "trunk", "trunk_link",
-                             "primary", "primary_link", "secondary", "secondary_link",
-                             "tertiary", "tertiary_link"}
-            vintage_widths = {
-                "motorway": 2.0, "motorway_link": 1.4,
-                "trunk": 1.8, "trunk_link": 1.2,
-                "primary": 1.5, "primary_link": 1.0,
-                "secondary": 1.0, "secondary_link": 0.7,
-                "tertiary": 0.6, "tertiary_link": 0.45,
-                "residential": 0.3, "unclassified": 0.3,
             }
             skip_minor_roads = True
         elif is_sparse:
