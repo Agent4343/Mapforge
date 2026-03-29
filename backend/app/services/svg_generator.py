@@ -405,6 +405,7 @@ def _generate_print_svg(
             include_bleed=include_bleed,
             include_crop_marks=include_crop_marks,
             show_compass=show_compass,
+            product_type=product_type,
         )
 
     from app.services.thumbnail_generator import get_poster_theme
@@ -999,12 +1000,15 @@ def _generate_vintage_map_svg(
     include_bleed: bool = False,
     include_crop_marks: bool = False,
     show_compass: bool = False,
+    product_type: str = "city",
 ) -> dict:
     """Generate a vintage parchment-style map with monochrome line art.
 
     Inspired by premium Etsy map posters: aged paper texture background,
-    all streets rendered as dark lines (no colored fills), water as outlines,
-    thin decorative double-line border, and ornate compass rose.
+    all streets rendered as dark lines (no colored fills), land polygons
+    filled with parchment over a water-tinted background so ocean/lakes
+    are clearly visible, thin decorative double-line border, and ornate
+    compass rose.
     """
     board_w, board_h = processed["board_mm"]
     polygons = processed["polygons"]
@@ -1017,7 +1021,11 @@ def _generate_vintage_map_svg(
     ink_faint = "#5a4a38"    # Faint ink for detail roads
     parchment = "#e8dcc0"   # Base parchment color
     parchment_edge = "#c8b890"  # Darker edge color for vignette
-    water_tint = "#d0c4a4"  # Subtle darker tint for water areas
+    water_tint = "#c8b898"  # Noticeably darker tint for water/ocean areas
+    coastline_color = "#4a3a28"  # Subtle brown for coastline outline
+
+    # Determine map scale from product_type
+    is_large_area = product_type in ("province", "community", "park")
 
     # Layout: text at bottom (15% of height), map fills the rest
     margin = round(board_w * 0.04, 2)
@@ -1083,7 +1091,7 @@ def _generate_vintage_map_svg(
     svg_h = board_h + 2 * bleed
 
     path_count = 0
-    layer_count = 5  # texture, border, water, streets, text
+    layer_count = 6  # texture, border, water bg, land, streets, text
 
     lines = []
     lines.append('<?xml version="1.0" encoding="UTF-8"?>')
@@ -1092,7 +1100,7 @@ def _generate_vintage_map_svg(
         f' width="{svg_w}mm" height="{svg_h}mm"'
         f' viewBox="0 0 {svg_w} {svg_h}">'
     )
-    lines.append(f"  <!-- MapForge Vintage Map v1.0 -->")
+    lines.append(f"  <!-- MapForge Vintage Map v2.0 -->")
     lines.append(f"  <!-- Location: {_escape_xml(location_name)} -->")
     lines.append("  <!-- Geographic data: © OpenStreetMap contributors (ODbL) -->")
     lines.append(f"  <!-- Generated: {timestamp} -->")
@@ -1118,7 +1126,7 @@ def _generate_vintage_map_svg(
     lines.append(f'      <stop offset="0%" stop-color="#6a5a3a" stop-opacity="0.3"/>')
     lines.append(f'      <stop offset="100%" stop-color="{parchment}" stop-opacity="0"/>')
     lines.append('    </radialGradient>')
-    # Subtle speckle pattern for paper grain — large tile to avoid visible repeat
+    # Subtle speckle pattern for paper grain
     lines.append(f'    <pattern id="grain" width="12" height="12" patternUnits="userSpaceOnUse">')
     lines.append(f'      <circle cx="1.5" cy="3" r="0.12" fill="#a09070" opacity="0.06"/>')
     lines.append(f'      <circle cx="7" cy="1" r="0.08" fill="#907858" opacity="0.05"/>')
@@ -1133,6 +1141,11 @@ def _generate_vintage_map_svg(
     lines.append(f'      <circle cx="55" cy="10" r="5" fill="#a89868" opacity="0.03"/>')
     lines.append(f'      <circle cx="35" cy="60" r="10" fill="#c0a870" opacity="0.035"/>')
     lines.append(f'      <circle cx="68" cy="50" r="6" fill="#a89060" opacity="0.025"/>')
+    lines.append(f'    </pattern>')
+    # Horizontal line hatching pattern for water areas (classic cartographic style)
+    lines.append(f'    <pattern id="water_hatch" width="3" height="3" patternUnits="userSpaceOnUse"'
+                 f' patternTransform="rotate(-15)">')
+    lines.append(f'      <line x1="0" y1="1.5" x2="3" y2="1.5" stroke="{coastline_color}" stroke-width="0.15" opacity="0.25"/>')
     lines.append(f'    </pattern>')
     # Clip for map content
     lines.append(
@@ -1179,7 +1192,61 @@ def _generate_vintage_map_svg(
     # All map content clipped to map area
     lines.append(f'  <g clip-path="url(#map_clip)">')
 
-    # Layer 3: Water features — subtle tinted fill so water is distinguishable
+    # Layer 3: Water/ocean background — fill the entire map area with water tint
+    # Then land polygons will be drawn on top with parchment fill, creating
+    # a clear distinction between land and water (critical for islands!)
+    lines.append('    <g id="water_background">')
+    lines.append(
+        f'      <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"'
+        f' fill="{water_tint}"/>'
+    )
+    # Add line hatching over water for cartographic texture
+    lines.append(
+        f'      <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"'
+        f' fill="url(#water_hatch)"/>'
+    )
+    lines.append("    </g>")
+
+    # Layer 4: Land polygons — filled with parchment so land stands out from water
+    if polygons:
+        lines.append('    <g id="land_polygons">')
+        for exterior, holes in polygons:
+            if len(exterior) < 3:
+                continue
+            # Build path: exterior + holes (using SVG winding rule)
+            path_d = _coords_to_path(exterior)
+            for hole in holes:
+                if len(hole) >= 3:
+                    path_d += " " + _coords_to_path(hole)
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="{parchment}" stroke="{coastline_color}"'
+                f' stroke-width="0.4" stroke-linejoin="round"'
+                f' fill-rule="evenodd"/>'
+            )
+            path_count += 1
+        # Re-apply paper grain and stain textures on land only (clipped to land shapes)
+        lines.append("    </g>")
+        # Overlay grain on the land areas for consistent texture
+        lines.append('    <g id="land_texture">')
+        for exterior, holes in polygons:
+            if len(exterior) < 3:
+                continue
+            path_d = _coords_to_path(exterior)
+            for hole in holes:
+                if len(hole) >= 3:
+                    path_d += " " + _coords_to_path(hole)
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="url(#grain)" fill-rule="evenodd" stroke="none"/>'
+            )
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="url(#stains)" fill-rule="evenodd" stroke="none"/>'
+            )
+        lines.append("    </g>")
+
+    # Layer 5: Inland water features — lakes, rivers on top of land
     if water_data:
         transform = processed.get("transform")
         lines.append('    <g id="water_features">')
@@ -1190,8 +1257,13 @@ def _generate_vintage_map_svg(
             path_d = _coords_to_path(board_coords)
             lines.append(
                 f'      <path d="{path_d}"'
-                f' fill="{water_tint}" stroke="{ink_light}" stroke-width="0.5"'
+                f' fill="{water_tint}" stroke="{coastline_color}" stroke-width="0.3"'
                 f' stroke-linejoin="round"/>'
+            )
+            # Add hatching inside water polygons too
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="url(#water_hatch)" stroke="none"/>'
             )
             path_count += 1
         for coords, water_type, name in water_data.get("waterways", []):
@@ -1199,20 +1271,16 @@ def _generate_vintage_map_svg(
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
             path_d = _coords_to_open_path(board_coords)
-            width = 0.7 if water_type in ("river", "coastline") else 0.35
+            width = 0.6 if water_type in ("river", "coastline") else 0.3
             lines.append(
                 f'      <path d="{path_d}"'
-                f' fill="none" stroke="{ink_light}" stroke-width="{width}"'
+                f' fill="none" stroke="{coastline_color}" stroke-width="{width}"'
                 f' stroke-linecap="round" stroke-linejoin="round"/>'
             )
             path_count += 1
         lines.append("    </g>")
 
-    # No land boundary outlines — the streets define the shape,
-    # admin boundary polygons look ugly as geometric lines
-
-    # Layer 4: Streets — bold monochrome line art, ALL roads visible
-    # Auto-detect sparse maps and boost widths accordingly
+    # Layer 6: Streets — monochrome line art with scale-appropriate filtering
     if streets_data:
         transform = processed.get("transform")
         lines.append('    <g id="streets">')
@@ -1220,8 +1288,26 @@ def _generate_vintage_map_svg(
         total_roads = len(streets_data.get("major_roads", [])) + len(streets_data.get("minor_roads", []))
         is_sparse = total_roads < 120
 
-        # Width table — sparse maps get ~2x thicker lines for visual impact
-        if is_sparse:
+        # Detail road classes to filter out for large-area maps (provinces, islands)
+        detail_classes = {"footway", "cycleway", "path", "steps", "bridleway"}
+        # For very large areas, also filter service/track roads to reduce clutter
+        clutter_classes = {"service", "track", "pedestrian", "living_street"}
+
+        # Width tables scale with map area type
+        if is_large_area:
+            # Province/island scale — bold highways, thinner minor roads, no detail roads
+            vintage_widths = {
+                "motorway": 2.0, "motorway_link": 1.4,
+                "trunk": 1.8, "trunk_link": 1.2,
+                "primary": 1.5, "primary_link": 1.0,
+                "secondary": 1.0, "secondary_link": 0.7,
+                "tertiary": 0.6, "tertiary_link": 0.45,
+                "residential": 0.3, "unclassified": 0.3,
+                "living_street": 0.25, "service": 0.2, "track": 0.2,
+                "pedestrian": 0.15, "footway": 0.1, "cycleway": 0.1,
+                "path": 0.1, "steps": 0.08, "bridleway": 0.1,
+            }
+        elif is_sparse:
             vintage_widths = {
                 "motorway": 1.6, "motorway_link": 1.2,
                 "trunk": 1.4, "trunk_link": 1.0,
@@ -1246,14 +1332,19 @@ def _generate_vintage_map_svg(
                 "path": 0.1, "steps": 0.08, "bridleway": 0.1,
             }
 
-        # Draw all roads — minor first, major on top
+        # Draw minor roads first (under major roads)
         for coords, road_class, _width, name in streets_data.get("minor_roads", []):
             if len(coords) < 2:
+                continue
+            # Filter detail roads for large areas to reduce clutter
+            if is_large_area and road_class in detail_classes:
+                continue
+            if is_large_area and total_roads > 500 and road_class in clutter_classes:
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
             path_d = _coords_to_open_path(board_coords)
             w = vintage_widths.get(road_class, 0.15)
-            color = ink_faint if road_class in ("footway", "cycleway", "path", "steps", "bridleway") else ink_light
+            color = ink_faint if road_class in detail_classes else ink_light
             lines.append(
                 f'      <path d="{path_d}"'
                 f' fill="none" stroke="{color}" stroke-width="{w}"'
@@ -1261,6 +1352,7 @@ def _generate_vintage_map_svg(
             )
             path_count += 1
 
+        # Draw major roads on top
         for coords, road_class, _width, name in streets_data.get("major_roads", []):
             if len(coords) < 2:
                 continue
