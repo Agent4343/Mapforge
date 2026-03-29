@@ -1024,8 +1024,9 @@ def _generate_vintage_map_svg(
     water_tint = "#c8b898"  # Noticeably darker tint for water/ocean areas
     coastline_color = "#4a3a28"  # Subtle brown for coastline outline
 
-    # Determine map scale from product_type
+    # Determine map scale from product_type and road count
     is_large_area = product_type in ("province", "community", "park")
+    is_province = product_type == "province"
 
     # Layout: text at bottom (15% of height), map fills the rest
     margin = round(board_w * 0.04, 2)
@@ -1153,6 +1154,15 @@ def _generate_vintage_map_svg(
         f'<rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"/>'
         f'</clipPath>'
     )
+    # Clip for streets — constrain to land polygons so roads don't show in ocean
+    if polygons:
+        lines.append('    <clipPath id="land_clip">')
+        for exterior, holes in polygons:
+            if len(exterior) < 3:
+                continue
+            path_d = _coords_to_path(exterior)
+            lines.append(f'      <path d="{path_d}"/>')
+        lines.append('    </clipPath>')
     lines.append("  </defs>")
     lines.append("")
 
@@ -1208,6 +1218,7 @@ def _generate_vintage_map_svg(
     lines.append("    </g>")
 
     # Layer 4: Land polygons — filled with parchment so land stands out from water
+    coastline_width = "0.8" if is_province else "0.4"
     if polygons:
         lines.append('    <g id="land_polygons">')
         for exterior, holes in polygons:
@@ -1221,7 +1232,7 @@ def _generate_vintage_map_svg(
             lines.append(
                 f'      <path d="{path_d}"'
                 f' fill="{parchment}" stroke="{coastline_color}"'
-                f' stroke-width="0.4" stroke-linejoin="round"'
+                f' stroke-width="{coastline_width}" stroke-linejoin="round"'
                 f' fill-rule="evenodd"/>'
             )
             path_count += 1
@@ -1281,21 +1292,39 @@ def _generate_vintage_map_svg(
         lines.append("    </g>")
 
     # Layer 6: Streets — monochrome line art with scale-appropriate filtering
+    # Clip streets to land boundary so no roads appear in the ocean
     if streets_data:
         transform = processed.get("transform")
-        lines.append('    <g id="streets">')
+        clip_attr = ' clip-path="url(#land_clip)"' if polygons else ''
+        lines.append(f'    <g id="streets"{clip_attr}>')
 
         total_roads = len(streets_data.get("major_roads", [])) + len(streets_data.get("minor_roads", []))
         is_sparse = total_roads < 120
 
-        # Detail road classes to filter out for large-area maps (provinces, islands)
+        # Road classes by filtering tier
         detail_classes = {"footway", "cycleway", "path", "steps", "bridleway"}
-        # For very large areas, also filter service/track roads to reduce clutter
         clutter_classes = {"service", "track", "pedestrian", "living_street"}
+        minor_classes = {"residential", "unclassified", "tertiary", "tertiary_link"}
 
-        # Width tables scale with map area type
-        if is_large_area:
-            # Province/island scale — bold highways, thinner minor roads, no detail roads
+        # Province scale: ONLY major highways + secondary roads
+        # Everything else is noise at this zoom level
+        if is_province:
+            province_allow_major = {"motorway", "motorway_link", "trunk", "trunk_link",
+                                    "primary", "primary_link", "secondary", "secondary_link"}
+            # Also allow tertiary if road count is low (small province)
+            if total_roads < 300:
+                province_allow_major.add("tertiary")
+                province_allow_major.add("tertiary_link")
+            vintage_widths = {
+                "motorway": 2.5, "motorway_link": 1.6,
+                "trunk": 2.2, "trunk_link": 1.4,
+                "primary": 1.8, "primary_link": 1.2,
+                "secondary": 1.2, "secondary_link": 0.8,
+                "tertiary": 0.7, "tertiary_link": 0.5,
+            }
+        elif is_large_area:
+            # Community/park scale — show more roads but still filter detail
+            province_allow_major = None  # no province-level filtering
             vintage_widths = {
                 "motorway": 2.0, "motorway_link": 1.4,
                 "trunk": 1.8, "trunk_link": 1.2,
@@ -1304,10 +1333,9 @@ def _generate_vintage_map_svg(
                 "tertiary": 0.6, "tertiary_link": 0.45,
                 "residential": 0.3, "unclassified": 0.3,
                 "living_street": 0.25, "service": 0.2, "track": 0.2,
-                "pedestrian": 0.15, "footway": 0.1, "cycleway": 0.1,
-                "path": 0.1, "steps": 0.08, "bridleway": 0.1,
             }
         elif is_sparse:
+            province_allow_major = None
             vintage_widths = {
                 "motorway": 1.6, "motorway_link": 1.2,
                 "trunk": 1.4, "trunk_link": 1.0,
@@ -1320,6 +1348,7 @@ def _generate_vintage_map_svg(
                 "path": 0.15, "steps": 0.12, "bridleway": 0.15,
             }
         else:
+            province_allow_major = None
             vintage_widths = {
                 "motorway": 1.0, "motorway_link": 0.8,
                 "trunk": 0.9, "trunk_link": 0.7,
@@ -1333,28 +1362,32 @@ def _generate_vintage_map_svg(
             }
 
         # Draw minor roads first (under major roads)
-        for coords, road_class, _width, name in streets_data.get("minor_roads", []):
-            if len(coords) < 2:
-                continue
-            # Filter detail roads for large areas to reduce clutter
-            if is_large_area and road_class in detail_classes:
-                continue
-            if is_large_area and total_roads > 500 and road_class in clutter_classes:
-                continue
-            board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
-            path_d = _coords_to_open_path(board_coords)
-            w = vintage_widths.get(road_class, 0.15)
-            color = ink_faint if road_class in detail_classes else ink_light
-            lines.append(
-                f'      <path d="{path_d}"'
-                f' fill="none" stroke="{color}" stroke-width="{w}"'
-                f' stroke-linecap="round" stroke-linejoin="round"/>'
-            )
-            path_count += 1
+        if not is_province:
+            # Province maps skip minor roads entirely
+            for coords, road_class, _width, name in streets_data.get("minor_roads", []):
+                if len(coords) < 2:
+                    continue
+                if is_large_area and road_class in detail_classes:
+                    continue
+                if is_large_area and total_roads > 500 and road_class in clutter_classes:
+                    continue
+                board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
+                path_d = _coords_to_open_path(board_coords)
+                w = vintage_widths.get(road_class, 0.15)
+                color = ink_faint if road_class in detail_classes else ink_light
+                lines.append(
+                    f'      <path d="{path_d}"'
+                    f' fill="none" stroke="{color}" stroke-width="{w}"'
+                    f' stroke-linecap="round" stroke-linejoin="round"/>'
+                )
+                path_count += 1
 
         # Draw major roads on top
         for coords, road_class, _width, name in streets_data.get("major_roads", []):
             if len(coords) < 2:
+                continue
+            # Province: only show allowed road classes
+            if province_allow_major and road_class not in province_allow_major:
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
             path_d = _coords_to_open_path(board_coords)
