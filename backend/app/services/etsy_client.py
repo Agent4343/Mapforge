@@ -315,6 +315,8 @@ async def create_draft_listing(
         "when_made": "made_to_order",
         "taxonomy_id": "69150433",
         "should_auto_renew": "true",
+        "type": "download",
+        "is_digital": "true",
     }
     if tag_list:
         payload["tags"] = ",".join(tag_list)
