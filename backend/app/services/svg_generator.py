@@ -1218,7 +1218,7 @@ def _generate_vintage_map_svg(
     lines.append("    </g>")
 
     # Layer 4: Land polygons — filled with parchment so land stands out from water
-    coastline_width = "0.8" if is_province else "0.4"
+    coastline_width = "0.8" if (is_province or is_large_area) else "0.5"
     if polygons:
         lines.append('    <g id="land_polygons">')
         for exterior, holes in polygons:
@@ -1301,20 +1301,24 @@ def _generate_vintage_map_svg(
         total_roads = len(streets_data.get("major_roads", [])) + len(streets_data.get("minor_roads", []))
         is_sparse = total_roads < 120
 
+        # Auto-detect map density by road count — this works regardless of product_type
+        # Cape Breton Island as "province" has 1000+ roads = dense province
+        is_dense_map = total_roads > 400
+        is_very_dense = total_roads > 800
+
         # Road classes by filtering tier
         detail_classes = {"footway", "cycleway", "path", "steps", "bridleway"}
         clutter_classes = {"service", "track", "pedestrian", "living_street"}
-        minor_classes = {"residential", "unclassified", "tertiary", "tertiary_link"}
 
-        # Province scale: ONLY major highways + secondary roads
-        # Everything else is noise at this zoom level
-        if is_province:
-            province_allow_major = {"motorway", "motorway_link", "trunk", "trunk_link",
-                                    "primary", "primary_link", "secondary", "secondary_link"}
-            # Also allow tertiary if road count is low (small province)
+        # Dense maps (400+ roads): aggressive filtering — highways only
+        # This catches provinces, large islands, etc. regardless of product_type
+        if is_very_dense or is_province:
+            # 800+ roads or explicit province: ONLY major highways
+            allowed_roads = {"motorway", "motorway_link", "trunk", "trunk_link",
+                             "primary", "primary_link", "secondary", "secondary_link"}
             if total_roads < 300:
-                province_allow_major.add("tertiary")
-                province_allow_major.add("tertiary_link")
+                allowed_roads.add("tertiary")
+                allowed_roads.add("tertiary_link")
             vintage_widths = {
                 "motorway": 2.5, "motorway_link": 1.6,
                 "trunk": 2.2, "trunk_link": 1.4,
@@ -1322,9 +1326,12 @@ def _generate_vintage_map_svg(
                 "secondary": 1.2, "secondary_link": 0.8,
                 "tertiary": 0.7, "tertiary_link": 0.5,
             }
-        elif is_large_area:
-            # Community/park scale — show more roads but still filter detail
-            province_allow_major = None  # no province-level filtering
+            skip_minor_roads = True
+        elif is_dense_map:
+            # 400-800 roads: show major + tertiary, skip residential/detail
+            allowed_roads = {"motorway", "motorway_link", "trunk", "trunk_link",
+                             "primary", "primary_link", "secondary", "secondary_link",
+                             "tertiary", "tertiary_link"}
             vintage_widths = {
                 "motorway": 2.0, "motorway_link": 1.4,
                 "trunk": 1.8, "trunk_link": 1.2,
@@ -1332,10 +1339,10 @@ def _generate_vintage_map_svg(
                 "secondary": 1.0, "secondary_link": 0.7,
                 "tertiary": 0.6, "tertiary_link": 0.45,
                 "residential": 0.3, "unclassified": 0.3,
-                "living_street": 0.25, "service": 0.2, "track": 0.2,
             }
+            skip_minor_roads = True
         elif is_sparse:
-            province_allow_major = None
+            allowed_roads = None
             vintage_widths = {
                 "motorway": 1.6, "motorway_link": 1.2,
                 "trunk": 1.4, "trunk_link": 1.0,
@@ -1347,8 +1354,9 @@ def _generate_vintage_map_svg(
                 "pedestrian": 0.2, "footway": 0.15, "cycleway": 0.15,
                 "path": 0.15, "steps": 0.12, "bridleway": 0.15,
             }
+            skip_minor_roads = False
         else:
-            province_allow_major = None
+            allowed_roads = None
             vintage_widths = {
                 "motorway": 1.0, "motorway_link": 0.8,
                 "trunk": 0.9, "trunk_link": 0.7,
@@ -1360,16 +1368,16 @@ def _generate_vintage_map_svg(
                 "pedestrian": 0.12, "footway": 0.1, "cycleway": 0.1,
                 "path": 0.1, "steps": 0.08, "bridleway": 0.1,
             }
+            skip_minor_roads = False
 
-        # Draw minor roads first (under major roads)
-        if not is_province:
-            # Province maps skip minor roads entirely
+        # Draw minor roads first (under major roads) — skipped for dense maps
+        if not skip_minor_roads:
             for coords, road_class, _width, name in streets_data.get("minor_roads", []):
                 if len(coords) < 2:
                     continue
                 if is_large_area and road_class in detail_classes:
                     continue
-                if is_large_area and total_roads > 500 and road_class in clutter_classes:
+                if is_large_area and road_class in clutter_classes:
                     continue
                 board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
                 path_d = _coords_to_open_path(board_coords)
@@ -1386,8 +1394,8 @@ def _generate_vintage_map_svg(
         for coords, road_class, _width, name in streets_data.get("major_roads", []):
             if len(coords) < 2:
                 continue
-            # Province: only show allowed road classes
-            if province_allow_major and road_class not in province_allow_major:
+            # Filter by allowed road classes if set
+            if allowed_roads and road_class not in allowed_roads:
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
             path_d = _coords_to_open_path(board_coords)
