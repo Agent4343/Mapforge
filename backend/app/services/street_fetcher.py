@@ -39,6 +39,9 @@ ROAD_CLASSES = {
     "tertiary_link": {"width": 0.4, "priority": 5, "layer": "minor"},
     "residential": {"width": 0.3, "priority": 6, "layer": "minor"},
     "unclassified": {"width": 0.3, "priority": 7, "layer": "minor"},
+    "living_street": {"width": 0.3, "priority": 7, "layer": "minor"},
+    "service": {"width": 0.2, "priority": 8, "layer": "minor"},
+    "track": {"width": 0.2, "priority": 9, "layer": "minor"},
 }
 
 # Maximum total time budget for the entire street fetch (seconds).

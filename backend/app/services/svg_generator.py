@@ -588,8 +588,14 @@ def _generate_print_svg(
         lines.append("    </clipPath>")
 
     # Subtle texture pattern for sparse/rural areas — gives visual density
-    # when there are few streets to fill the map
-    is_sparse_area = product_type in ("community", "park")
+    # when there are few streets to fill the map. Also detect cities with
+    # very few roads (small towns like Baddeck classified as "city").
+    _total_roads = 0
+    if streets_data:
+        _total_roads = len(streets_data.get("major_roads", [])) + len(streets_data.get("minor_roads", []))
+    is_sparse_area = product_type in ("community", "park") or (
+        product_type == "city" and _total_roads < 80
+    )
     if is_sparse_area:
         land_stroke_color = theme.get("land_stroke", "#c4b598")
         lines.append(f'    <pattern id="land_texture" width="4" height="4" patternUnits="userSpaceOnUse">')
@@ -1333,6 +1339,7 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
             "secondary": 1.5, "secondary_link": 1.1,
             "tertiary": 1.0, "tertiary_link": 0.8,
             "residential": 0.5, "unclassified": 0.5,
+            "living_street": 0.5, "service": 0.4, "track": 0.35,
         }
         fill_ratio = 0.55  # inner fill is 55% of casing width
     elif product_type in ("community", "park"):
@@ -1344,18 +1351,36 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
             "secondary": 1.0, "secondary_link": 0.8,
             "tertiary": 0.7, "tertiary_link": 0.5,
             "residential": 0.45, "unclassified": 0.45,
+            "living_street": 0.45, "service": 0.35, "track": 0.3,
         }
         fill_ratio = 0.5
     else:
         # City: bold, dense street grid that creates strong visual texture
-        casing_widths = {
-            "motorway": 1.4, "motorway_link": 1.1,
-            "trunk": 1.2, "trunk_link": 0.9,
-            "primary": 1.0, "primary_link": 0.75,
-            "secondary": 0.7, "secondary_link": 0.55,
-            "tertiary": 0.5, "tertiary_link": 0.35,
-            "residential": 0.3, "unclassified": 0.3,
-        }
+        # Auto-detect sparse cities: if few roads, boost widths like community
+        total_roads = len(streets_data.get("major_roads", [])) + len(streets_data.get("minor_roads", []))
+        is_sparse_city = total_roads < 80
+
+        if is_sparse_city:
+            # Sparse city (like a small town): use thicker roads
+            casing_widths = {
+                "motorway": 1.8, "motorway_link": 1.4,
+                "trunk": 1.6, "trunk_link": 1.2,
+                "primary": 1.4, "primary_link": 1.0,
+                "secondary": 1.0, "secondary_link": 0.8,
+                "tertiary": 0.7, "tertiary_link": 0.5,
+                "residential": 0.45, "unclassified": 0.45,
+                "living_street": 0.45, "service": 0.35, "track": 0.3,
+            }
+        else:
+            casing_widths = {
+                "motorway": 1.4, "motorway_link": 1.1,
+                "trunk": 1.2, "trunk_link": 0.9,
+                "primary": 1.0, "primary_link": 0.75,
+                "secondary": 0.7, "secondary_link": 0.55,
+                "tertiary": 0.5, "tertiary_link": 0.35,
+                "residential": 0.3, "unclassified": 0.3,
+                "living_street": 0.3, "service": 0.2, "track": 0.18,
+            }
         fill_ratio = 0.5
 
     lines.append('    <g id="streets">')
