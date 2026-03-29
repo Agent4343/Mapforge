@@ -20,7 +20,7 @@ import OrderStatus from "./components/OrderStatus.jsx";
 import {
   generateSVG, generatePin, downloadSVG, downloadDXF, downloadSTL,
   downloadThumbnail, downloadPrintPNG,
-  downloadEtsyListing, downloadEtsyPackage, downloadPreview,
+  downloadEtsyListing, downloadEtsyPackage, downloadPreview, downloadWallMockup,
   getProfile, logout, getToken, subscribe,
   redeemCredit,
 } from "./services/api.js";
@@ -45,8 +45,13 @@ const DEFAULT_CONFIG = {
   numDepthBands: 5,
   outputMode: "print",
   colorTheme: "classic",
+  posterLayout: "classic",
   heartLat: null,
   heartLon: null,
+  showCompass: false,
+  showScaleBar: false,
+  gradientWater: true,
+  landShadow: true,
   includeBleed: false,
   includeCropMarks: false,
   printDPI: 300,
@@ -340,6 +345,11 @@ export default function App() {
           include_streets: config.includeStreets,
           output_mode: "print",
           color_theme: config.colorTheme || "classic",
+          poster_layout: config.posterLayout || "classic",
+          show_compass: config.showCompass || false,
+          show_scale_bar: config.showScaleBar || false,
+          gradient_water: config.gradientWater !== false,
+          land_shadow: config.landShadow !== false,
           include_bleed: config.includeBleed || false,
           include_crop_marks: config.includeCropMarks || false,
           print_dpi: config.printDPI || 300,
@@ -383,8 +393,13 @@ export default function App() {
           num_depth_bands: config.numDepthBands,
           markers: validMarkers,
           color_theme: config.colorTheme || "classic",
+          poster_layout: config.posterLayout || "classic",
           heart_lat: config.heartLat || undefined,
           heart_lon: config.heartLon || undefined,
+          show_compass: config.showCompass || false,
+          show_scale_bar: config.showScaleBar || false,
+          gradient_water: config.gradientWater !== false,
+          land_shadow: config.landShadow !== false,
           include_bleed: config.includeBleed || false,
           include_crop_marks: config.includeCropMarks || false,
           print_dpi: config.printDPI || 300,
@@ -487,6 +502,16 @@ export default function App() {
     try {
       const blob = await downloadPreview(result.file_id);
       _triggerDownload(blob, config.text + "_preview", "png");
+    } catch (err) {
+      setError(err.message);
+    }
+  }, [result, config.text]);
+
+  const handleDownloadWallMockup = useCallback(async (style = "light_wall") => {
+    if (!result) return;
+    try {
+      const blob = await downloadWallMockup(result.file_id, style);
+      _triggerDownload(blob, config.text + "_wall_mockup_" + style, "png");
     } catch (err) {
       setError(err.message);
     }
@@ -743,6 +768,7 @@ export default function App() {
             onDownloadEtsyListing={handleDownloadEtsyListing}
             onDownloadEtsyPackage={handleDownloadEtsyPackage}
             onDownloadPreview={handleDownloadPreview}
+            onDownloadWallMockup={handleDownloadWallMockup}
             canGenerate={!!selectedResult || (config.productType === "name_sign" && !!pinCoords)}
             generating={generating}
             user={user}

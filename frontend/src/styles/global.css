@@ -2608,3 +2608,73 @@ body {
   font-family: var(--font-mono);
   margin-top: 4px;
 }
+
+/* Showcase Maps Panel */
+.showcase-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  margin-top: 12px;
+}
+
+.showcase-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.showcase-options .control-group {
+  margin-bottom: 0;
+}
+
+.showcase-options select,
+.showcase-options input {
+  font-size: 11px;
+  padding: 4px 8px;
+}
+
+.showcase-cities-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.showcase-city-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.showcase-city-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  min-width: 100px;
+}
+
+.showcase-city-region {
+  font-size: 10px;
+  color: var(--text-muted);
+  flex: 1;
+}
+
+.showcase-city-card .btn {
+  margin-left: auto;
+  white-space: nowrap;
+  font-size: 11px;
+  padding: 4px 12px;
+}
+
+.showcase-done-btn {
+  color: var(--success) !important;
+  border-color: var(--success) !important;
+  font-size: 11px !important;
+}

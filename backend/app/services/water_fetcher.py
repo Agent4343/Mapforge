@@ -24,9 +24,22 @@ REQUEST_HEADERS = {
 
 
 async def _try_endpoint(client: httpx.AsyncClient, endpoint: str, query: str) -> dict | None:
-    """Try a single Overpass endpoint. Returns valid data or None."""
+    """Try a single Overpass endpoint. Returns valid data or None.
+
+    On 429 (rate limited), waits for the retry-after period and retries once.
+    """
     try:
         resp = await client.post(endpoint, data={"data": query}, headers=REQUEST_HEADERS)
+
+        if resp.status_code == 429:
+            retry_after = int(resp.headers.get("retry-after", "5"))
+            retry_after = min(retry_after, 8)
+            log.warning(f"Overpass 429 from {endpoint}, waiting {retry_after}s and retrying")
+            await asyncio.sleep(retry_after)
+            resp = await client.post(endpoint, data={"data": query}, headers=REQUEST_HEADERS)
+            if resp.status_code != 200:
+                log.warning(f"Overpass retry still failed: HTTP {resp.status_code}")
+                return None
 
         if resp.status_code != 200:
             log.warning(f"Overpass HTTP {resp.status_code} from {endpoint}")
@@ -54,25 +67,43 @@ async def _try_endpoint(client: httpx.AsyncClient, endpoint: str, query: str) ->
 
 
 async def _fetch_overpass_with_retry(query: str) -> dict | None:
-    """Try Overpass endpoints sequentially with a total time budget."""
+    """Try Overpass endpoints sequentially with a total time budget.
+
+    Small delay between attempts to avoid hammering busy endpoints.
+    """
     import time
     start = time.monotonic()
-    budget = 20.0  # keep tight to fit within Railway's request timeout
+    budget = 25.0  # slightly more generous budget for reliability
 
     async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-        for endpoint in OVERPASS_ENDPOINTS:
+        for i, endpoint in enumerate(OVERPASS_ENDPOINTS):
             elapsed = time.monotonic() - start
             if elapsed >= budget:
                 break
             remaining = budget - elapsed
             if remaining < 5:
                 break
+
+            # Small delay between endpoint attempts
+            if i > 0:
+                await asyncio.sleep(1.0)
+
             client.timeout = httpx.Timeout(min(15.0, remaining))
             result = await _try_endpoint(client, endpoint, query)
             if result is not None:
                 return result
 
-    log.error("All Overpass endpoints failed for water fetch")
+    # Second chance: wait 3 seconds and try the primary endpoint one more time.
+    # Often Overpass is just momentarily busy and recovers quickly.
+    log.warning("All Overpass endpoints failed for water — waiting 3s for second chance")
+    await asyncio.sleep(3.0)
+    async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
+        result = await _try_endpoint(client, OVERPASS_ENDPOINTS[0], query)
+        if result is not None:
+            log.info("Second-chance water fetch succeeded")
+            return result
+
+    log.error("All Overpass endpoints failed for water fetch (including retry)")
     return None
 
 
@@ -90,20 +121,10 @@ async def fetch_water_features(
     """
     south, west, north, east = bbox
 
-    query = f"""
-    [out:json][timeout:45];
-    (
-      way["natural"="water"]({south},{west},{north},{east});
-      way["natural"="coastline"]({south},{west},{north},{east});
-      way["waterway"~"^(river|stream|canal)$"]({south},{west},{north},{east});
-      relation["natural"="water"]({south},{west},{north},{east});
-      way["water"~"^(lake|reservoir|pond|river)$"]({south},{west},{north},{east});
-      relation["water"~"^(lake|reservoir|pond|river)$"]({south},{west},{north},{east});
-    );
-    out body;
-    >;
-    out skel qt;
-    """
+    # Simplified query — combine water selectors to reduce Overpass load.
+    # Using a shorter timeout (30s instead of 45s) to fail faster and try
+    # the next endpoint sooner.
+    query = f"""[out:json][timeout:30];(way["natural"="water"]({south},{west},{north},{east});way["natural"="coastline"]({south},{west},{north},{east});way["waterway"~"^(river|stream|canal)$"]({south},{west},{north},{east});relation["natural"="water"]({south},{west},{north},{east});way["water"~"^(lake|reservoir|pond)$"]({south},{west},{north},{east});relation["water"~"^(lake|reservoir|pond)$"]({south},{west},{north},{east}););out body;>;out skel qt;"""
 
     log.info(f"Fetching water features for bbox: {bbox}")
 

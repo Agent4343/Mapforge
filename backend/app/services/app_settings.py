@@ -43,9 +43,9 @@ async def get_etsy_credentials(db: AsyncSession) -> dict:
     """Get Etsy API credentials, preferring DB values over env vars."""
     from app.config import settings
 
-    api_key = await get_setting(db, "ETSY_API_KEY") or settings.ETSY_API_KEY
-    api_secret = await get_setting(db, "ETSY_API_SECRET") or settings.ETSY_API_SECRET
-    redirect_uri = await get_setting(db, "ETSY_REDIRECT_URI") or settings.ETSY_REDIRECT_URI
+    api_key = (await get_setting(db, "ETSY_API_KEY") or settings.ETSY_API_KEY or "").strip()
+    api_secret = (await get_setting(db, "ETSY_API_SECRET") or settings.ETSY_API_SECRET or "").strip()
+    redirect_uri = (await get_setting(db, "ETSY_REDIRECT_URI") or settings.ETSY_REDIRECT_URI or "").strip()
 
     return {
         "api_key": api_key,

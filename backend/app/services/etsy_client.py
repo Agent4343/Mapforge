@@ -68,8 +68,20 @@ def is_configured(creds: Optional[dict] = None) -> bool:
 
 
 def _api_key_header(creds: Optional[dict] = None) -> str:
-    """Build the x-api-key header value: keystring."""
-    return _get_api_key(creds)
+    """Build the x-api-key header value: keystring:shared_secret.
+
+    As of February 2026, Etsy requires both the keystring and shared secret
+    in the x-api-key header, separated by a colon.
+    """
+    key = (_get_api_key(creds) or "").strip()
+    secret = (_get_api_secret(creds) or "").strip()
+    if not key or not secret:
+        logger.error("Etsy API credentials incomplete: key=%s, secret=%s",
+                     bool(key), bool(secret))
+    header_val = f"{key}:{secret}"
+    # Log a masked version for debugging (first 8 chars of each)
+    logger.debug("x-api-key header: %s...:%s...", key[:8], secret[:8])
+    return header_val
 
 
 def extract_etsy_user_id(access_token: str) -> str:
@@ -130,7 +142,7 @@ def generate_auth_url(user_id: str, creds: Optional[dict] = None) -> str:
         "response_type": "code",
         "client_id": _get_api_key(creds),
         "redirect_uri": _get_redirect_uri(creds),
-        "scope": "listings_w listings_r shops_r images_w listings_d",
+        "scope": "listings_w listings_r shops_r listings_d",
         "state": user_id,
         "code_challenge": code_challenge,
         "code_challenge_method": "S256",
@@ -240,7 +252,6 @@ async def get_shop(access_token: str, creds: Optional[dict] = None) -> dict:
     headers = _auth_headers(access_token, creds)
 
     async with httpx.AsyncClient() as client:
-        # First get the user to confirm the token works
         resp = await _request_with_retry(
             client, "GET",
             f"{ETSY_API_BASE}/application/users/{user_id}/shops",
@@ -249,17 +260,78 @@ async def get_shop(access_token: str, creds: Optional[dict] = None) -> dict:
         )
 
     if resp.status_code != 200:
-        raise ValueError(f"Failed to fetch Etsy shop: {resp.status_code}")
+        # Log the key format (masked) for debugging auth issues
+        hdr = headers.get("x-api-key", "")
+        parts = hdr.split(":")
+        masked = f"{parts[0][:8]}...({len(parts[0])}chars):{parts[1][:8]}...({len(parts[1])}chars)" if len(parts) == 2 else f"INVALID_FORMAT({hdr[:20]})"
+        logger.error("Etsy get_shop failed: %d %s | x-api-key format: %s", resp.status_code, resp.text[:500], masked)
+        raise ValueError(f"Failed to fetch Etsy shop: {resp.status_code} — {resp.text[:200]}")
 
     data = resp.json()
+    logger.info("Etsy get_shop response keys: %s", list(data.keys()) if isinstance(data, dict) else type(data))
+
     # The response may be a single shop object or have results array
     if isinstance(data, dict) and "shop_id" in data:
         return data
-    results = data.get("results", [data] if "shop_id" in data else [])
+    # Etsy v3 wraps results in a "results" array for getShopByOwnerUserId
+    results = data.get("results", [])
     if not results:
-        raise ValueError("No Etsy shop found for this account.")
+        # Some Etsy accounts don't have a shop yet
+        logger.warning("Etsy get_shop: no results in response: %s", str(data)[:300])
+        raise ValueError("No Etsy shop found for this account. Make sure you have an active Etsy shop.")
 
     return results[0]
+
+
+# Cached taxonomy ID for "Art & Collectibles > Prints > Digital Prints"
+_taxonomy_id_cache: Optional[str] = None
+
+
+async def _get_digital_prints_taxonomy_id(creds: Optional[dict] = None) -> Optional[str]:
+    """Fetch the taxonomy ID for 'Art & Collectibles > Prints > Digital Prints' from Etsy.
+
+    Caches the result after first successful fetch. Returns None if lookup fails
+    (digital listings can be created without taxonomy_id).
+    """
+    global _taxonomy_id_cache
+    if _taxonomy_id_cache:
+        return _taxonomy_id_cache
+
+    try:
+        headers = {"x-api-key": _api_key_header(creds)}
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"{ETSY_API_BASE}/application/seller-taxonomy/nodes",
+                headers=headers,
+                timeout=15.0,
+            )
+        if resp.status_code != 200:
+            logger.warning("Failed to fetch taxonomy nodes: %d", resp.status_code)
+            return None
+
+        data = resp.json()
+        nodes = data.get("results", [])
+
+        # Find Art & Collectibles > Prints > Digital Prints
+        for node in nodes:
+            if "art" in node.get("name", "").lower():
+                for child in node.get("children", []):
+                    if "print" in child.get("name", "").lower():
+                        for gc in child.get("children", []):
+                            if "digital" in gc.get("name", "").lower():
+                                _taxonomy_id_cache = str(gc["id"])
+                                logger.info("Found Digital Prints taxonomy ID: %s", _taxonomy_id_cache)
+                                return _taxonomy_id_cache
+                        # If no "Digital Prints" child, use "Prints" itself
+                        _taxonomy_id_cache = str(child["id"])
+                        logger.info("Using Prints taxonomy ID (no Digital Prints child): %s", _taxonomy_id_cache)
+                        return _taxonomy_id_cache
+
+        logger.warning("Could not find Art/Prints in taxonomy tree")
+        return None
+    except Exception as e:
+        logger.warning("Taxonomy lookup failed: %s", e)
+        return None
 
 
 async def create_draft_listing(
@@ -285,6 +357,9 @@ async def create_draft_listing(
 
     tag_list = [t.strip()[:20] for t in tags[:13] if t.strip()]
 
+    # Look up the correct taxonomy ID for digital prints
+    taxonomy_id = await _get_digital_prints_taxonomy_id(creds)
+
     payload = {
         "title": title[:140],
         "description": description,
@@ -292,9 +367,12 @@ async def create_draft_listing(
         "quantity": str(quantity),
         "who_made": "i_did",
         "when_made": "made_to_order",
-        "taxonomy_id": "69150433",
         "should_auto_renew": "true",
+        "type": "download",
+        "is_digital": "true",
     }
+    if taxonomy_id:
+        payload["taxonomy_id"] = taxonomy_id
     if tag_list:
         payload["tags"] = ",".join(tag_list)
 

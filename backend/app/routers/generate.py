@@ -34,9 +34,9 @@ from app.services.contour_fetcher import fetch_contour_lines, generate_depth_ban
 from app.services.file_storage import store_file, retrieve_file
 from app.services.thumbnail_generator import (
     generate_thumbnail, generate_print_image, generate_etsy_listing_image,
-    generate_watermarked_preview, calculate_print_pixels,
+    generate_watermarked_preview, generate_wall_mockup, calculate_print_pixels,
     remap_poster_theme,
-    COLOR_THEMES, PRINT_SIZE_PIXELS,
+    COLOR_THEMES, MOCKUP_STYLES, PRINT_SIZE_PIXELS,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["generate"])
@@ -213,14 +213,24 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         return None
 
     # Fetch streets, water, and contours concurrently to minimise total wall time.
-    # Running them in parallel avoids sequential Overpass round-trips that can
-    # push total generation time past Railway's 60-second proxy timeout.
+    # Streets and water are staggered by 0.5s to reduce Overpass load —
+    # hitting the same server with two heavy queries simultaneously often
+    # causes both to fail with 429/timeout.
     contour_data = None
+
+    async def _get_streets_staggered():
+        return await _get_streets()
+
+    async def _get_water_staggered():
+        if need_streets:
+            await asyncio.sleep(0.5)  # stagger to reduce Overpass contention
+        return await _get_water()
+
     tasks = []
     if need_streets:
-        tasks.append(("streets", _get_streets()))
+        tasks.append(("streets", _get_streets_staggered()))
     if need_water:
-        tasks.append(("water", _get_water()))
+        tasks.append(("water", _get_water_staggered()))
     if req.include_contours:
         tasks.append(("contours", _get_contours()))
 
@@ -291,6 +301,11 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         product_type=req.product_type.value,
         include_bleed=req.include_bleed,
         include_crop_marks=req.include_crop_marks,
+        poster_layout=req.poster_layout,
+        show_compass=req.show_compass,
+        show_scale_bar=req.show_scale_bar,
+        gradient_water=req.gradient_water,
+        land_shadow=req.land_shadow,
     )
 
     # Store files + generate derivatives (only for authenticated users)
@@ -363,7 +378,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
             await store_file(print_png_key, print_bytes, content_type="image/png")
         except Exception as e:
-            log.warning(f"Print PNG generation failed (non-fatal): {e}")
+            log.error(f"Print PNG generation failed: {type(e).__name__}: {e}")
+            print_png_key = None
 
         # Generate Etsy listing image (4:3 ratio for Etsy grid)
         try:
@@ -558,6 +574,11 @@ async def generate_pin(
         product_type="name_sign",
         include_bleed=req.include_bleed,
         include_crop_marks=req.include_crop_marks,
+        poster_layout=req.poster_layout,
+        show_compass=req.show_compass,
+        show_scale_bar=req.show_scale_bar,
+        gradient_water=req.gradient_water,
+        land_shadow=req.land_shadow,
     )
 
     # Store files and generate derivatives (only for authenticated users — visitors just get a preview)
@@ -595,7 +616,8 @@ async def generate_pin(
             print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
             await store_file(print_png_key, print_bytes, content_type="image/png")
         except Exception as e:
-            log.warning(f"Print PNG generation failed (non-fatal): {e}")
+            log.error(f"Print PNG generation failed: {type(e).__name__}: {e}")
+            print_png_key = None
 
         # Generate Etsy listing image for pin maps
         try:
@@ -748,9 +770,25 @@ async def download(
         raise HTTPException(status_code=404, detail="File not found.")
 
     if format == ExportFormat.png:
-        if not file_record.print_png_key:
+        content = None
+        if file_record.print_png_key:
+            content = await retrieve_file(file_record.print_png_key)
+        # Fallback: render PNG on-demand from stored SVG if pre-rendered PNG
+        # is missing (happens when cairosvg fails during generation)
+        if content is None and file_record.svg_storage_key:
+            svg_bytes = await retrieve_file(file_record.svg_storage_key)
+            if svg_bytes:
+                try:
+                    from app.services.thumbnail_generator import generate_print_image
+                    content = generate_print_image(
+                        svg_bytes.decode("utf-8"),
+                        skip_remap=True,
+                    )
+                    log.info(f"On-demand PNG render succeeded for {file_id}")
+                except Exception as e:
+                    log.error(f"On-demand PNG render failed for {file_id}: {e}")
+        if content is None:
             raise HTTPException(status_code=404, detail="Print PNG not available for this file.")
-        content = await retrieve_file(file_record.print_png_key)
         media_type = "image/png"
         ext = "png"
     elif format == ExportFormat.dxf:
@@ -850,6 +888,58 @@ async def download_preview(
             "Content-Disposition": f'attachment; filename="{filename}"',
         },
     )
+
+
+@router.get("/download/{file_id}/wall-mockup")
+async def download_wall_mockup(
+    file_id: str,
+    style: str = "light_wall",
+    db: AsyncSession = Depends(get_db),
+):
+    """Download a lifestyle wall mockup — the map poster framed on a wall.
+
+    Query params:
+        style: One of 'light_wall', 'dark_wall', 'white_wall', 'brick_wall'.
+    """
+    result = await db.execute(
+        select(GeneratedFile).where(GeneratedFile.id == file_id)
+    )
+    file_record = result.scalar_one_or_none()
+    if not file_record:
+        raise HTTPException(status_code=404, detail="File not found.")
+
+    svg_bytes = await retrieve_file(file_record.svg_storage_key)
+    if svg_bytes is None:
+        raise HTTPException(status_code=404, detail="SVG file not found in storage.")
+
+    if style not in MOCKUP_STYLES:
+        style = "light_wall"
+
+    try:
+        mockup_bytes = generate_wall_mockup(
+            svg_bytes.decode("utf-8"),
+            output_width=3000,
+            output_height=2400,
+            mockup_style=style,
+        )
+    except Exception as e:
+        log.error(f"Wall mockup generation failed: {e}")
+        raise HTTPException(status_code=500, detail="Mockup generation failed.")
+
+    filename = _seo_filename(file_record.location_name, "png", suffix=f"wall-mockup-{style}")
+    return Response(
+        content=mockup_bytes,
+        media_type="image/png",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
+
+
+@router.get("/mockup-styles")
+async def list_mockup_styles():
+    """List available wall mockup styles."""
+    return {key: {"label": val["label"]} for key, val in MOCKUP_STYLES.items()}
 
 
 @router.get("/print-sizes")
@@ -1059,6 +1149,20 @@ async def download_etsy_package(
             thumb_bytes = await retrieve_file(file_record.thumbnail_key)
             if thumb_bytes:
                 zf.writestr(f"{seo_name}-mockup.png", thumb_bytes)
+
+        # 4b. Wall mockups (framed on wall — lifestyle photos for listings)
+        if svg_bytes:
+            try:
+                for mockup_style in ("light_wall", "dark_wall"):
+                    mockup_png = generate_wall_mockup(
+                        svg_bytes.decode("utf-8"),
+                        output_width=3000,
+                        output_height=2400,
+                        mockup_style=mockup_style,
+                    )
+                    zf.writestr(f"{seo_name}-wall-mockup-{mockup_style}.png", mockup_png)
+            except Exception as e:
+                log.warning(f"Wall mockup generation failed (non-fatal): {e}")
 
         # 5. AI-generated listing text (title, description, tags)
         is_city = file_record.product_type == "city"

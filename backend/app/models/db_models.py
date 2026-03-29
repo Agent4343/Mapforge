@@ -37,6 +37,7 @@ class User(Base):
     etsy_token_expires_at = Column(DateTime(timezone=True), nullable=True)
     etsy_shop_id = Column(String(255), nullable=True)
     etsy_shop_name = Column(String(255), nullable=True)
+    etsy_pkce_verifier = Column(Text, nullable=True)  # Temporary PKCE verifier for OAuth flow
     generation_count_this_month = Column(Integer, default=0)
     month_reset_date = Column(DateTime(timezone=True), default=_utcnow)
     created_at = Column(DateTime(timezone=True), default=_utcnow)

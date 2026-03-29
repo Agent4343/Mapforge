@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { getAdminStats, getEtsySettings, saveEtsySettings, clearEtsySettings } from "../services/api.js";
+import { getAdminStats, getEtsySettings, saveEtsySettings, clearEtsySettings, getEtsyDebug } from "../services/api.js";
 
 export default function AdminDashboard({ onBack }) {
   const [stats, setStats] = useState(null);
@@ -14,6 +14,21 @@ export default function AdminDashboard({ onBack }) {
   const [etsySaving, setEtsySaving] = useState(false);
   const [etsyMsg, setEtsyMsg] = useState(null);
   const [showEtsyForm, setShowEtsyForm] = useState(false);
+  const [etsyDebug, setEtsyDebug] = useState(null);
+  const [etsyTesting, setEtsyTesting] = useState(false);
+
+  async function handleTestEtsy() {
+    setEtsyTesting(true);
+    setEtsyDebug(null);
+    try {
+      const result = await getEtsyDebug();
+      setEtsyDebug(result);
+    } catch (err) {
+      setEtsyDebug({ error: err.message });
+    } finally {
+      setEtsyTesting(false);
+    }
+  }
 
   useEffect(() => {
     async function loadStats() {
@@ -145,6 +160,12 @@ export default function AdminDashboard({ onBack }) {
                 </div>
               )}
             </div>
+            {etsySettings.header_format && (
+              <div className="etsy-settings-detail">
+                <span className="etsy-settings-label">Header:</span>
+                <span className="etsy-settings-value" style={{ fontFamily: "monospace", fontSize: "11px" }}>{etsySettings.header_format}</span>
+              </div>
+            )}
             <div className="etsy-settings-actions">
               <button className="btn btn-secondary btn-sm" onClick={() => setShowEtsyForm(!showEtsyForm)}>
                 {showEtsyForm ? "Cancel" : "Update Credentials"}
@@ -152,7 +173,40 @@ export default function AdminDashboard({ onBack }) {
               <button className="btn btn-secondary btn-sm" onClick={handleClearEtsy}>
                 Clear Credentials
               </button>
+              <button className="btn btn-primary btn-sm" onClick={handleTestEtsy} disabled={etsyTesting}>
+                {etsyTesting ? "Testing..." : "Test Connection"}
+              </button>
             </div>
+            {etsyDebug && (
+              <div style={{ marginTop: "10px", padding: "10px", background: "var(--bg-input)", borderRadius: "6px", fontSize: "11px", fontFamily: "monospace", lineHeight: "1.6" }}>
+                {etsyDebug.error ? (
+                  <div className="error-message">{etsyDebug.error}</div>
+                ) : (
+                  <>
+                    <div>Key length: <strong>{etsyDebug.key_length}</strong> | Secret length: <strong>{etsyDebug.secret_length}</strong></div>
+                    <div>Key: <strong>{etsyDebug.key_preview}</strong></div>
+                    <div>Secret: <strong>{etsyDebug.secret_preview}</strong></div>
+                    <div>Header: <strong>{etsyDebug.header_format}</strong></div>
+                    {etsyDebug.issues?.length > 0 && (
+                      <div className="error-message" style={{ marginTop: "6px" }}>Issues: {etsyDebug.issues.join(", ")}</div>
+                    )}
+                    {etsyDebug.ping_test && (
+                      <div style={{ marginTop: "6px" }}>
+                        Ping test: <strong style={{ color: etsyDebug.ping_test.status_code === 200 ? "var(--success)" : "var(--error)" }}>
+                          {etsyDebug.ping_test.status_code || "ERROR"}
+                        </strong>
+                        {etsyDebug.ping_test.status_code !== 200 && (
+                          <div style={{ color: "var(--error)", marginTop: "4px" }}>{etsyDebug.ping_test.response || etsyDebug.ping_test.error}</div>
+                        )}
+                        {etsyDebug.ping_test.status_code === 200 && (
+                          <span style={{ color: "var(--success)" }}> — Credentials are valid!</span>
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
           </div>
         ) : (
           <div className="etsy-settings-status">

@@ -39,6 +39,15 @@ ROAD_CLASSES = {
     "tertiary_link": {"width": 0.4, "priority": 5, "layer": "minor"},
     "residential": {"width": 0.3, "priority": 6, "layer": "minor"},
     "unclassified": {"width": 0.3, "priority": 7, "layer": "minor"},
+    "living_street": {"width": 0.3, "priority": 7, "layer": "minor"},
+    "service": {"width": 0.2, "priority": 8, "layer": "minor"},
+    "track": {"width": 0.2, "priority": 9, "layer": "minor"},
+    "pedestrian": {"width": 0.15, "priority": 10, "layer": "detail"},
+    "footway": {"width": 0.1, "priority": 11, "layer": "detail"},
+    "cycleway": {"width": 0.1, "priority": 11, "layer": "detail"},
+    "path": {"width": 0.1, "priority": 12, "layer": "detail"},
+    "steps": {"width": 0.08, "priority": 13, "layer": "detail"},
+    "bridleway": {"width": 0.1, "priority": 12, "layer": "detail"},
 }
 
 # Maximum total time budget for the entire street fetch (seconds).
@@ -53,9 +62,15 @@ async def _try_endpoint(client: httpx.AsyncClient, endpoint: str, query: str) ->
         resp = await client.post(endpoint, data={"data": query}, headers=REQUEST_HEADERS)
 
         if resp.status_code == 429:
-            retry_after = resp.headers.get("retry-after", "5")
-            log.warning(f"Overpass 429 from {endpoint}, retry-after={retry_after}")
-            return None
+            retry_after = int(resp.headers.get("retry-after", "5"))
+            retry_after = min(retry_after, 8)  # cap wait to 8 seconds
+            log.warning(f"Overpass 429 from {endpoint}, waiting {retry_after}s and retrying")
+            await asyncio.sleep(retry_after)
+            # Retry once after waiting
+            resp = await client.post(endpoint, data={"data": query}, headers=REQUEST_HEADERS)
+            if resp.status_code != 200:
+                log.warning(f"Overpass retry still failed: HTTP {resp.status_code}")
+                return None
 
         if resp.status_code == 504:
             log.warning(f"Overpass 504 timeout from {endpoint}")
@@ -70,10 +85,8 @@ async def _try_endpoint(client: httpx.AsyncClient, endpoint: str, query: str) ->
         if "remark" in data:
             remark = data["remark"]
             log.warning(f"Overpass remark from {endpoint}: {remark[:120]}")
-            # "runtime error" usually means query too complex/large
             if "runtime" in remark.lower() or "timeout" in remark.lower():
                 return None
-            # Other remarks (e.g. "Area ... not found") — still no data
             return None
 
         if not data.get("elements"):
@@ -94,34 +107,48 @@ async def _try_endpoint(client: httpx.AsyncClient, endpoint: str, query: str) ->
 async def _fetch_with_fallback(query: str, timeout_per_endpoint: float = 20.0, total_budget: float = 30.0) -> dict | None:
     """Try Overpass endpoints sequentially with a hard total time limit.
 
-    Each endpoint gets a limited timeout. The entire operation is bounded
-    by total_budget so we never block the HTTP response for too long.
+    Each endpoint gets a limited timeout. A small delay between attempts
+    avoids hammering Overpass when it's under load. If an endpoint returns
+    429, we honor the retry-after header and try again.
     """
     start = time.monotonic()
     async with httpx.AsyncClient(timeout=timeout_per_endpoint, follow_redirects=True) as client:
-        for endpoint in OVERPASS_ENDPOINTS:
+        for i, endpoint in enumerate(OVERPASS_ENDPOINTS):
             elapsed = time.monotonic() - start
             if elapsed >= total_budget:
                 log.warning(f"Street fetch budget exhausted ({elapsed:.0f}s)")
                 break
 
             remaining = total_budget - elapsed
-            # Reduce timeout if we're running low on budget
             ep_timeout = min(timeout_per_endpoint, remaining)
             if ep_timeout < 5:
                 break
+
+            # Small delay between endpoint attempts to reduce Overpass load
+            if i > 0:
+                await asyncio.sleep(1.0)
 
             client.timeout = httpx.Timeout(ep_timeout)
             result = await _try_endpoint(client, endpoint, query)
             if result is not None:
                 return result
+
+    # Second chance: wait and retry the primary endpoint
+    log.warning("All Overpass endpoints failed for streets — waiting 3s for second chance")
+    await asyncio.sleep(3.0)
+    async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
+        result = await _try_endpoint(client, OVERPASS_ENDPOINTS[0], query)
+        if result is not None:
+            log.info("Second-chance street fetch succeeded")
+            return result
+
     return None
 
 
 def _build_area_query(area_id: int, highway_filter: str) -> str:
     """Build an Overpass area query (for relations with known OSM ID)."""
     return (
-        f'[out:json][timeout:45];'
+        f'[out:json][timeout:30];'
         f'area({area_id})->.a;'
         f'way["highway"~"^({highway_filter})$"](area.a);'
         f'out body;>;out skel qt;'
@@ -132,7 +159,7 @@ def _build_bbox_query(bbox: tuple, highway_filter: str) -> str:
     """Build an Overpass bbox query."""
     south, west, north, east = bbox
     return (
-        f'[out:json][timeout:45];'
+        f'[out:json][timeout:30];'
         f'way["highway"~"^({highway_filter})$"]({south},{west},{north},{east});'
         f'out body;>;out skel qt;'
     )
@@ -221,6 +248,7 @@ async def fetch_streets(
         if road_info["layer"] == "major":
             major_roads.append(entry)
         else:
+            # Both "minor" and "detail" layers go into minor_roads
             minor_roads.append(entry)
 
     log.info(f"Parsed {len(major_roads)} major + {len(minor_roads)} minor roads in {elapsed:.1f}s")

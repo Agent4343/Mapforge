@@ -105,11 +105,17 @@ async def get_etsy_settings(
     api_secret = await get_setting(db, "ETSY_API_SECRET") or ""
     redirect_uri = await get_setting(db, "ETSY_REDIRECT_URI") or ""
 
+    # Show the constructed x-api-key format for debugging (masked)
+    key_trimmed = api_key.strip()
+    secret_trimmed = api_secret.strip()
+    header_preview = f"{key_trimmed[:8]}...({len(key_trimmed)}ch):{secret_trimmed[:4]}...({len(secret_trimmed)}ch)" if key_trimmed and secret_trimmed else "NOT CONFIGURED"
+
     return {
         "api_key": api_key[:8] + "..." if len(api_key) > 8 else api_key,
         "api_secret": "••••••••" if api_secret else "",
         "redirect_uri": redirect_uri,
         "configured": bool(api_key and api_secret),
+        "header_format": header_preview,
     }
 
 
@@ -144,3 +150,63 @@ async def clear_etsy_settings(
         await delete_setting(db, key)
 
     return {"status": "cleared"}
+
+
+@router.get("/etsy-debug")
+async def etsy_debug(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Debug Etsy API connection (admin only). Tests the x-api-key header."""
+    _require_admin(user)
+
+    from app.services.app_settings import get_etsy_credentials
+    creds = await get_etsy_credentials(db)
+
+    key = creds.get("api_key", "")
+    secret = creds.get("api_secret", "")
+
+    # Check for common issues
+    issues = []
+    if not key:
+        issues.append("API Key (Keystring) is empty")
+    if not secret:
+        issues.append("Shared Secret is empty")
+    if key and " " in key:
+        issues.append("API Key contains spaces")
+    if secret and " " in secret:
+        issues.append("Shared Secret contains spaces")
+    if key and "\n" in key:
+        issues.append("API Key contains newlines")
+    if secret and "\n" in secret:
+        issues.append("Shared Secret contains newlines")
+
+    # Try a simple API call to test
+    test_result = None
+    if key and secret:
+        import httpx
+        header_val = f"{key}:{secret}"
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    "https://api.etsy.com/v3/application/openapi-ping",
+                    headers={"x-api-key": header_val},
+                    timeout=10.0,
+                )
+                test_result = {
+                    "status_code": resp.status_code,
+                    "response": resp.text[:300],
+                }
+        except Exception as e:
+            test_result = {"error": str(e)}
+
+    return {
+        "key_length": len(key),
+        "secret_length": len(secret),
+        "key_preview": f"{key[:8]}...{key[-4:]}" if len(key) > 12 else key,
+        "secret_preview": f"{secret[:4]}...{secret[-4:]}" if len(secret) > 8 else "TOO_SHORT",
+        "header_format": f"{key[:6]}..:{secret[:4]}..",
+        "issues": issues,
+        "ping_test": test_result,
+        "redirect_uri": creds.get("redirect_uri", ""),
+    }

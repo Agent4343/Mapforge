@@ -1,8 +1,11 @@
 """PNG image generator for product mockups and print-ready wall art.
 
-Converts CNC SVG output to PNG images in two modes:
-- Thumbnail: 2000px, warm wood background for Etsy/Shopify listings
-- Print: 4800px (300 DPI at 16x20"), professional colors for wall art printing
+Converts SVG output to PNG images in multiple modes:
+- Thumbnail: 2000px for Etsy/Shopify listings
+- Print: 4800px+ (300/600 DPI) for wall art printing
+- Etsy Listing: 2700x2025 (4:3 ratio for grid display)
+- Wall Mockup: Framed poster on a wall for lifestyle product photos
+- Watermarked: Preview with tiled watermark overlay
 
 Uses cairosvg for SVG-to-PNG rasterization with color remapping
 to transform CNC toolpath colors into rich, natural print colors.
@@ -69,14 +72,14 @@ COLOR_THEMES = {
         "colors": PRINT_COLOR_MAP,
         "poster": {
             "mat": "#ffffff",
-            "map_bg": "#f5f0e8",
-            "land": "#e8dfd0",
-            "land_stroke": "#c4b598",
-            "water": "#a3cceb",
-            "water_stroke": "#5a9fd4",
-            "street_major": "#333333",
-            "street_minor": "#666666",
-            "street_label": "#333333",
+            "map_bg": "#faf6f0",
+            "land": "#d8c8a8",
+            "land_stroke": "#a89060",
+            "water": "#7ab0d8",
+            "water_stroke": "#3a80b8",
+            "street_major": "#1a1a1a",
+            "street_minor": "#404040",
+            "street_label": "#1a1a1a",
             "text_primary": "#1a1a1a",
             "text_secondary": "#555555",
         },
@@ -97,14 +100,14 @@ COLOR_THEMES = {
         },
         "poster": {
             "mat": "#ffffff",
-            "map_bg": "#1a1a2e",
-            "land": "#22244a",
-            "land_stroke": "#3a3c70",
-            "water": "#1a3a6a",
-            "water_stroke": "#3a6ab0",
-            "street_major": "#e2e8f0",
-            "street_minor": "#a0aec0",
-            "street_label": "#cbd5e0",
+            "map_bg": "#12122a",
+            "land": "#1e2050",
+            "land_stroke": "#384080",
+            "water": "#142860",
+            "water_stroke": "#3060b0",
+            "street_major": "#f0f4f8",
+            "street_minor": "#b0bcd0",
+            "street_label": "#d0d8e8",
             "text_primary": "#1a1a1a",
             "text_secondary": "#666666",
         },
@@ -126,13 +129,13 @@ COLOR_THEMES = {
         "poster": {
             "mat": "#ffffff",
             "map_bg": "#fdf2f0",
-            "land": "#f5e0db",
-            "land_stroke": "#d4a59a",
-            "water": "#c8dce8",
-            "water_stroke": "#9abdd4",
-            "street_major": "#8b6f66",
-            "street_minor": "#b8a098",
-            "street_label": "#6b5550",
+            "land": "#f0d4cc",
+            "land_stroke": "#c89080",
+            "water": "#b8d0e0",
+            "water_stroke": "#80a8c4",
+            "street_major": "#6b4a40",
+            "street_minor": "#9a7a70",
+            "street_label": "#5a3d35",
             "text_primary": "#3d2e2a",
             "text_secondary": "#8b6f66",
         },
@@ -153,14 +156,14 @@ COLOR_THEMES = {
         },
         "poster": {
             "mat": "#ffffff",
-            "map_bg": "#0f1923",
-            "land": "#182d40",
-            "land_stroke": "#244460",
-            "water": "#0c2845",
-            "water_stroke": "#2560a0",
-            "street_major": "#c9d6df",
-            "street_minor": "#8fa7b8",
-            "street_label": "#a8c4d4",
+            "map_bg": "#0a1420",
+            "land": "#142840",
+            "land_stroke": "#1e4068",
+            "water": "#081e38",
+            "water_stroke": "#1a50a0",
+            "street_major": "#d8e4f0",
+            "street_minor": "#9ab4c8",
+            "street_label": "#b8d0e0",
             "text_primary": "#1a1a1a",
             "text_secondary": "#555555",
         },
@@ -181,14 +184,14 @@ COLOR_THEMES = {
         },
         "poster": {
             "mat": "#ffffff",
-            "map_bg": "#eef2ea",
-            "land": "#dfe8d8",
-            "land_stroke": "#b8c8ac",
-            "water": "#c0d8d0",
-            "water_stroke": "#8bb8a8",
-            "street_major": "#4a5e44",
-            "street_minor": "#7d9b76",
-            "street_label": "#3d4e38",
+            "map_bg": "#f0f4ec",
+            "land": "#d0dcc4",
+            "land_stroke": "#a0b890",
+            "water": "#a8ccc0",
+            "water_stroke": "#6ea898",
+            "street_major": "#2a4024",
+            "street_minor": "#587850",
+            "street_label": "#2a3a24",
             "text_primary": "#2a3528",
             "text_secondary": "#5a6e54",
         },
@@ -210,13 +213,13 @@ COLOR_THEMES = {
         "poster": {
             "mat": "#ffffff",
             "map_bg": "#fafafa",
-            "land": "#f0f0f0",
-            "land_stroke": "#c0c0c0",
-            "water": "#d8d8d8",
-            "water_stroke": "#aaaaaa",
-            "street_major": "#1a1a1a",
-            "street_minor": "#555555",
-            "street_label": "#333333",
+            "land": "#e8e8e8",
+            "land_stroke": "#a0a0a0",
+            "water": "#c8c8c8",
+            "water_stroke": "#909090",
+            "street_major": "#111111",
+            "street_minor": "#404040",
+            "street_label": "#222222",
             "text_primary": "#111111",
             "text_secondary": "#555555",
         },
@@ -237,14 +240,14 @@ COLOR_THEMES = {
         },
         "poster": {
             "mat": "#ffffff",
-            "map_bg": "#0a1628",
-            "land": "#122240",
-            "land_stroke": "#1e3560",
-            "water": "#0a2050",
-            "water_stroke": "#1a4080",
-            "street_major": "#d4a843",
-            "street_minor": "#b8943a",
-            "street_label": "#e8c95a",
+            "map_bg": "#081020",
+            "land": "#101e3a",
+            "land_stroke": "#1a3060",
+            "water": "#060e30",
+            "water_stroke": "#143870",
+            "street_major": "#e8b840",
+            "street_minor": "#c8a030",
+            "street_label": "#f0d060",
             "text_primary": "#1a1a1a",
             "text_secondary": "#555555",
         },
@@ -266,13 +269,13 @@ COLOR_THEMES = {
         "poster": {
             "mat": "#ffffff",
             "map_bg": "#fef0f0",
-            "land": "#f8e0e0",
-            "land_stroke": "#e8b4b4",
-            "water": "#e8d0d8",
-            "water_stroke": "#d4a0b0",
-            "street_major": "#8b5e5e",
-            "street_minor": "#c27c7c",
-            "street_label": "#6b4545",
+            "land": "#f0cece",
+            "land_stroke": "#d89898",
+            "water": "#dcc0c8",
+            "water_stroke": "#c08898",
+            "street_major": "#6b3a3a",
+            "street_minor": "#a06060",
+            "street_label": "#5a3030",
             "text_primary": "#3d2828",
             "text_secondary": "#8b5e5e",
         },
@@ -294,13 +297,13 @@ COLOR_THEMES = {
         "poster": {
             "mat": "#ffffff",
             "map_bg": "#e8f4f8",
-            "land": "#d0e8f0",
-            "land_stroke": "#90c0d8",
-            "water": "#a8d4e8",
-            "water_stroke": "#5dade2",
-            "street_major": "#1a5276",
-            "street_minor": "#2980b9",
-            "street_label": "#0e3d5c",
+            "land": "#c0dce8",
+            "land_stroke": "#78b0d0",
+            "water": "#90c4e0",
+            "water_stroke": "#4090cc",
+            "street_major": "#0e3d5c",
+            "street_minor": "#1a6090",
+            "street_label": "#082838",
             "text_primary": "#0e3d5c",
             "text_secondary": "#1a5276",
         },
@@ -321,14 +324,14 @@ COLOR_THEMES = {
         },
         "poster": {
             "mat": "#ffffff",
-            "map_bg": "#2d2d2d",
-            "land": "#383838",
-            "land_stroke": "#4a4a4a",
-            "water": "#262626",
-            "water_stroke": "#404040",
-            "street_major": "#e0d5c1",
-            "street_minor": "#b8a88a",
-            "street_label": "#d4c5a9",
+            "map_bg": "#252525",
+            "land": "#363636",
+            "land_stroke": "#505050",
+            "water": "#1e1e1e",
+            "water_stroke": "#3a3a3a",
+            "street_major": "#f0e8d4",
+            "street_minor": "#c8b890",
+            "street_label": "#e0d4b8",
             "text_primary": "#1a1a1a",
             "text_secondary": "#555555",
         },
@@ -350,13 +353,13 @@ COLOR_THEMES = {
         "poster": {
             "mat": "#ffffff",
             "map_bg": "#f5e6d6",
-            "land": "#eddcc8",
-            "land_stroke": "#d4b896",
-            "water": "#c8d8e0",
-            "water_stroke": "#90b0c0",
-            "street_major": "#8b4513",
-            "street_minor": "#a0522d",
-            "street_label": "#6b3410",
+            "land": "#e4ccb0",
+            "land_stroke": "#c0986c",
+            "water": "#b8ccd8",
+            "water_stroke": "#789cb0",
+            "street_major": "#6b3010",
+            "street_minor": "#8b4820",
+            "street_label": "#502008",
             "text_primary": "#3d2010",
             "text_secondary": "#8b5e3c",
         },
@@ -378,13 +381,13 @@ COLOR_THEMES = {
         "poster": {
             "mat": "#ffffff",
             "map_bg": "#f0edf8",
-            "land": "#e4dff0",
-            "land_stroke": "#c0b4d8",
-            "water": "#d0cae8",
-            "water_stroke": "#a898c8",
-            "street_major": "#5b4a8a",
-            "street_minor": "#7b6ba0",
-            "street_label": "#3d2e6b",
+            "land": "#d8d0e8",
+            "land_stroke": "#b0a0c8",
+            "water": "#c4bae0",
+            "water_stroke": "#9080b8",
+            "street_major": "#3d2e6b",
+            "street_minor": "#604e90",
+            "street_label": "#2a1e50",
             "text_primary": "#2a2040",
             "text_secondary": "#6b5a9a",
         },
@@ -405,14 +408,14 @@ COLOR_THEMES = {
         },
         "poster": {
             "mat": "#ffffff",
-            "map_bg": "#0d1f0d",
-            "land": "#142814",
-            "land_stroke": "#1a4a1a",
-            "water": "#0a180a",
-            "water_stroke": "#1a3a1a",
-            "street_major": "#c4b896",
-            "street_minor": "#a0956b",
-            "street_label": "#d4c5a0",
+            "map_bg": "#081808",
+            "land": "#122012",
+            "land_stroke": "#1e4a1e",
+            "water": "#061006",
+            "water_stroke": "#143014",
+            "street_major": "#d8cca0",
+            "street_minor": "#b0a470",
+            "street_label": "#e0d4b0",
             "text_primary": "#1a1a1a",
             "text_secondary": "#555555",
         },
@@ -434,13 +437,13 @@ COLOR_THEMES = {
         "poster": {
             "mat": "#ffffff",
             "map_bg": "#fff5eb",
-            "land": "#f8e8d0",
-            "land_stroke": "#e8c8a0",
-            "water": "#e8d8c8",
-            "water_stroke": "#d4b898",
-            "street_major": "#c0392b",
-            "street_minor": "#d35400",
-            "street_label": "#922b21",
+            "land": "#f0d8b8",
+            "land_stroke": "#d8b080",
+            "water": "#dcc8b0",
+            "water_stroke": "#c0a080",
+            "street_major": "#a02818",
+            "street_minor": "#b84000",
+            "street_label": "#7a2018",
             "text_primary": "#4a1a10",
             "text_secondary": "#a93226",
         },
@@ -461,16 +464,44 @@ COLOR_THEMES = {
         },
         "poster": {
             "mat": "#ffffff",
-            "map_bg": "#eef5fb",
-            "land": "#e0eef5",
-            "land_stroke": "#b0d0e4",
-            "water": "#c8e0f0",
-            "water_stroke": "#85c1e9",
-            "street_major": "#2c3e50",
-            "street_minor": "#34495e",
-            "street_label": "#1a252f",
+            "map_bg": "#f0f6fc",
+            "land": "#d4e4f0",
+            "land_stroke": "#98c0dc",
+            "water": "#b8d8f0",
+            "water_stroke": "#68aee0",
+            "street_major": "#1a2838",
+            "street_minor": "#2c4050",
+            "street_label": "#101c28",
             "text_primary": "#1a252f",
             "text_secondary": "#2c3e50",
+        },
+    },
+    "vintage_map": {
+        "label": "Vintage Map",
+        "background": "#f0e6d0",
+        "colors": {
+            "#2a2a2a": "#d8c8a8",
+            "#1a1a1a": "#2a2018",
+            "#d4e6f1": "#e8dcc4",
+            "#7fb3d3": "#3a3020",
+            "#333333": "#2a2018",
+            "#555555": "#4a3828",
+            "#444444": "#2a2018",
+            "#cccccc": "#c8b890",
+            "#666666": "#4a3828",
+        },
+        "poster": {
+            "mat": "#f0e6d0",
+            "map_bg": "#f0e6d0",
+            "land": "#f0e6d0",
+            "land_stroke": "#4a3828",
+            "water": "#f0e6d0",
+            "water_stroke": "#3a3020",
+            "street_major": "#2a2018",
+            "street_minor": "#4a3828",
+            "street_label": "#2a2018",
+            "text_primary": "#2a2018",
+            "text_secondary": "#4a3828",
         },
     },
 }
@@ -778,3 +809,294 @@ def _add_watermark_to_svg(
         return svg_string + "\n" + watermark_block
 
     return svg_string[:close_idx] + "\n" + watermark_block + "\n" + svg_string[close_idx:]
+
+
+# --- Wall Mockup Styles ---
+# Each style defines wall color, frame color/width, and shadow properties.
+MOCKUP_STYLES = {
+    "light_wall": {
+        "label": "Light Wall",
+        "wall_color": "#e8e0d4",
+        "wall_texture_color": "#ddd6c8",
+        "frame_color": "#1a1a1a",
+        "frame_width_pct": 0.015,
+        "mat_color": "#ffffff",
+        "mat_width_pct": 0.02,
+        "shadow_opacity": 0.25,
+    },
+    "dark_wall": {
+        "label": "Dark Wall",
+        "wall_color": "#2a2a2a",
+        "wall_texture_color": "#333333",
+        "frame_color": "#f5f0e8",
+        "frame_width_pct": 0.015,
+        "mat_color": "#ffffff",
+        "mat_width_pct": 0.02,
+        "shadow_opacity": 0.4,
+    },
+    "white_wall": {
+        "label": "White Wall",
+        "wall_color": "#f5f3ef",
+        "wall_texture_color": "#ece8e1",
+        "frame_color": "#2c2c2c",
+        "frame_width_pct": 0.012,
+        "mat_color": "#ffffff",
+        "mat_width_pct": 0.018,
+        "shadow_opacity": 0.2,
+    },
+    "brick_wall": {
+        "label": "Brick Wall",
+        "wall_color": "#8b6f5e",
+        "wall_texture_color": "#7d6352",
+        "frame_color": "#1a1a1a",
+        "frame_width_pct": 0.018,
+        "mat_color": "#ffffff",
+        "mat_width_pct": 0.022,
+        "shadow_opacity": 0.35,
+    },
+}
+
+
+def generate_wall_mockup(
+    svg_string: str,
+    output_width: int = 3000,
+    output_height: int = 2400,
+    mockup_style: str = "light_wall",
+) -> bytes:
+    """Generate a lifestyle wall mockup — map poster framed on a wall.
+
+    Creates an SVG scene with a textured wall background, realistic frame
+    with mat, drop shadow, and the map poster embedded inside. The scene
+    is then rasterized to a high-resolution PNG suitable for Etsy listing
+    photos and social media.
+
+    Args:
+        svg_string: The poster SVG content to place in the frame.
+        output_width: Pixel width of the output mockup image.
+        output_height: Pixel height of the output mockup image.
+        mockup_style: One of 'light_wall', 'dark_wall', 'white_wall', 'brick_wall'.
+
+    Returns:
+        PNG image as bytes.
+    """
+    style = MOCKUP_STYLES.get(mockup_style, MOCKUP_STYLES["light_wall"])
+    clean_svg = _strip_crop_marks(svg_string)
+
+    # Parse the poster's aspect ratio from its viewBox
+    poster_vb_w, poster_vb_h = _parse_viewbox(clean_svg)
+    try:
+        poster_w = float(poster_vb_w)
+        poster_h = float(poster_vb_h)
+    except (ValueError, TypeError):
+        poster_w, poster_h = 400.0, 500.0
+
+    poster_aspect = poster_w / poster_h
+
+    # Scene dimensions (internal SVG units)
+    scene_w = 1000
+    scene_h = 800
+
+    # Frame sizing — poster fills ~55% of the scene height
+    frame_w_pct = style["frame_width_pct"]
+    mat_w_pct = style["mat_width_pct"]
+    poster_display_h = scene_h * 0.55
+    poster_display_w = poster_display_h * poster_aspect
+
+    # If poster is too wide, constrain by width instead
+    if poster_display_w > scene_w * 0.6:
+        poster_display_w = scene_w * 0.6
+        poster_display_h = poster_display_w / poster_aspect
+
+    # Frame and mat dimensions
+    frame_thickness = scene_h * frame_w_pct
+    mat_thickness = scene_h * mat_w_pct
+
+    total_w = poster_display_w + 2 * (frame_thickness + mat_thickness)
+    total_h = poster_display_h + 2 * (frame_thickness + mat_thickness)
+
+    # Center the framed poster in the scene, slightly above center
+    frame_x = round((scene_w - total_w) / 2, 2)
+    frame_y = round((scene_h - total_h) / 2 - scene_h * 0.03, 2)
+
+    # Inner positions
+    mat_x = round(frame_x + frame_thickness, 2)
+    mat_y = round(frame_y + frame_thickness, 2)
+    mat_inner_w = round(total_w - 2 * frame_thickness, 2)
+    mat_inner_h = round(total_h - 2 * frame_thickness, 2)
+
+    poster_x = round(mat_x + mat_thickness, 2)
+    poster_y = round(mat_y + mat_thickness, 2)
+    poster_render_w = round(poster_display_w, 2)
+    poster_render_h = round(poster_display_h, 2)
+
+    shadow_offset = round(scene_h * 0.012, 2)
+    shadow_blur = round(scene_h * 0.025, 2)
+
+    # Build the mockup SVG scene
+    mockup_lines = []
+    mockup_lines.append('<?xml version="1.0" encoding="UTF-8"?>')
+    mockup_lines.append(
+        f'<svg xmlns="http://www.w3.org/2000/svg"'
+        f' xmlns:xlink="http://www.w3.org/1999/xlink"'
+        f' width="{output_width}" height="{output_height}"'
+        f' viewBox="0 0 {scene_w} {scene_h}">'
+    )
+
+    # Defs: shadow filter + wall texture pattern
+    mockup_lines.append("  <defs>")
+
+    # Drop shadow filter
+    mockup_lines.append(
+        f'    <filter id="frame_shadow" x="-20%" y="-20%" width="140%" height="140%">'
+        f'      <feDropShadow dx="{shadow_offset}" dy="{shadow_offset}"'
+        f' stdDeviation="{shadow_blur}"'
+        f' flood-color="#000000" flood-opacity="{style["shadow_opacity"]}"/>'
+        f'    </filter>'
+    )
+
+    # Subtle wall texture gradient (top-to-bottom lighting)
+    mockup_lines.append(
+        f'    <linearGradient id="wall_grad" x1="0" y1="0" x2="0" y2="1">'
+        f'      <stop offset="0%" stop-color="{style["wall_color"]}" />'
+        f'      <stop offset="60%" stop-color="{style["wall_texture_color"]}" />'
+        f'      <stop offset="100%" stop-color="{style["wall_color"]}" />'
+        f'    </linearGradient>'
+    )
+
+    # Frame bevel gradient (gives the frame 3D depth)
+    mockup_lines.append(
+        f'    <linearGradient id="frame_bevel" x1="0" y1="0" x2="0" y2="1">'
+        f'      <stop offset="0%" stop-color="{style["frame_color"]}" />'
+        f'      <stop offset="50%" stop-color="{_lighten_color(style["frame_color"], 0.15)}" />'
+        f'      <stop offset="100%" stop-color="{style["frame_color"]}" />'
+        f'    </linearGradient>'
+    )
+
+    mockup_lines.append("  </defs>")
+
+    # Layer 1: Wall background
+    mockup_lines.append(
+        f'  <rect width="{scene_w}" height="{scene_h}" fill="url(#wall_grad)"/>'
+    )
+
+    # Subtle wall grain lines
+    mockup_lines.append('  <g opacity="0.04">')
+    grain_spacing = 12
+    for gx in range(0, int(scene_w), grain_spacing):
+        mockup_lines.append(
+            f'    <line x1="{gx}" y1="0" x2="{gx}" y2="{scene_h}"'
+            f' stroke="#000000" stroke-width="0.3"/>'
+        )
+    mockup_lines.append("  </g>")
+
+    # Layer 2: Frame with shadow
+    mockup_lines.append(
+        f'  <rect x="{frame_x}" y="{frame_y}"'
+        f' width="{round(total_w, 2)}" height="{round(total_h, 2)}"'
+        f' fill="url(#frame_bevel)" rx="1" ry="1"'
+        f' filter="url(#frame_shadow)"/>'
+    )
+
+    # Frame inner bevel highlight (top/left edge catch light)
+    mockup_lines.append(
+        f'  <rect x="{round(frame_x + 1, 2)}" y="{round(frame_y + 1, 2)}"'
+        f' width="{round(total_w - 2, 2)}" height="{round(total_h - 2, 2)}"'
+        f' fill="none" stroke="{_lighten_color(style["frame_color"], 0.3)}"'
+        f' stroke-width="0.5" rx="0.5" opacity="0.4"/>'
+    )
+
+    # Layer 3: White mat inside frame
+    mockup_lines.append(
+        f'  <rect x="{mat_x}" y="{mat_y}"'
+        f' width="{mat_inner_w}" height="{mat_inner_h}"'
+        f' fill="{style["mat_color"]}"/>'
+    )
+
+    # Mat inner shadow (subtle inset shadow where mat meets poster)
+    mockup_lines.append(
+        f'  <rect x="{poster_x}" y="{poster_y}"'
+        f' width="{poster_render_w}" height="{poster_render_h}"'
+        f' fill="none" stroke="#00000010" stroke-width="1"/>'
+    )
+
+    # Layer 4: The actual map poster, embedded via foreignObject
+    # We use an SVG-in-SVG approach: nest the poster SVG directly
+    # Extract the inner content of the poster SVG (everything between <svg> and </svg>)
+    poster_inner = _extract_svg_inner(clean_svg, poster_w, poster_h)
+
+    mockup_lines.append(
+        f'  <svg x="{poster_x}" y="{poster_y}"'
+        f' width="{poster_render_w}" height="{poster_render_h}"'
+        f' viewBox="0 0 {poster_w} {poster_h}">'
+    )
+    mockup_lines.append(poster_inner)
+    mockup_lines.append("  </svg>")
+
+    # Layer 5: Glass reflection (subtle diagonal highlight)
+    mockup_lines.append(
+        f'  <rect x="{poster_x}" y="{poster_y}"'
+        f' width="{poster_render_w}" height="{poster_render_h}"'
+        f' fill="url(#glass_reflect)" opacity="0.06"/>'
+    )
+    # Add glass reflection gradient to defs (insert before closing)
+    # Actually, add it inline
+    mockup_lines.append("  <defs>")
+    mockup_lines.append(
+        f'    <linearGradient id="glass_reflect" x1="0" y1="0" x2="1" y2="1">'
+        f'      <stop offset="0%" stop-color="#ffffff" stop-opacity="1"/>'
+        f'      <stop offset="40%" stop-color="#ffffff" stop-opacity="0"/>'
+        f'      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>'
+        f'    </linearGradient>'
+    )
+    mockup_lines.append("  </defs>")
+
+    mockup_lines.append("</svg>")
+
+    mockup_svg = "\n".join(mockup_lines)
+
+    png_bytes = cairosvg.svg2png(
+        bytestring=mockup_svg.encode("utf-8"),
+        output_width=output_width,
+        output_height=output_height,
+    )
+    return png_bytes
+
+
+def _extract_svg_inner(svg_string: str, vb_w: float, vb_h: float) -> str:
+    """Extract the inner content of an SVG (everything after the opening tag).
+
+    Strips the <?xml?> declaration, opening <svg> tag, and closing </svg> tag,
+    returning just the inner elements that can be nested in another SVG.
+    """
+    # Find the end of the opening <svg ...> tag
+    svg_start = svg_string.find("<svg")
+    if svg_start == -1:
+        return svg_string
+
+    open_end = svg_string.find(">", svg_start)
+    if open_end == -1:
+        return svg_string
+
+    # Find closing </svg>
+    close_start = svg_string.rfind("</svg>")
+    if close_start == -1:
+        return svg_string[open_end + 1:]
+
+    return svg_string[open_end + 1:close_start]
+
+
+def _lighten_color(hex_color: str, factor: float) -> str:
+    """Lighten a hex color by a factor (0.0 = no change, 1.0 = white)."""
+    hex_color = hex_color.lstrip("#")
+    if len(hex_color) != 6:
+        return f"#{hex_color}"
+
+    r = int(hex_color[0:2], 16)
+    g = int(hex_color[2:4], 16)
+    b = int(hex_color[4:6], 16)
+
+    r = min(255, int(r + (255 - r) * factor))
+    g = min(255, int(g + (255 - g) * factor))
+    b = min(255, int(b + (255 - b) * factor))
+
+    return f"#{r:02x}{g:02x}{b:02x}"

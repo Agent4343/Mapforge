@@ -238,6 +238,15 @@ async function downloadPreview(fileId) {
   return resp.blob();
 }
 
+async function downloadWallMockup(fileId, style = "light_wall") {
+  const resp = await fetchWithTimeout(
+    `${API_BASE}/download/${fileId}/wall-mockup?style=${encodeURIComponent(style)}`,
+    { timeout: 45000 },
+  );
+  if (!resp.ok) throw new Error("Wall mockup download failed");
+  return resp.blob();
+}
+
 async function downloadEtsyPackage(fileId) {
   const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}/etsy-package`, {
     timeout: 60000,
@@ -449,6 +458,55 @@ async function publishToEtsy(fileId, title, description, price, tags) {
   return resp.json();
 }
 
+async function getShowcaseCities() {
+  const resp = await fetchWithTimeout(`${API_BASE}/etsy/showcase-cities`, {
+    headers: { Authorization: `Bearer ${authToken}` },
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Failed to load showcase cities"));
+  }
+  return resp.json();
+}
+
+async function showcasePublish(city, options = {}) {
+  const resp = await fetchWithTimeout(`${API_BASE}/etsy/showcase-publish`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${authToken}`,
+    },
+    body: JSON.stringify({
+      city,
+      color_theme: options.color_theme || "classic",
+      poster_layout: options.poster_layout || "classic",
+      font_family: options.font_family || "sans",
+      board_size: options.board_size || "print_16x20",
+      price: options.price || 9.99,
+      title: options.title || null,
+      description: options.description || null,
+      tags: options.tags || null,
+    }),
+    timeout: 180000,
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Showcase publish failed"));
+  }
+  return resp.json();
+}
+
+async function getEtsyDebug() {
+  const resp = await fetchWithTimeout(`${API_BASE}/admin/etsy-debug`, {
+    headers: { Authorization: `Bearer ${authToken}` },
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Debug check failed"));
+  }
+  return resp.json();
+}
+
 async function getAdminStats() {
   const resp = await fetchWithTimeout(`${API_BASE}/admin/stats`, {
     headers: { Authorization: `Bearer ${authToken}` },
@@ -545,13 +603,14 @@ export {
   setToken, getToken, register, login, logout, getProfile, requestPasswordReset, resetPassword, subscribe,
   searchLocations, generateSVG, generatePin, batchGenerate,
   downloadSVG, downloadDXF, downloadSTL, downloadThumbnail, downloadPrintPNG,
-  downloadEtsyListing, downloadEtsyPackage, downloadPreview, getPrintSizes,
+  downloadEtsyListing, downloadEtsyPackage, downloadPreview, downloadWallMockup, getPrintSizes,
   getLibrary, deleteLibraryFile,
   browseMarketplace, createListing, purchaseListing,
   getMyPurchases, updateListing, removeListing,
   getSellerDashboard, submitReview, getReviews,
   aiDescribe,
   getEtsyStatus, connectEtsy, disconnectEtsy, publishToEtsy,
-  getAdminStats, getEtsySettings, saveEtsySettings, clearEtsySettings,
+  getShowcaseCities, showcasePublish,
+  getEtsyDebug, getAdminStats, getEtsySettings, saveEtsySettings, clearEtsySettings,
   redeemCredit, generateForCredit, getCreditStatus, downloadCreditFile,
 };
