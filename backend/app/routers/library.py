@@ -109,3 +109,46 @@ async def delete_file(
 
     await db.delete(file_record)
     await db.commit()
+
+
+@router.delete("", status_code=200)
+async def delete_all_files(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete all files from the user's library (skips marketplace-listed files)."""
+    # Get all user's files
+    result = await db.execute(
+        select(GeneratedFile).where(GeneratedFile.owner_id == user.id)
+    )
+    all_files = result.scalars().all()
+
+    if not all_files:
+        return {"deleted": 0, "skipped": 0}
+
+    # Find which ones are listed on marketplace
+    file_ids = [f.id for f in all_files]
+    listings_result = await db.execute(
+        select(MarketplaceListing.file_id).where(
+            MarketplaceListing.file_id.in_(file_ids),
+            MarketplaceListing.is_active == True,
+        )
+    )
+    listed_ids = {row[0] for row in listings_result.all()}
+
+    from app.services.file_storage import delete_file as delete_stored
+
+    deleted = 0
+    skipped = 0
+    for f in all_files:
+        if f.id in listed_ids:
+            skipped += 1
+            continue
+        await delete_stored(f.svg_storage_key)
+        if f.dxf_storage_key:
+            await delete_stored(f.dxf_storage_key)
+        await db.delete(f)
+        deleted += 1
+
+    await db.commit()
+    return {"deleted": deleted, "skipped": skipped}

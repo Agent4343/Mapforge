@@ -282,6 +282,15 @@ async function deleteLibraryFile(fileId) {
   }
 }
 
+async function deleteAllLibraryFiles() {
+  const resp = await fetchWithTimeout(`${API_BASE}/library`, { method: "DELETE" });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Delete all failed"));
+  }
+  return resp.json();
+}
+
 // --- Marketplace ---
 
 async function browseMarketplace(page = 1, perPage = 20, filters = {}) {
@@ -604,7 +613,7 @@ export {
   searchLocations, generateSVG, generatePin, batchGenerate,
   downloadSVG, downloadDXF, downloadSTL, downloadThumbnail, downloadPrintPNG,
   downloadEtsyListing, downloadEtsyPackage, downloadPreview, downloadWallMockup, getPrintSizes,
-  getLibrary, deleteLibraryFile,
+  getLibrary, deleteLibraryFile, deleteAllLibraryFiles,
   browseMarketplace, createListing, purchaseListing,
   getMyPurchases, updateListing, removeListing,
   getSellerDashboard, submitReview, getReviews,
