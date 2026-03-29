@@ -1258,8 +1258,15 @@ def _generate_vintage_map_svg(
         lines.append("    </g>")
 
     # Layer 5: Inland water features — lakes, rivers on top of land
+    # For dense maps (provinces/islands), only show water polygons (lakes/bays),
+    # skip individual waterway lines (streams/rivers) to avoid visual clutter
     if water_data:
         transform = processed.get("transform")
+        total_waterways = len(water_data.get("waterways", []))
+        total_water_polys = len(water_data.get("water_polygons", []))
+        # Skip waterway lines for dense maps — they look like roads and add noise
+        skip_waterway_lines = (total_waterways > 200) or is_province or is_large_area
+
         lines.append('    <g id="water_features">')
         for coords, water_type, name in water_data.get("water_polygons", []):
             if len(coords) < 3:
@@ -1277,18 +1284,19 @@ def _generate_vintage_map_svg(
                 f' fill="url(#water_hatch)" stroke="none"/>'
             )
             path_count += 1
-        for coords, water_type, name in water_data.get("waterways", []):
-            if len(coords) < 2:
-                continue
-            board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
-            path_d = _coords_to_open_path(board_coords)
-            width = 0.6 if water_type in ("river", "coastline") else 0.3
-            lines.append(
-                f'      <path d="{path_d}"'
-                f' fill="none" stroke="{coastline_color}" stroke-width="{width}"'
-                f' stroke-linecap="round" stroke-linejoin="round"/>'
-            )
-            path_count += 1
+        if not skip_waterway_lines:
+            for coords, water_type, name in water_data.get("waterways", []):
+                if len(coords) < 2:
+                    continue
+                board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
+                path_d = _coords_to_open_path(board_coords)
+                width = 0.6 if water_type in ("river", "coastline") else 0.3
+                lines.append(
+                    f'      <path d="{path_d}"'
+                    f' fill="none" stroke="{coastline_color}" stroke-width="{width}"'
+                    f' stroke-linecap="round" stroke-linejoin="round"/>'
+                )
+                path_count += 1
         lines.append("    </g>")
 
     # Layer 6: Streets — monochrome line art with scale-appropriate filtering
