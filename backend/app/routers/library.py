@@ -7,7 +7,7 @@ from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models.db_models import GeneratedFile, MarketplaceListing, User
+from app.models.db_models import GeneratedFile, MarketplaceListing, User, DesignCredit
 from app.models.schemas import LibraryFileResponse, LibraryResponse
 from app.services.auth import get_current_user
 
@@ -109,12 +109,43 @@ async def delete_all_files(
     )
     listed_ids = {row[0] for row in listings_result.all()}
 
+    # Also find files referenced by design credits (can't delete those, just nullify the FK)
+    credit_refs = await db.execute(
+        select(DesignCredit.file_id).where(
+            DesignCredit.file_id.in_(file_ids),
+            DesignCredit.file_id.isnot(None),
+        )
+    )
+    credit_file_ids = {row[0] for row in credit_refs.all()}
+
+    # Also find files with ANY marketplace listing (active or inactive)
+    all_listings = await db.execute(
+        select(MarketplaceListing.file_id).where(
+            MarketplaceListing.file_id.in_(file_ids),
+        )
+    )
+    any_listed_ids = {row[0] for row in all_listings.all()}
+
     deleted = 0
     skipped = 0
     for f in all_files:
         if f.id in listed_ids:
             skipped += 1
             continue
+        # Nullify design credit references before deleting
+        if f.id in credit_file_ids:
+            await db.execute(
+                select(DesignCredit).where(DesignCredit.file_id == f.id)
+            )
+            from sqlalchemy import update
+            await db.execute(
+                update(DesignCredit).where(DesignCredit.file_id == f.id).values(file_id=None)
+            )
+        # Remove inactive marketplace listings that reference this file
+        if f.id in any_listed_ids and f.id not in listed_ids:
+            await db.execute(
+                delete(MarketplaceListing).where(MarketplaceListing.file_id == f.id)
+            )
         # Clean up all storage keys, tolerating errors on individual files
         for key in (f.svg_storage_key, f.dxf_storage_key, f.thumbnail_key, f.print_png_key):
             if key:
@@ -153,6 +184,12 @@ async def delete_file(
     )
     if listing_result.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Cannot delete a file that is listed on the marketplace. Remove the listing first.")
+
+    # Nullify any design credit references to this file
+    from sqlalchemy import update
+    await db.execute(
+        update(DesignCredit).where(DesignCredit.file_id == file_id).values(file_id=None)
+    )
 
     from app.services.file_storage import delete_file as delete_stored
     for key in (file_record.svg_storage_key, file_record.dxf_storage_key,
