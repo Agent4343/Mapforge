@@ -700,12 +700,12 @@ def _generate_print_svg(
             )
         lines.append("    </g>")
 
-    # Clip streets and water to the boundary polygon so they don't bleed
-    # outside the geographic area. Skip boundary clipping for community/park
-    # maps where streets are fetched from an expanded area — we WANT them
-    # to extend beyond the boundary to fill the map.
-    is_expanded_area = product_type in ("community", "park")
-    clip_to_boundary = boundary_paths and not is_expanded_area and (is_street_map or (streets_data and (streets_data.get("major_roads") or streets_data.get("minor_roads"))))
+    # Clip streets and water to the boundary polygon.
+    # Skip boundary clipping when streets are fetched from an expanded area
+    # (all street maps now expand beyond the boundary). The map_clip rectangle
+    # still provides a clean edge — boundary_clip is only useful for
+    # province/lake maps where the shape boundary IS the visual.
+    clip_to_boundary = boundary_paths and not is_street_map and (streets_data and (streets_data.get("major_roads") or streets_data.get("minor_roads")))
     if clip_to_boundary:
         lines.append('    <g clip-path="url(#boundary_clip)">')
 

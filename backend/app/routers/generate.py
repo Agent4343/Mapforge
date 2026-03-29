@@ -154,18 +154,25 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     bounds = geom.bounds  # minx, miny, maxx, maxy
     bbox = (bounds[1], bounds[0], bounds[3], bounds[2])
 
-    # For small communities, expand the street fetch area beyond the boundary
-    # so surrounding roads fill the map instead of leaving it empty
-    is_community = req.product_type.value in ("community", "park")
+    # Expand the street fetch area beyond the boundary for all street-based maps.
+    # This ensures surrounding roads fill the map edges instead of cutting off
+    # at invisible admin boundaries. Larger product types get less expansion.
     street_bbox = bbox
     street_osm_id = req.osm_id
     street_osm_type = req.osm_type
-    if is_community:
-        # Expand bbox by 50% in each direction for more surrounding road context
+    is_street_product = req.product_type.value in ("city", "community", "park", "name_sign")
+    if is_street_product:
         lat_span = bounds[3] - bounds[1]
         lon_span = bounds[2] - bounds[0]
-        expand_lat = lat_span * 0.5
-        expand_lon = lon_span * 0.5
+        # Scale expansion based on area size: small areas get more expansion
+        if lat_span * lon_span < 0.005:
+            expand_pct = 0.6   # Very small (community/village): 60% expansion
+        elif lat_span * lon_span < 0.05:
+            expand_pct = 0.3   # Small city: 30% expansion
+        else:
+            expand_pct = 0.15  # Large city: 15% expansion
+        expand_lat = lat_span * expand_pct
+        expand_lon = lon_span * expand_pct
         street_bbox = (
             bounds[1] - expand_lat,  # south
             bounds[0] - expand_lon,  # west
@@ -175,7 +182,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         # Force bbox query instead of area query so we get roads OUTSIDE the boundary
         street_osm_id = None
         street_osm_type = None
-        log.info(f"Community map: expanded street bbox by 50% for surrounding road context")
+        log.info(f"Street map: expanded bbox by {int(expand_pct*100)}% (area {lat_span * lon_span:.4f} deg²)")
 
     # Size thresholds for street fetching:
     #   Cities (<1 deg²): full streets with all road types
