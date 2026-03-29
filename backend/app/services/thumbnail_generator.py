@@ -476,6 +476,34 @@ COLOR_THEMES = {
             "text_secondary": "#2c3e50",
         },
     },
+    "vintage_map": {
+        "label": "Vintage Map",
+        "background": "#f0e6d0",
+        "colors": {
+            "#2a2a2a": "#d8c8a8",
+            "#1a1a1a": "#2a2018",
+            "#d4e6f1": "#e8dcc4",
+            "#7fb3d3": "#3a3020",
+            "#333333": "#2a2018",
+            "#555555": "#4a3828",
+            "#444444": "#2a2018",
+            "#cccccc": "#c8b890",
+            "#666666": "#4a3828",
+        },
+        "poster": {
+            "mat": "#f0e6d0",
+            "map_bg": "#f0e6d0",
+            "land": "#f0e6d0",
+            "land_stroke": "#4a3828",
+            "water": "#f0e6d0",
+            "water_stroke": "#3a3020",
+            "street_major": "#2a2018",
+            "street_minor": "#4a3828",
+            "street_label": "#2a2018",
+            "text_primary": "#2a2018",
+            "text_secondary": "#4a3828",
+        },
+    },
 }
 
 

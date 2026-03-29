@@ -42,6 +42,12 @@ ROAD_CLASSES = {
     "living_street": {"width": 0.3, "priority": 7, "layer": "minor"},
     "service": {"width": 0.2, "priority": 8, "layer": "minor"},
     "track": {"width": 0.2, "priority": 9, "layer": "minor"},
+    "pedestrian": {"width": 0.15, "priority": 10, "layer": "detail"},
+    "footway": {"width": 0.1, "priority": 11, "layer": "detail"},
+    "cycleway": {"width": 0.1, "priority": 11, "layer": "detail"},
+    "path": {"width": 0.1, "priority": 12, "layer": "detail"},
+    "steps": {"width": 0.08, "priority": 13, "layer": "detail"},
+    "bridleway": {"width": 0.1, "priority": 12, "layer": "detail"},
 }
 
 # Maximum total time budget for the entire street fetch (seconds).
@@ -242,6 +248,7 @@ async def fetch_streets(
         if road_info["layer"] == "major":
             major_roads.append(entry)
         else:
+            # Both "minor" and "detail" layers go into minor_roads
             minor_roads.append(entry)
 
     log.info(f"Parsed {len(major_roads)} major + {len(minor_roads)} minor roads in {elapsed:.1f}s")

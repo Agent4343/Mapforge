@@ -386,8 +386,27 @@ def _generate_print_svg(
     and clean typography matching premium city map wall art.
 
     Supports 5 poster layouts: classic, minimal, editorial, bold, vintage.
+    When color_theme is "vintage_map", uses a special monochrome line-art
+    renderer with SVG paper texture for an aged parchment look.
     Professional map elements: compass rose, scale bar, gradient water, land shadow.
     """
+    # Vintage map: monochrome line art on aged parchment — completely
+    # different rendering path from the standard colored poster themes.
+    if color_theme == "vintage_map":
+        return _generate_vintage_map_svg(
+            processed=processed,
+            location_name=location_name,
+            show_coordinates=show_coordinates,
+            font_size_mm=font_size_mm,
+            center_latlon=center_latlon,
+            streets_data=streets_data,
+            water_data=water_data,
+            subtitle=subtitle,
+            include_bleed=include_bleed,
+            include_crop_marks=include_crop_marks,
+            show_compass=show_compass,
+        )
+
     from app.services.thumbnail_generator import get_poster_theme
 
     theme = get_poster_theme(color_theme)
@@ -963,6 +982,418 @@ def _generate_print_svg(
         "path_count": path_count,
         "layer_count": layer_count,
     }
+
+
+def _generate_vintage_map_svg(
+    processed: dict,
+    location_name: str,
+    show_coordinates: bool,
+    font_size_mm: float,
+    center_latlon: tuple[float, float] | None = None,
+    streets_data: dict | None = None,
+    water_data: dict | None = None,
+    subtitle: str = "",
+    include_bleed: bool = False,
+    include_crop_marks: bool = False,
+    show_compass: bool = False,
+) -> dict:
+    """Generate a vintage parchment-style map with monochrome line art.
+
+    Inspired by premium Etsy map posters: aged paper texture background,
+    all streets rendered as dark lines (no colored fills), water as outlines,
+    thin decorative double-line border, and ornate compass rose.
+    """
+    board_w, board_h = processed["board_mm"]
+    polygons = processed["polygons"]
+    latlon = center_latlon or processed.get("center_latlon", (0, 0))
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # Vintage color palette — monochrome ink on parchment
+    ink = "#2a2018"          # Dark brown-black ink
+    ink_light = "#4a3828"    # Lighter ink for minor features
+    ink_faint = "#6a5848"    # Faint ink for detail roads
+    parchment = "#f0e6d0"   # Base parchment color
+    parchment_dark = "#d8c8a8"  # Aged/stained areas
+    water_outline = "#3a3020"   # Water boundary ink
+
+    # Layout: text at bottom (15% of height), map fills the rest
+    margin = round(board_w * 0.04, 2)
+    text_area_h = round(board_h * 0.15, 2)
+    map_x = margin
+    map_y = margin
+    map_w = round(board_w - 2 * margin, 2)
+    map_h = round(board_h - text_area_h - 2 * margin, 2)
+
+    # Remap geometry into map area (same logic as print SVG)
+    bounds_mm = processed.get("bounds_mm", (0, 0, board_w, board_h))
+    geo_min_x, geo_min_y, geo_max_x, geo_max_y = bounds_mm
+    geo_w = geo_max_x - geo_min_x
+    geo_h = geo_max_y - geo_min_y
+
+    poster_scale = 1.0
+    remap_offset_x = map_x
+    remap_offset_y = map_y
+
+    if geo_w > 0 and geo_h > 0:
+        poster_scale = min(map_w / geo_w, map_h / geo_h)
+        remap_offset_x = map_x + (map_w - geo_w * poster_scale) / 2
+        remap_offset_y = map_y + (map_h - geo_h * poster_scale) / 2
+
+        remapped_polygons = []
+        for exterior, holes in polygons:
+            new_ext = [
+                (
+                    round((x - geo_min_x) * poster_scale + remap_offset_x, 2),
+                    round((y - geo_min_y) * poster_scale + remap_offset_y, 2),
+                )
+                for x, y in exterior
+            ]
+            new_holes = []
+            for hole in holes:
+                new_holes.append([
+                    (
+                        round((x - geo_min_x) * poster_scale + remap_offset_x, 2),
+                        round((y - geo_min_y) * poster_scale + remap_offset_y, 2),
+                    )
+                    for x, y in hole
+                ])
+            remapped_polygons.append((new_ext, new_holes))
+        polygons = remapped_polygons
+
+        orig_transform = processed.get("transform", {})
+        if orig_transform:
+            processed = dict(processed)
+            processed["transform"] = {
+                "min_x": orig_transform["min_x"],
+                "max_y": orig_transform["max_y"],
+                "scale": orig_transform["scale"] * poster_scale,
+                "offset_x": (orig_transform["offset_x"] - geo_min_x) * poster_scale + remap_offset_x,
+                "offset_y": (orig_transform["offset_y"] - geo_min_y) * poster_scale + remap_offset_y,
+            }
+
+    # Font
+    ff = FONT_FAMILIES["serif"]
+
+    # Bleed
+    bleed = BLEED_MM if include_bleed else 0.0
+    svg_w = board_w + 2 * bleed
+    svg_h = board_h + 2 * bleed
+
+    path_count = 0
+    layer_count = 5  # texture, border, water, streets, text
+
+    lines = []
+    lines.append('<?xml version="1.0" encoding="UTF-8"?>')
+    lines.append(
+        f'<svg xmlns="http://www.w3.org/2000/svg"'
+        f' width="{svg_w}mm" height="{svg_h}mm"'
+        f' viewBox="0 0 {svg_w} {svg_h}">'
+    )
+    lines.append(f"  <!-- MapForge Vintage Map v1.0 -->")
+    lines.append(f"  <!-- Location: {_escape_xml(location_name)} -->")
+    lines.append("  <!-- Geographic data: © OpenStreetMap contributors (ODbL) -->")
+    lines.append(f"  <!-- Generated: {timestamp} -->")
+    lines.append("")
+
+    if include_bleed:
+        lines.append(f'  <g transform="translate({bleed}, {bleed})">')
+
+    # --- Aged parchment texture via SVG filters ---
+    lines.append("  <defs>")
+    # Paper grain texture filter
+    lines.append('    <filter id="paper_grain" x="0%" y="0%" width="100%" height="100%">')
+    lines.append('      <feTurbulence type="fractalNoise" baseFrequency="0.04" numOctaves="5" seed="3" result="noise"/>')
+    lines.append('      <feColorMatrix type="saturate" values="0" in="noise" result="gray_noise"/>')
+    lines.append(f'      <feFlood flood-color="{parchment}" result="base"/>')
+    lines.append('      <feBlend mode="multiply" in="base" in2="gray_noise" result="paper"/>')
+    lines.append('    </filter>')
+    # Stain/aging spots filter
+    lines.append('    <filter id="age_stains" x="0%" y="0%" width="100%" height="100%">')
+    lines.append('      <feTurbulence type="fractalNoise" baseFrequency="0.008" numOctaves="3" seed="7" result="stain_noise"/>')
+    lines.append('      <feColorMatrix type="matrix" values="0 0 0 0 0.55  0 0 0 0 0.45  0 0 0 0 0.3  0 0 0 1 0" in="stain_noise" result="colored_stains"/>')
+    lines.append('      <feComponentTransfer in="colored_stains" result="stains">')
+    lines.append('        <feFuncA type="linear" slope="0.3" intercept="-0.05"/>')
+    lines.append('      </feComponentTransfer>')
+    lines.append('    </filter>')
+    # Edge darkening vignette
+    lines.append('    <radialGradient id="vignette_grad" cx="50%" cy="45%" r="65%">')
+    lines.append(f'      <stop offset="40%" stop-color="{parchment}" stop-opacity="0"/>')
+    lines.append(f'      <stop offset="100%" stop-color="#4a3828" stop-opacity="0.35"/>')
+    lines.append('    </radialGradient>')
+    # Clip for map content
+    lines.append(
+        f'    <clipPath id="map_clip">'
+        f'<rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"/>'
+        f'</clipPath>'
+    )
+    lines.append("  </defs>")
+    lines.append("")
+
+    # Layer 1: Parchment base with paper grain texture
+    lines.append('  <g id="parchment_background">')
+    lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="{parchment}" filter="url(#paper_grain)"/>')
+    # Age stains overlay
+    lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="{parchment_dark}" filter="url(#age_stains)"/>')
+    # Edge vignette
+    lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#vignette_grad)"/>')
+    lines.append("  </g>")
+    lines.append("")
+
+    # Layer 2: Decorative double-line border
+    border_outer = round(margin * 0.6, 2)
+    border_inner = round(margin * 0.75, 2)
+    lines.append('  <g id="decorative_border">')
+    lines.append(
+        f'    <rect x="{border_outer}" y="{border_outer}"'
+        f' width="{round(board_w - 2 * border_outer, 2)}" height="{round(board_h - 2 * border_outer, 2)}"'
+        f' fill="none" stroke="{ink}" stroke-width="0.6"/>'
+    )
+    lines.append(
+        f'    <rect x="{border_inner}" y="{border_inner}"'
+        f' width="{round(board_w - 2 * border_inner, 2)}" height="{round(board_h - 2 * border_inner, 2)}"'
+        f' fill="none" stroke="{ink}" stroke-width="0.25"/>'
+    )
+    lines.append("  </g>")
+    lines.append("")
+
+    # All map content clipped to map area
+    lines.append(f'  <g clip-path="url(#map_clip)">')
+
+    # Layer 3: Water features — outline only, no fill (paper shows through)
+    if water_data:
+        transform = processed.get("transform")
+        lines.append('    <g id="water_features">')
+        for coords, water_type, name in water_data.get("water_polygons", []):
+            if len(coords) < 3:
+                continue
+            board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
+            path_d = _coords_to_path(board_coords)
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="none" stroke="{water_outline}" stroke-width="0.4"'
+                f' stroke-linejoin="round" opacity="0.7"/>'
+            )
+            path_count += 1
+        for coords, water_type, name in water_data.get("waterways", []):
+            if len(coords) < 2:
+                continue
+            board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
+            path_d = _coords_to_open_path(board_coords)
+            width = 0.5 if water_type in ("river", "coastline") else 0.25
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="none" stroke="{water_outline}" stroke-width="{width}"'
+                f' stroke-linecap="round" stroke-linejoin="round" opacity="0.6"/>'
+            )
+            path_count += 1
+        lines.append("    </g>")
+
+    # Layer 4: Land boundary — subtle thin outline (no fill)
+    lines.append('    <g id="land_boundary" opacity="0.3">')
+    for exterior, holes in polygons:
+        path_d = _coords_to_path(exterior)
+        for hole in holes:
+            path_d += " " + _coords_to_path(hole)
+        lines.append(
+            f'      <path d="{path_d}"'
+            f' fill="none" stroke="{ink_light}" stroke-width="0.3"'
+            f' fill-rule="evenodd" stroke-linejoin="round"/>'
+        )
+        path_count += 1
+    lines.append("    </g>")
+
+    # Layer 5: Streets — monochrome line art, ALL roads visible
+    if streets_data:
+        transform = processed.get("transform")
+        lines.append('    <g id="streets">')
+
+        # Width table: simple strokes, no casing. Every road type gets a width.
+        vintage_widths = {
+            "motorway": 0.8, "motorway_link": 0.6,
+            "trunk": 0.7, "trunk_link": 0.5,
+            "primary": 0.6, "primary_link": 0.4,
+            "secondary": 0.45, "secondary_link": 0.35,
+            "tertiary": 0.3, "tertiary_link": 0.25,
+            "residential": 0.18, "unclassified": 0.18,
+            "living_street": 0.18, "service": 0.12, "track": 0.12,
+            "pedestrian": 0.1, "footway": 0.08, "cycleway": 0.08,
+            "path": 0.08, "steps": 0.06, "bridleway": 0.08,
+        }
+
+        # Draw all roads as simple monochrome strokes — minor first, major on top
+        for coords, road_class, _width, name in streets_data.get("minor_roads", []):
+            if len(coords) < 2:
+                continue
+            board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
+            path_d = _coords_to_open_path(board_coords)
+            w = vintage_widths.get(road_class, 0.12)
+            # Detail roads (footways, paths) get lighter ink
+            color = ink_faint if road_class in ("footway", "cycleway", "path", "steps", "bridleway") else ink_light
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="none" stroke="{color}" stroke-width="{w}"'
+                f' stroke-linecap="round" stroke-linejoin="round"/>'
+            )
+            path_count += 1
+
+        for coords, road_class, _width, name in streets_data.get("major_roads", []):
+            if len(coords) < 2:
+                continue
+            board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
+            path_d = _coords_to_open_path(board_coords)
+            w = vintage_widths.get(road_class, 0.4)
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="none" stroke="{ink}" stroke-width="{w}"'
+                f' stroke-linecap="round" stroke-linejoin="round"/>'
+            )
+            path_count += 1
+
+        lines.append("    </g>")
+
+    # Vintage compass rose (bottom-right, ornate style)
+    if show_compass:
+        _add_vintage_compass(lines, map_x, map_y, map_w, map_h, ink, ink_light)
+
+    lines.append("  </g>")  # close map clip
+    lines.append("")
+
+    # --- Text area below the map ---
+    text_center_x = round(board_w / 2, 2)
+    title_size = round(font_size_mm * 1.5, 2)
+    subtitle_size = round(font_size_mm * 0.6, 2)
+    coord_size = round(font_size_mm * 0.45, 2)
+
+    title_text = location_name.upper()
+    title_tracking = title_size * 0.25
+
+    # Auto-scale title to fit
+    est_width = len(title_text) * (title_size * 0.75 + title_tracking)
+    avail_w = board_w * 0.85
+    if est_width > avail_w and len(title_text) > 0:
+        scale = avail_w / est_width
+        title_size = round(title_size * scale, 2)
+        title_tracking = title_size * 0.25
+
+    text_start_y = round(map_y + map_h + text_area_h * 0.35, 2)
+
+    lines.append('  <g id="poster_text">')
+    lines.append(
+        f'    <text x="{text_center_x}" y="{round(text_start_y, 2)}"'
+        f' text-anchor="middle" font-family="{ff}"'
+        f' font-size="{title_size}" font-weight="normal"'
+        f' letter-spacing="{round(title_tracking, 2)}"'
+        f' fill="{ink}">{_escape_xml(title_text)}</text>'
+    )
+    next_y = text_start_y + title_size * 1.2
+    if subtitle:
+        lines.append(
+            f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
+            f' text-anchor="middle" font-family="{ff}"'
+            f' font-size="{subtitle_size}" font-weight="normal"'
+            f' letter-spacing="{round(subtitle_size * 0.2, 2)}"'
+            f' fill="{ink_light}">{_escape_xml(subtitle)}</text>'
+        )
+        next_y += subtitle_size * 1.8
+    if show_coordinates and latlon:
+        lat, lon = latlon
+        lat_dir = "N" if lat >= 0 else "S"
+        lon_dir = "W" if lon < 0 else "E"
+        coord_text = f"{abs(lat):.4f}\u00b0{lat_dir}    ~    {abs(lon):.4f}\u00b0{lon_dir}"
+        lines.append(
+            f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
+            f' text-anchor="middle" font-family="{ff}"'
+            f' font-size="{coord_size}"'
+            f' letter-spacing="{round(coord_size * 0.15, 2)}"'
+            f' fill="{ink_light}">{coord_text}</text>'
+        )
+    lines.append("  </g>")
+    lines.append("")
+
+    if include_bleed:
+        lines.append("  </g>")
+        lines.append("")
+
+    if include_crop_marks:
+        _render_crop_marks(lines, board_w, board_h, bleed)
+        lines.append("")
+
+    lines.append("</svg>")
+
+    return {
+        "svg": "\n".join(lines),
+        "node_count": processed["node_count"],
+        "path_count": path_count,
+        "layer_count": layer_count,
+    }
+
+
+def _add_vintage_compass(
+    lines: list[str],
+    map_x: float,
+    map_y: float,
+    map_w: float,
+    map_h: float,
+    ink: str,
+    ink_light: str,
+) -> None:
+    """Add an ornate vintage-style compass rose."""
+    size = min(map_w, map_h) * 0.07
+    cx = round(map_x + map_w - size * 2, 2)
+    cy = round(map_y + map_h - size * 2, 2)
+
+    lines.append(f'    <g id="compass_rose" opacity="0.5">')
+    # Outer circle
+    lines.append(
+        f'      <circle cx="{cx}" cy="{cy}" r="{round(size, 2)}"'
+        f' fill="none" stroke="{ink_light}" stroke-width="0.25"/>'
+    )
+    # Inner circle
+    lines.append(
+        f'      <circle cx="{cx}" cy="{cy}" r="{round(size * 0.15, 2)}"'
+        f' fill="none" stroke="{ink_light}" stroke-width="0.2"/>'
+    )
+    # Cardinal points — thin lines
+    for angle, label in [(0, "N"), (90, "E"), (180, "S"), (270, "W")]:
+        rad = math.radians(angle)
+        x1 = round(cx + math.sin(rad) * size * 0.2, 2)
+        y1 = round(cy - math.cos(rad) * size * 0.2, 2)
+        x2 = round(cx + math.sin(rad) * size * 0.95, 2)
+        y2 = round(cy - math.cos(rad) * size * 0.95, 2)
+        lines.append(
+            f'      <line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}"'
+            f' stroke="{ink}" stroke-width="0.3"/>'
+        )
+        # Label
+        lx = round(cx + math.sin(rad) * size * 1.2, 2)
+        ly = round(cy - math.cos(rad) * size * 1.2 + 1.2, 2)
+        font_sz = round(size * 0.35, 2)
+        lines.append(
+            f'      <text x="{lx}" y="{ly}" text-anchor="middle"'
+            f' font-family="Georgia, serif" font-size="{font_sz}"'
+            f' fill="{ink}">{label}</text>'
+        )
+    # Intercardinal thin lines
+    for angle in [45, 135, 225, 315]:
+        rad = math.radians(angle)
+        x1 = round(cx + math.sin(rad) * size * 0.2, 2)
+        y1 = round(cy - math.cos(rad) * size * 0.2, 2)
+        x2 = round(cx + math.sin(rad) * size * 0.7, 2)
+        y2 = round(cy - math.cos(rad) * size * 0.7, 2)
+        lines.append(
+            f'      <line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}"'
+            f' stroke="{ink_light}" stroke-width="0.15"/>'
+        )
+    # North arrow (filled triangle)
+    n_top = round(cy - size * 0.9, 2)
+    n_left = round(cx - size * 0.12, 2)
+    n_right = round(cx + size * 0.12, 2)
+    n_base = round(cy - size * 0.2, 2)
+    lines.append(
+        f'      <path d="M{cx},{n_top} L{n_left},{n_base} L{n_right},{n_base} Z"'
+        f' fill="{ink}" stroke="none"/>'
+    )
+    lines.append("    </g>")
 
 
 def _add_compass_rose(

@@ -14,6 +14,7 @@ const COLOR_THEMES = [
   { value: "forest", label: "Forest", bg: "#0d1f0d", road: "#c4b896", land: "#1a4a1a" },
   { value: "sunset", label: "Sunset", bg: "#fff5eb", road: "#c0392b", land: "#e67e22" },
   { value: "arctic", label: "Arctic", bg: "#f0f8ff", road: "#2c3e50", land: "#85c1e9" },
+  { value: "vintage_map", label: "Vintage Map", bg: "#f0e6d0", road: "#2a2018", land: "#d8c8a8" },
 ];
 
 const SUBTITLE_PRESETS = [
