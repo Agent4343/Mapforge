@@ -1024,11 +1024,28 @@ def _generate_vintage_map_svg(
     water_tint = "#c8b898"  # Noticeably darker tint for water/ocean areas
     coastline_color = "#4a3a28"  # Subtle brown for coastline outline
 
-    # Determine map scale from product_type — only provinces get aggressive filtering
-    # Small communities (Little Narrows) should show ALL roads even though
-    # the expanded bbox fetches thousands of roads from surrounding areas
-    is_province = product_type == "province"
-    is_large_area = is_province  # only true provinces, NOT communities/parks
+    # Determine map scale from GEOGRAPHIC EXTENT — this is the only reliable way
+    # to know if we're rendering a province vs a village vs a city.
+    # product_type is unreliable: "community" can be a village (0.02°) or a county (0.5°)
+    geo_lat = processed.get("geo_lat_span", 0)
+    geo_lon = processed.get("geo_lon_span", 0)
+    geo_extent = max(geo_lat, geo_lon)  # largest dimension in degrees
+
+    # Scale tiers based on geographic extent:
+    #   Province:     > 0.5°  (Cape Breton Island ~1.5°, Nova Scotia ~4°)
+    #   City:         0.05° - 0.5°  (Sydney ~0.1°, Halifax ~0.2°)
+    #   Town:         0.01° - 0.05° (Baddeck ~0.03°)
+    #   Village:      < 0.01° (Little Narrows ~0.005°)
+    map_scale = "village"
+    if geo_extent > 0.5:
+        map_scale = "province"
+    elif geo_extent > 0.05:
+        map_scale = "city"
+    elif geo_extent > 0.01:
+        map_scale = "town"
+
+    is_province = map_scale == "province"
+    is_large_area = is_province
 
     # Layout: text at bottom (15% of height), map fills the rest
     margin = round(board_w * 0.04, 2)
@@ -1220,7 +1237,7 @@ def _generate_vintage_map_svg(
     lines.append("    </g>")
 
     # Layer 4: Land polygons — filled with parchment so land stands out from water
-    coastline_width = "0.8" if is_province else "0.4"
+    coastline_width = "0.8" if map_scale == "province" else "0.5" if map_scale == "city" else "0.35"
     if polygons:
         lines.append('    <g id="land_polygons">')
         for exterior, holes in polygons:
@@ -1266,11 +1283,22 @@ def _generate_vintage_map_svg(
         transform = processed.get("transform")
         total_waterways = len(water_data.get("waterways", []))
         total_water_polys = len(water_data.get("water_polygons", []))
-        # Skip waterway lines only for provinces — at community/city zoom they add detail
-        skip_waterway_lines = is_province or total_waterways > 5000
-        # Filter small water polygons only for provinces or extremely dense water data
-        filter_small_water = is_province or total_water_polys > 2000
-        min_water_area = 25.0 if is_province else 2.0
+        # Scale-based water filtering:
+        # Province: skip waterway lines, aggressive polygon filtering
+        # City: skip tiny streams, moderate polygon filtering
+        # Town/Village: show everything
+        if map_scale == "province":
+            skip_waterway_lines = True
+            filter_small_water = True
+            min_water_area = 25.0
+        elif map_scale == "city":
+            skip_waterway_lines = total_waterways > 2000
+            filter_small_water = total_water_polys > 500
+            min_water_area = 4.0
+        else:
+            skip_waterway_lines = False
+            filter_small_water = False
+            min_water_area = 0
 
         lines.append('    <g id="water_features">')
         for coords, water_type, name in water_data.get("water_polygons", []):
@@ -1329,37 +1357,60 @@ def _generate_vintage_map_svg(
         lines.append(f'    <g id="streets"{clip_attr}>')
 
         total_roads = len(streets_data.get("major_roads", [])) + len(streets_data.get("minor_roads", []))
-        is_sparse = total_roads < 120
 
         import logging as _logging
         _logging.getLogger("mapforge").info(
-            "Vintage streets: total=%d major=%d minor=%d province=%s product=%s",
+            "Vintage streets: total=%d major=%d minor=%d scale=%s geo=%.4f° product=%s",
             total_roads, len(streets_data.get("major_roads", [])),
             len(streets_data.get("minor_roads", [])),
-            is_province, product_type,
+            map_scale, geo_extent, product_type,
         )
 
         # Road classes by filtering tier
         detail_classes = {"footway", "cycleway", "path", "steps", "bridleway"}
 
-        # Province scale: aggressive filtering — highways only
-        # Only for actual provinces (Cape Breton Island, Nova Scotia, etc.)
-        # NOT for communities — they need all roads visible at their zoom level
-        if is_province:
+        # Scale-based filtering using geographic extent:
+        if map_scale == "province":
+            # Province (>0.5°): ONLY major highways, skip everything else
             allowed_roads = {"motorway", "motorway_link", "trunk", "trunk_link",
                              "primary", "primary_link", "secondary", "secondary_link"}
-            if total_roads < 300:
-                allowed_roads.add("tertiary")
-                allowed_roads.add("tertiary_link")
             vintage_widths = {
                 "motorway": 1.8, "motorway_link": 1.2,
                 "trunk": 1.6, "trunk_link": 1.0,
                 "primary": 1.3, "primary_link": 0.9,
                 "secondary": 0.9, "secondary_link": 0.6,
-                "tertiary": 0.6, "tertiary_link": 0.4,
             }
             skip_minor_roads = True
-        elif is_sparse:
+        elif map_scale == "city":
+            # City (0.05°-0.5°): major + tertiary, skip detail roads
+            allowed_roads = None
+            vintage_widths = {
+                "motorway": 1.2, "motorway_link": 0.9,
+                "trunk": 1.1, "trunk_link": 0.8,
+                "primary": 0.9, "primary_link": 0.65,
+                "secondary": 0.7, "secondary_link": 0.5,
+                "tertiary": 0.45, "tertiary_link": 0.35,
+                "residential": 0.25, "unclassified": 0.25,
+                "living_street": 0.2, "service": 0.15, "track": 0.12,
+            }
+            skip_minor_roads = False
+        elif map_scale == "town":
+            # Town (0.01°-0.05°): all roads visible, good widths
+            allowed_roads = None
+            vintage_widths = {
+                "motorway": 1.4, "motorway_link": 1.0,
+                "trunk": 1.2, "trunk_link": 0.9,
+                "primary": 1.0, "primary_link": 0.7,
+                "secondary": 0.8, "secondary_link": 0.6,
+                "tertiary": 0.5, "tertiary_link": 0.4,
+                "residential": 0.35, "unclassified": 0.35,
+                "living_street": 0.3, "service": 0.25, "track": 0.2,
+                "pedestrian": 0.18, "footway": 0.12, "cycleway": 0.12,
+                "path": 0.12, "steps": 0.1, "bridleway": 0.12,
+            }
+            skip_minor_roads = False
+        else:
+            # Village (<0.01°): everything visible with thick widths
             allowed_roads = None
             vintage_widths = {
                 "motorway": 1.6, "motorway_link": 1.2,
@@ -1371,20 +1422,6 @@ def _generate_vintage_map_svg(
                 "living_street": 0.4, "service": 0.3, "track": 0.25,
                 "pedestrian": 0.2, "footway": 0.15, "cycleway": 0.15,
                 "path": 0.15, "steps": 0.12, "bridleway": 0.15,
-            }
-            skip_minor_roads = False
-        else:
-            allowed_roads = None
-            vintage_widths = {
-                "motorway": 1.0, "motorway_link": 0.8,
-                "trunk": 0.9, "trunk_link": 0.7,
-                "primary": 0.8, "primary_link": 0.55,
-                "secondary": 0.6, "secondary_link": 0.45,
-                "tertiary": 0.4, "tertiary_link": 0.3,
-                "residential": 0.22, "unclassified": 0.22,
-                "living_street": 0.22, "service": 0.15, "track": 0.15,
-                "pedestrian": 0.12, "footway": 0.1, "cycleway": 0.1,
-                "path": 0.1, "steps": 0.08, "bridleway": 0.1,
             }
             skip_minor_roads = False
 

@@ -153,6 +153,9 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
 
     bounds = geom.bounds  # minx, miny, maxx, maxy
     bbox = (bounds[1], bounds[0], bounds[3], bounds[2])
+    # Store geographic extent for scale-aware rendering (used by vintage maps)
+    processed["geo_lat_span"] = bounds[3] - bounds[1]
+    processed["geo_lon_span"] = bounds[2] - bounds[0]
 
     # Expand the street fetch area beyond the boundary for all street-based maps.
     # This ensures surrounding roads fill the map edges instead of cutting off
