@@ -587,6 +587,15 @@ def _generate_print_svg(
             lines.append(f'      <path d="{bp}" fill-rule="evenodd"/>')
         lines.append("    </clipPath>")
 
+    # Subtle texture pattern for sparse/rural areas — gives visual density
+    # when there are few streets to fill the map
+    is_sparse_area = product_type in ("community", "park")
+    if is_sparse_area:
+        land_stroke_color = theme.get("land_stroke", "#c4b598")
+        lines.append(f'    <pattern id="land_texture" width="4" height="4" patternUnits="userSpaceOnUse">')
+        lines.append(f'      <circle cx="2" cy="2" r="0.25" fill="{land_stroke_color}" opacity="0.15"/>')
+        lines.append(f'    </pattern>')
+
     lines.append("  </defs>")
     lines.append("")
 
@@ -603,9 +612,12 @@ def _generate_print_svg(
     has_streets = streets_data and (streets_data.get("major_roads") or streets_data.get("minor_roads"))
 
     # Land shadow — render BEFORE geography so it appears behind the land mass
+    # Sparse/rural areas get a deeper shadow for more visual depth
     if land_shadow and not full_bleed_map:
-        lines.append('    <g id="land_shadow" opacity="0.12">')
-        shadow_offset = round(min(board_w, board_h) * 0.004, 2)
+        shadow_opacity = "0.18" if is_sparse_area else "0.12"
+        lines.append(f'    <g id="land_shadow" opacity="{shadow_opacity}">')
+        shadow_scale = 0.006 if is_sparse_area else 0.004
+        shadow_offset = round(min(board_w, board_h) * shadow_scale, 2)
         for exterior, holes in polygons:
             path_d = _coords_to_path(exterior)
             for hole in holes:
@@ -623,6 +635,8 @@ def _generate_print_svg(
         # Street maps: fill the boundary polygon with land color to create
         # visible contrast between the city area and the white mat border.
         # Streets and water are layered on top.
+        # Sparse areas get a bolder boundary stroke for more definition.
+        geo_stroke_w = "1.2" if is_sparse_area else "0.8"
         for exterior, holes in polygons:
             path_d = _coords_to_path(exterior)
             for hole in holes:
@@ -630,12 +644,12 @@ def _generate_print_svg(
             lines.append(
                 f'      <path d="{path_d}"'
                 f' fill="{theme["land"]}" stroke="{theme["land_stroke"]}"'
-                f' stroke-width="0.5" fill-rule="evenodd" stroke-linejoin="round"/>'
+                f' stroke-width="{geo_stroke_w}" fill-rule="evenodd" stroke-linejoin="round"/>'
             )
     else:
         # Province/lake/park maps: filled polygon is the main visual.
         # With water-colored background, the land shape pops beautifully.
-        # Use a clean stroke to define the coastline edge.
+        # Use a bold stroke to define the coastline edge.
         for exterior, holes in polygons:
             path_d = _coords_to_path(exterior)
             for hole in holes:
@@ -643,9 +657,23 @@ def _generate_print_svg(
             lines.append(
                 f'      <path d="{path_d}"'
                 f' fill="{theme["land"]}" stroke="{theme["land_stroke"]}"'
-                f' stroke-width="0.5" fill-rule="evenodd" stroke-linejoin="round"/>'
+                f' stroke-width="1.0" fill-rule="evenodd" stroke-linejoin="round"/>'
             )
     lines.append("    </g>")
+
+    # Subtle texture overlay for sparse/rural areas — fills empty land with
+    # a fine dot pattern so the map doesn't look bare when there are few streets
+    if is_sparse_area:
+        lines.append('    <g id="land_texture_overlay">')
+        for exterior, holes in polygons:
+            path_d = _coords_to_path(exterior)
+            for hole in holes:
+                path_d += " " + _coords_to_path(hole)
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="url(#land_texture)" stroke="none" fill-rule="evenodd"/>'
+            )
+        lines.append("    </g>")
 
     # Clip streets and water to the boundary polygon so they don't bleed
     # outside the geographic area (applies to cities AND provinces with streets)
@@ -696,15 +724,18 @@ def _generate_print_svg(
         path_count += len(markers)
 
     # Vignette edge fade — only if layout enables it
+    # Sparse/rural areas get a stronger vignette to draw focus inward
     if layout.get("vignette", False):
         lines.append('    <g id="vignette">')
         vig_id = "vig_grad"
+        vig_inner = "50%" if is_sparse_area else "60%"
+        vig_opacity = "0.45" if is_sparse_area else "0.3"
         lines.append("      <defs>")
         lines.append(
             f'        <radialGradient id="{vig_id}" cx="50%" cy="50%" r="70%">'
         )
-        lines.append(f'          <stop offset="60%" stop-color="{theme["map_bg"]}" stop-opacity="0"/>')
-        lines.append(f'          <stop offset="100%" stop-color="{theme["map_bg"]}" stop-opacity="0.3"/>')
+        lines.append(f'          <stop offset="{vig_inner}" stop-color="{theme["map_bg"]}" stop-opacity="0"/>')
+        lines.append(f'          <stop offset="100%" stop-color="{theme["map_bg"]}" stop-opacity="{vig_opacity}"/>')
         lines.append(f"        </radialGradient>")
         lines.append("      </defs>")
         lines.append(
@@ -1254,7 +1285,7 @@ def _render_print_water(lines: list[str], water_data: dict, processed: dict, the
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="{fill}" stroke="{theme["water_stroke"]}"'
-            f' stroke-width="0.3" stroke-linejoin="round"/>'
+            f' stroke-width="0.5" stroke-linejoin="round"/>'
         )
 
     for coords, water_type, name in water_data.get("waterways", []):
@@ -1262,7 +1293,7 @@ def _render_print_water(lines: list[str], water_data: dict, processed: dict, the
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
-        width = 0.6 if water_type in ("river", "coastline") else 0.25
+        width = 1.0 if water_type in ("river", "coastline") else 0.4
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="none" stroke="{theme["water_stroke"]}" stroke-width="{width}"'
@@ -1296,23 +1327,34 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
     if is_province:
         # Province: bold, clear highways visible at small scale
         casing_widths = {
-            "motorway": 2.4, "motorway_link": 1.8,
-            "trunk": 2.0, "trunk_link": 1.5,
-            "primary": 1.6, "primary_link": 1.2,
-            "secondary": 1.2, "secondary_link": 0.9,
-            "tertiary": 0.8, "tertiary_link": 0.6,
-            "residential": 0.4, "unclassified": 0.4,
+            "motorway": 3.0, "motorway_link": 2.2,
+            "trunk": 2.6, "trunk_link": 1.8,
+            "primary": 2.0, "primary_link": 1.5,
+            "secondary": 1.5, "secondary_link": 1.1,
+            "tertiary": 1.0, "tertiary_link": 0.8,
+            "residential": 0.5, "unclassified": 0.5,
         }
         fill_ratio = 0.55  # inner fill is 55% of casing width
-    else:
-        # City: fine, elegant lines that create a dense grid pattern
+    elif product_type in ("community", "park"):
+        # Community/rural: thicker roads to fill sparse areas
         casing_widths = {
-            "motorway": 0.9, "motorway_link": 0.7,
-            "trunk": 0.8, "trunk_link": 0.6,
-            "primary": 0.7, "primary_link": 0.5,
-            "secondary": 0.5, "secondary_link": 0.4,
-            "tertiary": 0.35, "tertiary_link": 0.25,
-            "residential": 0.2, "unclassified": 0.2,
+            "motorway": 1.8, "motorway_link": 1.4,
+            "trunk": 1.6, "trunk_link": 1.2,
+            "primary": 1.4, "primary_link": 1.0,
+            "secondary": 1.0, "secondary_link": 0.8,
+            "tertiary": 0.7, "tertiary_link": 0.5,
+            "residential": 0.45, "unclassified": 0.45,
+        }
+        fill_ratio = 0.5
+    else:
+        # City: bold, dense street grid that creates strong visual texture
+        casing_widths = {
+            "motorway": 1.4, "motorway_link": 1.1,
+            "trunk": 1.2, "trunk_link": 0.9,
+            "primary": 1.0, "primary_link": 0.75,
+            "secondary": 0.7, "secondary_link": 0.55,
+            "tertiary": 0.5, "tertiary_link": 0.35,
+            "residential": 0.3, "unclassified": 0.3,
         }
         fill_ratio = 0.5
 
