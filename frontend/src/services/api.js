@@ -283,7 +283,7 @@ async function deleteLibraryFile(fileId) {
 }
 
 async function deleteAllLibraryFiles() {
-  const resp = await fetchWithTimeout(`${API_BASE}/library`, { method: "DELETE" });
+  const resp = await fetchWithTimeout(`${API_BASE}/library/all`, { method: "DELETE", timeout: 120000 });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
     throw new Error(extractErrorMessage(err.detail, "Delete all failed"));
