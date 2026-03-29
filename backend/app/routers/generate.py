@@ -378,7 +378,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
             await store_file(print_png_key, print_bytes, content_type="image/png")
         except Exception as e:
-            log.warning(f"Print PNG generation failed (non-fatal): {e}")
+            log.error(f"Print PNG generation failed: {type(e).__name__}: {e}")
+            print_png_key = None
 
         # Generate Etsy listing image (4:3 ratio for Etsy grid)
         try:
@@ -615,7 +616,8 @@ async def generate_pin(
             print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
             await store_file(print_png_key, print_bytes, content_type="image/png")
         except Exception as e:
-            log.warning(f"Print PNG generation failed (non-fatal): {e}")
+            log.error(f"Print PNG generation failed: {type(e).__name__}: {e}")
+            print_png_key = None
 
         # Generate Etsy listing image for pin maps
         try:
@@ -768,9 +770,25 @@ async def download(
         raise HTTPException(status_code=404, detail="File not found.")
 
     if format == ExportFormat.png:
-        if not file_record.print_png_key:
+        content = None
+        if file_record.print_png_key:
+            content = await retrieve_file(file_record.print_png_key)
+        # Fallback: render PNG on-demand from stored SVG if pre-rendered PNG
+        # is missing (happens when cairosvg fails during generation)
+        if content is None and file_record.svg_storage_key:
+            svg_bytes = await retrieve_file(file_record.svg_storage_key)
+            if svg_bytes:
+                try:
+                    from app.services.thumbnail_generator import generate_print_image
+                    content = generate_print_image(
+                        svg_bytes.decode("utf-8"),
+                        skip_remap=True,
+                    )
+                    log.info(f"On-demand PNG render succeeded for {file_id}")
+                except Exception as e:
+                    log.error(f"On-demand PNG render failed for {file_id}: {e}")
+        if content is None:
             raise HTTPException(status_code=404, detail="Print PNG not available for this file.")
-        content = await retrieve_file(file_record.print_png_key)
         media_type = "image/png"
         ext = "png"
     elif format == ExportFormat.dxf:
