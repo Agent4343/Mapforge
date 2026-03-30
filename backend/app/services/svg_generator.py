@@ -998,34 +998,30 @@ def _generate_vintage_map_svg(
     include_crop_marks: bool = False,
     show_compass: bool = False,
 ) -> dict:
-    """Generate a vintage parchment-style map with monochrome line art.
+    """Generate a clean modern map poster — Mapiful/Grafomap style.
 
-    Inspired by premium Etsy map posters: aged paper texture background,
-    all streets rendered as dark lines (no colored fills), water as outlines,
-    thin decorative double-line border, and ornate compass rose.
+    White background, black street lines creating rich texture,
+    light gray water, clean triple-line border, bold typography.
     """
     board_w, board_h = processed["board_mm"]
     polygons = processed["polygons"]
     latlon = center_latlon or processed.get("center_latlon", (0, 0))
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # Vintage color palette — soft muted brown ink on light parchment
-    # Inspired by premium Etsy map prints: thin delicate lines, warm tones
-    ink = "#3d3225"          # Warm dark brown (NOT black)
-    ink_light = "#5a4e3c"    # Medium brown for secondary features
-    ink_faint = "#7a6e5c"    # Light brown for minor detail
-    parchment = "#f5f0e4"   # Very light warm cream
-    parchment_mid = "#ece5d5" # Subtle mid-tone
-    parchment_edge = "#ddd4c0"  # Gentle edge
-    water_fill = "#e5dece"  # Lakes — barely darker than land
-    water_ocean = "#ebe4d4"  # Ocean — very subtle warm tint
-    coast_stroke = "#5a4e3c"  # Medium brown coastline (not black)
-    border_color = "#3d3225"  # Border matches ink
-    separator_color = "#9a8e78"  # Soft brown separator
+    # Clean monochrome palette — black ink on white
+    ink = "#1a1a1a"          # Near-black for major roads
+    ink_light = "#333333"    # Dark gray for minor roads
+    ink_faint = "#555555"    # Medium gray for trails/paths
+    bg = "#ffffff"           # Pure white background
+    water_fill = "#e8e8e8"   # Light gray for water bodies
+    water_ocean = "#f0f0f0"  # Very light gray ocean
+    coast_stroke = "#333333"  # Gray coastline
+    border_color = "#1a1a1a"  # Black border
+    separator_color = "#999999"  # Gray separator
 
-    # Layout: text at bottom (12% of height), map fills more space
-    margin = round(board_w * 0.05, 2)
-    text_area_h = round(board_h * 0.12, 2)
+    # Layout: text at bottom (15% of height), generous margins
+    margin = round(board_w * 0.06, 2)
+    text_area_h = round(board_h * 0.15, 2)
     map_x = margin
     map_y = margin
     map_w = round(board_w - 2 * margin, 2)
@@ -1078,8 +1074,8 @@ def _generate_vintage_map_svg(
                 "offset_y": (orig_transform["offset_y"] - geo_min_y) * poster_scale + remap_offset_y,
             }
 
-    # Font
-    ff = FONT_FAMILIES["serif"]
+    # Font — clean sans-serif for modern poster look
+    ff = FONT_FAMILIES["sans"]
 
     # Bleed
     bleed = BLEED_MM if include_bleed else 0.0
@@ -1105,53 +1101,8 @@ def _generate_vintage_map_svg(
     if include_bleed:
         lines.append(f'  <g transform="translate({bleed}, {bleed})">')
 
-    # --- Aged parchment via gradients (cairosvg-compatible, no SVG filters) ---
+    # --- Minimal defs: just clip path ---
     lines.append("  <defs>")
-    # Main vignette — gentle edge darkening for subtle aged look
-    lines.append('    <radialGradient id="vig" cx="50%" cy="48%" r="72%">')
-    lines.append(f'      <stop offset="40%" stop-color="{parchment}" stop-opacity="0"/>')
-    lines.append(f'      <stop offset="80%" stop-color="{parchment_mid}" stop-opacity="0.2"/>')
-    lines.append(f'      <stop offset="95%" stop-color="{parchment_edge}" stop-opacity="0.35"/>')
-    lines.append(f'      <stop offset="100%" stop-color="#9a8a68" stop-opacity="0.45"/>')
-    lines.append('    </radialGradient>')
-    # Subtle corner darkening
-    lines.append('    <radialGradient id="corner_tl" cx="0%" cy="0%" r="50%">')
-    lines.append(f'      <stop offset="0%" stop-color="#8a7a58" stop-opacity="0.18"/>')
-    lines.append(f'      <stop offset="100%" stop-color="{parchment}" stop-opacity="0"/>')
-    lines.append('    </radialGradient>')
-    lines.append('    <radialGradient id="corner_tr" cx="100%" cy="0%" r="50%">')
-    lines.append(f'      <stop offset="0%" stop-color="#8a7a58" stop-opacity="0.12"/>')
-    lines.append(f'      <stop offset="100%" stop-color="{parchment}" stop-opacity="0"/>')
-    lines.append('    </radialGradient>')
-    lines.append('    <radialGradient id="corner_bl" cx="0%" cy="100%" r="50%">')
-    lines.append(f'      <stop offset="0%" stop-color="#8a7a58" stop-opacity="0.14"/>')
-    lines.append(f'      <stop offset="100%" stop-color="{parchment}" stop-opacity="0"/>')
-    lines.append('    </radialGradient>')
-    lines.append('    <radialGradient id="corner_br" cx="100%" cy="100%" r="50%">')
-    lines.append(f'      <stop offset="0%" stop-color="#8a7a58" stop-opacity="0.20"/>')
-    lines.append(f'      <stop offset="100%" stop-color="{parchment}" stop-opacity="0"/>')
-    lines.append('    </radialGradient>')
-    # Fine paper grain
-    lines.append('    <pattern id="grain" width="4" height="4" patternUnits="userSpaceOnUse">')
-    lines.append('      <circle cx="1" cy="1" r="0.18" fill="#9a8868" opacity="0.10"/>')
-    lines.append('      <circle cx="3" cy="0.5" r="0.12" fill="#8a7858" opacity="0.08"/>')
-    lines.append('      <circle cx="0.5" cy="3" r="0.14" fill="#a89878" opacity="0.09"/>')
-    lines.append('      <circle cx="2.5" cy="2.5" r="0.10" fill="#907850" opacity="0.07"/>')
-    lines.append('    </pattern>')
-    # Aged stain spots — larger, more irregular
-    lines.append('    <pattern id="stains" width="60" height="60" patternUnits="userSpaceOnUse">')
-    lines.append('      <ellipse cx="12" cy="15" rx="7" ry="5" fill="#b0a068" opacity="0.06"/>')
-    lines.append('      <ellipse cx="42" cy="8" rx="4" ry="6" fill="#a09060" opacity="0.05"/>')
-    lines.append('      <ellipse cx="25" cy="42" rx="8" ry="5" fill="#b8a870" opacity="0.07"/>')
-    lines.append('      <ellipse cx="50" cy="35" rx="5" ry="7" fill="#a89858" opacity="0.04"/>')
-    lines.append('      <circle cx="8" cy="48" r="3" fill="#c0a860" opacity="0.05"/>')
-    lines.append('    </pattern>')
-    # Water hatch pattern — fine diagonal lines for engraved look
-    lines.append('    <pattern id="water_hatch" width="3" height="3" patternUnits="userSpaceOnUse"'
-                 ' patternTransform="rotate(45)">')
-    lines.append(f'      <line x1="0" y1="0" x2="0" y2="3" stroke="{ink_faint}" stroke-width="0.12" opacity="0.18"/>')
-    lines.append('    </pattern>')
-    # Clip for map content
     lines.append(
         f'    <clipPath id="map_clip">'
         f'<rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"/>'
@@ -1160,57 +1111,30 @@ def _generate_vintage_map_svg(
     lines.append("  </defs>")
     lines.append("")
 
-    # Layer 1: Rich parchment background — multiple layered gradients for depth
-    lines.append('  <g id="parchment_background">')
-    lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="{parchment}"/>')
-    lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#grain)"/>')
-    lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#stains)"/>')
-    lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#vig)"/>')
-    lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#corner_tl)"/>')
-    lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#corner_tr)"/>')
-    lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#corner_bl)"/>')
-    lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#corner_br)"/>')
-    lines.append("  </g>")
+    # Layer 1: Clean white background
+    lines.append(f'  <rect width="{board_w}" height="{board_h}" fill="{bg}"/>')
     lines.append("")
 
-    # Layer 2: Elegant triple-line border with corner ornaments
-    b_outer = round(margin * 0.45, 2)
-    b_mid = round(margin * 0.60, 2)
-    b_inner = round(margin * 0.75, 2)
+    # Layer 2: Clean triple-line border (Mapiful style)
+    b_outer = round(margin * 0.40, 2)
+    b_mid = round(margin * 0.58, 2)
+    b_inner = round(margin * 0.72, 2)
     lines.append('  <g id="decorative_border">')
-    # Outer line
     lines.append(
         f'    <rect x="{b_outer}" y="{b_outer}"'
         f' width="{round(board_w - 2 * b_outer, 2)}" height="{round(board_h - 2 * b_outer, 2)}"'
-        f' fill="none" stroke="{border_color}" stroke-width="0.5"/>'
+        f' fill="none" stroke="{border_color}" stroke-width="0.6"/>'
     )
-    # Middle hairline
     lines.append(
         f'    <rect x="{b_mid}" y="{b_mid}"'
         f' width="{round(board_w - 2 * b_mid, 2)}" height="{round(board_h - 2 * b_mid, 2)}"'
         f' fill="none" stroke="{border_color}" stroke-width="0.15"/>'
     )
-    # Inner line
     lines.append(
         f'    <rect x="{b_inner}" y="{b_inner}"'
         f' width="{round(board_w - 2 * b_inner, 2)}" height="{round(board_h - 2 * b_inner, 2)}"'
-        f' fill="none" stroke="{border_color}" stroke-width="0.35"/>'
+        f' fill="none" stroke="{border_color}" stroke-width="0.4"/>'
     )
-    # Corner ornaments — small diamond at each corner where lines meet
-    corner_size = round(margin * 0.12, 2)
-    for cx, cy in [
-        (b_mid, b_mid),
-        (board_w - b_mid, b_mid),
-        (b_mid, board_h - b_mid),
-        (board_w - b_mid, board_h - b_mid),
-    ]:
-        lines.append(
-            f'    <path d="M{round(cx, 2)},{round(cy - corner_size, 2)}'
-            f' L{round(cx + corner_size, 2)},{round(cy, 2)}'
-            f' L{round(cx, 2)},{round(cy + corner_size, 2)}'
-            f' L{round(cx - corner_size, 2)},{round(cy, 2)} Z"'
-            f' fill="{border_color}" stroke="none"/>'
-        )
     lines.append("  </g>")
     lines.append("")
 
@@ -1232,10 +1156,10 @@ def _generate_vintage_map_svg(
     # All map content clipped to map area
     lines.append(f'  <g clip-path="url(#map_clip)">')
 
-    # Layer 2.5: Ocean background — very subtle warm tint
+    # Layer 2.5: Ocean background — light gray
     lines.append(f'    <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}" fill="{water_ocean}"/>')
 
-    # Layer 3a: Land polygons — clean fill with thin coastline
+    # Layer 3a: Land polygons — white fill, thin gray coastline
     lines.append('    <g id="land_mass">')
     for exterior, holes in polygons:
         if len(exterior) < 3:
@@ -1245,14 +1169,14 @@ def _generate_vintage_map_svg(
             if len(hole) >= 3:
                 path_d += " " + _coords_to_path(hole)
         lines.append(
-            f'      <path d="{path_d}" fill="{parchment}"'
-            f' stroke="{coast_stroke}" stroke-width="0.5"'
+            f'      <path d="{path_d}" fill="{bg}"'
+            f' stroke="{coast_stroke}" stroke-width="0.4"'
             f' stroke-linejoin="round"/>'
         )
         path_count += 1
     lines.append("    </g>")
 
-    # Layer 3b: Water features — tinted fill + diagonal hatch for engraved look
+    # Layer 3b: Water features — clean gray fill
     is_large_scale = total_features > 1000
     if water_data:
         transform = processed.get("transform")
@@ -1262,29 +1186,18 @@ def _generate_vintage_map_svg(
             if len(coords) < 3:
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
-            # At province/island scale, skip tiny ponds (bounding box < 3mm)
             if is_large_scale:
                 xs = [p[0] for p in board_coords]
                 ys = [p[1] for p in board_coords]
-                poly_w = max(xs) - min(xs)
-                poly_h = max(ys) - min(ys)
-                if poly_w < 3.0 and poly_h < 3.0:
+                if max(xs) - min(xs) < 3.0 and max(ys) - min(ys) < 3.0:
                     continue
             path_d = _coords_to_path(board_coords)
-            # Subtle fill with thin stroke
             lines.append(
                 f'      <path d="{path_d}"'
-                f' fill="{water_fill}" stroke="{ink_faint}" stroke-width="0.3"'
-                f' stroke-linejoin="round"/>'
-            )
-            # Fine hatch overlay
-            lines.append(
-                f'      <path d="{path_d}"'
-                f' fill="url(#water_hatch)" stroke="none"/>'
+                f' fill="{water_fill}" stroke="none"/>'
             )
             path_count += 1
 
-        # Waterways: at large scale only show rivers, skip streams entirely
         for coords, water_type, name in water_data.get("waterways", []):
             if len(coords) < 2:
                 continue
@@ -1292,7 +1205,7 @@ def _generate_vintage_map_svg(
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
             path_d = _coords_to_open_path(board_coords)
-            width = 0.6 if water_type in ("river", "coastline") else 0.3
+            width = 0.5 if water_type in ("river", "coastline") else 0.25
             lines.append(
                 f'      <path d="{path_d}"'
                 f' fill="none" stroke="{ink_faint}" stroke-width="{width}"'
@@ -1309,57 +1222,48 @@ def _generate_vintage_map_svg(
         transform = processed.get("transform")
         lines.append('    <g id="streets">')
 
-        # Filter roads based on total feature density:
-        #   > 5000 → province/island (Cape Breton: ~40K features)
-        #   1000-5000 → large region
-        #   200-1000  → city
-        #   < 200     → neighbourhood
+        # Scale-based filtering: only filter at very large (province) scale.
+        # Cities should show ALL streets for that dense texture.
         if total_features > 5000:
-            # Province/island: only highways, trunk, primary, secondary
-            skip_classes = {"tertiary", "tertiary_link",
-                           "residential", "unclassified", "living_street", "service",
-                           "track", "pedestrian", "footway", "cycleway", "path",
-                           "steps", "bridleway"}
-        elif total_features > 1000:
-            # Large region: add tertiary, skip small stuff
+            # Province/island: show down to tertiary
             skip_classes = {"residential", "unclassified", "living_street", "service",
                            "track", "pedestrian", "footway", "cycleway", "path",
                            "steps", "bridleway"}
-        elif total_features > 200:
-            # City: skip trails/footpaths/tracks
+        elif total_features > 2000:
+            # Large region: skip only trails
             skip_classes = {"track", "pedestrian", "footway", "cycleway", "path", "steps", "bridleway"}
         else:
-            # Neighbourhood: show everything
+            # City/neighbourhood: show everything for dense texture
             skip_classes = set()
 
         log.info(f"Vintage streets: skipping {skip_classes} (total_features={total_features})")
 
         is_sparse = total_features < 200
 
-        # Width table — thin delicate lines for premium look
+        # Width table — clear hierarchy: major roads bold, minor roads thin
         if is_sparse:
             vintage_widths = {
-                "motorway": 1.2, "motorway_link": 0.9,
-                "trunk": 1.0, "trunk_link": 0.8,
-                "primary": 0.9, "primary_link": 0.7,
-                "secondary": 0.7, "secondary_link": 0.5,
-                "tertiary": 0.5, "tertiary_link": 0.4,
-                "residential": 0.35, "unclassified": 0.35,
-                "living_street": 0.35, "service": 0.25, "track": 0.2,
+                "motorway": 1.6, "motorway_link": 1.2,
+                "trunk": 1.4, "trunk_link": 1.0,
+                "primary": 1.2, "primary_link": 0.9,
+                "secondary": 0.9, "secondary_link": 0.7,
+                "tertiary": 0.6, "tertiary_link": 0.5,
+                "residential": 0.4, "unclassified": 0.4,
+                "living_street": 0.4, "service": 0.3, "track": 0.2,
                 "pedestrian": 0.15, "footway": 0.12, "cycleway": 0.12,
                 "path": 0.12, "steps": 0.1, "bridleway": 0.12,
             }
         else:
             vintage_widths = {
-                "motorway": 0.8, "motorway_link": 0.6,
-                "trunk": 0.7, "trunk_link": 0.5,
-                "primary": 0.6, "primary_link": 0.45,
-                "secondary": 0.45, "secondary_link": 0.35,
-                "tertiary": 0.3, "tertiary_link": 0.25,
-                "residential": 0.2, "unclassified": 0.2,
-                "living_street": 0.2, "service": 0.15, "track": 0.12,
-                "pedestrian": 0.1, "footway": 0.08, "cycleway": 0.08,
-                "path": 0.08, "steps": 0.06, "bridleway": 0.08,
+                "motorway": 1.1, "motorway_link": 0.8,
+                "trunk": 1.0, "trunk_link": 0.7,
+                "primary": 0.8, "primary_link": 0.6,
+                "secondary": 0.6, "secondary_link": 0.45,
+                "tertiary": 0.35, "tertiary_link": 0.25,
+                "residential": 0.18, "unclassified": 0.18,
+                "living_street": 0.18, "service": 0.12, "track": 0.1,
+                "pedestrian": 0.08, "footway": 0.06, "cycleway": 0.06,
+                "path": 0.06, "steps": 0.05, "bridleway": 0.06,
             }
 
         # Draw roads — minor first, major on top; skip classes too small for this scale
@@ -1399,82 +1303,58 @@ def _generate_vintage_map_svg(
     lines.append("  </g>")  # close map clip
     lines.append("")
 
-    # --- Decorative separator + text area below the map ---
+    # --- Text area below the map (Mapiful style) ---
     text_center_x = round(board_w / 2, 2)
-    title_size = round(font_size_mm * 2.0, 2)
-    subtitle_size = round(font_size_mm * 0.65, 2)
+    title_size = round(font_size_mm * 2.5, 2)
+    subtitle_size = round(font_size_mm * 0.7, 2)
     coord_size = round(font_size_mm * 0.5, 2)
 
     title_text = location_name.upper()
-    title_tracking = title_size * 0.30
+    title_tracking = title_size * 0.35
 
-    # Auto-scale title to fit within 80% of board width
-    est_width = len(title_text) * (title_size * 0.65 + title_tracking)
-    avail_w = board_w * 0.80
+    # Auto-scale title to fit within 85% of board width
+    est_width = len(title_text) * (title_size * 0.60 + title_tracking)
+    avail_w = board_w * 0.85
     if est_width > avail_w and len(title_text) > 0:
         scale = avail_w / est_width
         title_size = round(title_size * scale, 2)
-        title_tracking = title_size * 0.30
+        title_tracking = title_size * 0.35
 
-    # Decorative separator line between map and text
-    sep_y = round(map_y + map_h + text_area_h * 0.12, 2)
-    sep_half = round(board_w * 0.25, 2)
-    diamond_size = round(font_size_mm * 0.25, 2)
-
-    lines.append('  <g id="separator">')
-    # Left line
-    lines.append(
-        f'    <line x1="{round(text_center_x - sep_half, 2)}" y1="{sep_y}"'
-        f' x2="{round(text_center_x - diamond_size * 2, 2)}" y2="{sep_y}"'
-        f' stroke="{separator_color}" stroke-width="0.3"/>'
-    )
-    # Right line
-    lines.append(
-        f'    <line x1="{round(text_center_x + diamond_size * 2, 2)}" y1="{sep_y}"'
-        f' x2="{round(text_center_x + sep_half, 2)}" y2="{sep_y}"'
-        f' stroke="{separator_color}" stroke-width="0.3"/>'
-    )
-    # Center diamond ornament
-    lines.append(
-        f'    <path d="M{text_center_x},{round(sep_y - diamond_size, 2)}'
-        f' L{round(text_center_x + diamond_size, 2)},{sep_y}'
-        f' L{text_center_x},{round(sep_y + diamond_size, 2)}'
-        f' L{round(text_center_x - diamond_size, 2)},{sep_y} Z"'
-        f' fill="{separator_color}" stroke="none"/>'
-    )
-    lines.append("  </g>")
-
-    text_start_y = round(sep_y + text_area_h * 0.45, 2)
+    # Position title in center of text area
+    text_start_y = round(map_y + map_h + text_area_h * 0.40, 2)
 
     lines.append('  <g id="poster_text">')
+    # Bold title
     lines.append(
         f'    <text x="{text_center_x}" y="{round(text_start_y, 2)}"'
         f' text-anchor="middle" font-family="{ff}"'
-        f' font-size="{title_size}" font-weight="normal"'
+        f' font-size="{title_size}" font-weight="bold"'
         f' letter-spacing="{round(title_tracking, 2)}"'
         f' fill="{ink}">{_escape_xml(title_text)}</text>'
     )
-    next_y = text_start_y + title_size * 1.1
+    next_y = text_start_y + title_size * 1.2
     if subtitle:
+        # Subtitle with dash separators: — SUBTITLE —
+        sub_text = f"\u2014  {_escape_xml(subtitle)}  \u2014"
         lines.append(
             f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
             f' text-anchor="middle" font-family="{ff}"'
             f' font-size="{subtitle_size}" font-weight="normal"'
-            f' letter-spacing="{round(subtitle_size * 0.2, 2)}"'
-            f' fill="{ink_light}">{_escape_xml(subtitle)}</text>'
+            f' letter-spacing="{round(subtitle_size * 0.25, 2)}"'
+            f' fill="{ink_light}">{sub_text}</text>'
         )
-        next_y += subtitle_size * 1.6
+        next_y += subtitle_size * 1.8
     if show_coordinates and latlon:
         lat, lon = latlon
         lat_dir = "N" if lat >= 0 else "S"
         lon_dir = "W" if lon < 0 else "E"
-        coord_text = f"{abs(lat):.4f}\u00b0{lat_dir}  \u00b7  {abs(lon):.4f}\u00b0{lon_dir}"
+        coord_text = f"{abs(lat):.3f}\u00b0{lat_dir} / {abs(lon):.3f}\u00b0{lon_dir}"
         lines.append(
             f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
             f' text-anchor="middle" font-family="{ff}"'
             f' font-size="{coord_size}"'
-            f' letter-spacing="{round(coord_size * 0.18, 2)}"'
-            f' fill="{ink_light}">{coord_text}</text>'
+            f' letter-spacing="{round(coord_size * 0.15, 2)}"'
+            f' fill="{separator_color}">{coord_text}</text>'
         )
     lines.append("  </g>")
     lines.append("")
