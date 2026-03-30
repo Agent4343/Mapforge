@@ -1013,12 +1013,12 @@ def _generate_vintage_map_svg(
     ink = "#1a1208"          # Deep brown-black ink
     ink_light = "#34281a"    # Medium ink for secondary features
     ink_faint = "#4a3c2a"    # Faint ink for detail roads
-    parchment = "#e4d6b4"   # Warm parchment base
-    parchment_mid = "#d4c49e" # Mid-tone for subtle variation
-    parchment_edge = "#a89468"  # Dark edge for strong vignette
-    water_fill = "#c8b88e"  # Lake/river fill — distinct from land
-    water_ocean = "#b0a070"  # Ocean background — noticeably darker than land
-    coast_stroke = "#1a1208"  # Bold coastline stroke matches ink
+    parchment = "#f0e8d0"   # Light warm parchment base
+    parchment_mid = "#e4d8bc" # Mid-tone for subtle variation
+    parchment_edge = "#c8b898"  # Gentle edge darkening
+    water_fill = "#d8ccac"  # Lake/river fill — subtle tint darker than land
+    water_ocean = "#ddd0b0"  # Ocean background — just slightly darker than parchment
+    coast_stroke = "#2a1e10"  # Bold coastline stroke
     border_color = "#2a1e10"  # Border line color
     separator_color = "#8a7a58"  # Decorative line separator
 
@@ -1106,28 +1106,28 @@ def _generate_vintage_map_svg(
 
     # --- Aged parchment via gradients (cairosvg-compatible, no SVG filters) ---
     lines.append("  <defs>")
-    # Main vignette — strong edge darkening for aged look
-    lines.append('    <radialGradient id="vig" cx="50%" cy="48%" r="65%">')
-    lines.append(f'      <stop offset="20%" stop-color="{parchment}" stop-opacity="0"/>')
-    lines.append(f'      <stop offset="70%" stop-color="{parchment_mid}" stop-opacity="0.3"/>')
-    lines.append(f'      <stop offset="90%" stop-color="{parchment_edge}" stop-opacity="0.6"/>')
-    lines.append(f'      <stop offset="100%" stop-color="#6a5a38" stop-opacity="0.75"/>')
+    # Main vignette — gentle edge darkening for subtle aged look
+    lines.append('    <radialGradient id="vig" cx="50%" cy="48%" r="72%">')
+    lines.append(f'      <stop offset="40%" stop-color="{parchment}" stop-opacity="0"/>')
+    lines.append(f'      <stop offset="80%" stop-color="{parchment_mid}" stop-opacity="0.2"/>')
+    lines.append(f'      <stop offset="95%" stop-color="{parchment_edge}" stop-opacity="0.35"/>')
+    lines.append(f'      <stop offset="100%" stop-color="#9a8a68" stop-opacity="0.45"/>')
     lines.append('    </radialGradient>')
-    # Four corner darkening for deep aging
+    # Subtle corner darkening
     lines.append('    <radialGradient id="corner_tl" cx="0%" cy="0%" r="50%">')
-    lines.append(f'      <stop offset="0%" stop-color="#5a4a2a" stop-opacity="0.35"/>')
+    lines.append(f'      <stop offset="0%" stop-color="#8a7a58" stop-opacity="0.18"/>')
     lines.append(f'      <stop offset="100%" stop-color="{parchment}" stop-opacity="0"/>')
     lines.append('    </radialGradient>')
     lines.append('    <radialGradient id="corner_tr" cx="100%" cy="0%" r="50%">')
-    lines.append(f'      <stop offset="0%" stop-color="#5a4a2a" stop-opacity="0.25"/>')
+    lines.append(f'      <stop offset="0%" stop-color="#8a7a58" stop-opacity="0.12"/>')
     lines.append(f'      <stop offset="100%" stop-color="{parchment}" stop-opacity="0"/>')
     lines.append('    </radialGradient>')
     lines.append('    <radialGradient id="corner_bl" cx="0%" cy="100%" r="50%">')
-    lines.append(f'      <stop offset="0%" stop-color="#5a4a2a" stop-opacity="0.28"/>')
+    lines.append(f'      <stop offset="0%" stop-color="#8a7a58" stop-opacity="0.14"/>')
     lines.append(f'      <stop offset="100%" stop-color="{parchment}" stop-opacity="0"/>')
     lines.append('    </radialGradient>')
     lines.append('    <radialGradient id="corner_br" cx="100%" cy="100%" r="50%">')
-    lines.append(f'      <stop offset="0%" stop-color="#5a4a2a" stop-opacity="0.4"/>')
+    lines.append(f'      <stop offset="0%" stop-color="#8a7a58" stop-opacity="0.20"/>')
     lines.append(f'      <stop offset="100%" stop-color="{parchment}" stop-opacity="0"/>')
     lines.append('    </radialGradient>')
     # Fine paper grain
@@ -1148,7 +1148,7 @@ def _generate_vintage_map_svg(
     # Water hatch pattern — fine diagonal lines for engraved look
     lines.append('    <pattern id="water_hatch" width="3" height="3" patternUnits="userSpaceOnUse"'
                  ' patternTransform="rotate(45)">')
-    lines.append(f'      <line x1="0" y1="0" x2="0" y2="3" stroke="{ink_faint}" stroke-width="0.15" opacity="0.25"/>')
+    lines.append(f'      <line x1="0" y1="0" x2="0" y2="3" stroke="{ink_faint}" stroke-width="0.12" opacity="0.18"/>')
     lines.append('    </pattern>')
     # Clip for map content
     lines.append(
@@ -1231,21 +1231,18 @@ def _generate_vintage_map_svg(
     # All map content clipped to map area
     lines.append(f'  <g clip-path="url(#map_clip)">')
 
-    # Layer 2.5: Ocean background — darker fill so land stands out dramatically
+    # Layer 2.5: Ocean background — subtle warm tint, lighter than before
     lines.append(f'    <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}" fill="{water_ocean}"/>')
-    # Add subtle hatch to ocean too for engraved look
-    lines.append(f'    <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}" fill="url(#water_hatch)" opacity="0.4"/>')
 
-    # Layer 3a: Land polygons with drop shadow for depth
-    # Shadow layer (offset slightly down-right)
-    shadow_offset = round(min(map_w, map_h) * 0.004, 2)
-    lines.append(f'    <g id="land_shadow" opacity="0.15">')
+    # Layer 3a: Land polygons with very subtle drop shadow for depth
+    shadow_offset = round(min(map_w, map_h) * 0.003, 2)
+    lines.append(f'    <g id="land_shadow" opacity="0.08">')
     for exterior, holes in polygons:
         if len(exterior) < 3:
             continue
         shadow_ext = [(round(x + shadow_offset, 2), round(y + shadow_offset, 2)) for x, y in exterior]
         path_d = _coords_to_path(shadow_ext)
-        lines.append(f'      <path d="{path_d}" fill="#1a1208" stroke="none"/>')
+        lines.append(f'      <path d="{path_d}" fill="#2a1e10" stroke="none"/>')
     lines.append("    </g>")
 
     # Land fill
@@ -1259,7 +1256,7 @@ def _generate_vintage_map_svg(
                 path_d += " " + _coords_to_path(hole)
         lines.append(
             f'      <path d="{path_d}" fill="{parchment}"'
-            f' stroke="{coast_stroke}" stroke-width="1.0"'
+            f' stroke="{coast_stroke}" stroke-width="0.8"'
             f' stroke-linejoin="round"/>'
         )
         path_count += 1
