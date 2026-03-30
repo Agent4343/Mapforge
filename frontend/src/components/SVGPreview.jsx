@@ -1,5 +1,23 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 
+/**
+ * Sanitize SVG string by removing potentially dangerous elements and attributes.
+ * Strips <script>, event handlers (onload, onerror, etc.), and <foreignObject>.
+ */
+function sanitizeSvg(svgStr) {
+  if (!svgStr) return svgStr;
+  let clean = svgStr;
+  // Remove <script> tags and their contents
+  clean = clean.replace(/<script[\s\S]*?<\/script>/gi, "");
+  // Remove event handler attributes (on*)
+  clean = clean.replace(/\s+on\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "");
+  // Remove javascript: URLs
+  clean = clean.replace(/href\s*=\s*["']javascript:[^"']*["']/gi, 'href=""');
+  // Remove <foreignObject> (can embed arbitrary HTML)
+  clean = clean.replace(/<foreignObject[\s\S]*?<\/foreignObject>/gi, "");
+  return clean;
+}
+
 // Color theme definitions matching backend COLOR_THEMES
 const THEME_COLOR_MAPS = {
   classic: {
@@ -95,7 +113,7 @@ export default function SVGPreview({ svgContent, loading, error, colorTheme }) {
   const displaySvg = useMemo(() => {
     if (!svgContent) return null;
 
-    let svg = svgContent;
+    let svg = sanitizeSvg(svgContent);
 
     // Make SVG responsive: set width to 100% and remove fixed height
     // so the viewBox attribute controls aspect ratio naturally

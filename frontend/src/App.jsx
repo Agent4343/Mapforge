@@ -211,10 +211,13 @@ export default function App() {
     if (params.get("ref") === "etsy") {
       setIsEtsyReferral(true);
       setShowLanding(false);
+      const VALID_PRODUCT_TYPES = ["lake", "province", "city", "community", "park", "name_sign"];
+      const VALID_BOARD_SIZES = ["small", "medium", "large", "xl", "max", "print_8x10", "print_11x14", "print_16x20", "print_18x24", "print_24x36"];
+      const VALID_COLOR_THEMES = ["classic", "modern_dark", "rose_gold", "midnight", "sage", "minimal"];
       const updates = {};
-      if (params.get("product_type")) updates.productType = params.get("product_type");
-      if (params.get("board_size")) updates.boardSize = params.get("board_size");
-      if (params.get("color_theme")) updates.colorTheme = params.get("color_theme");
+      if (params.get("product_type") && VALID_PRODUCT_TYPES.includes(params.get("product_type"))) updates.productType = params.get("product_type");
+      if (params.get("board_size") && VALID_BOARD_SIZES.includes(params.get("board_size"))) updates.boardSize = params.get("board_size");
+      if (params.get("color_theme") && VALID_COLOR_THEMES.includes(params.get("color_theme"))) updates.colorTheme = params.get("color_theme");
       if (Object.keys(updates).length > 0) {
         setConfig((prev) => ({ ...prev, ...updates }));
       }
@@ -657,7 +660,7 @@ export default function App() {
                     value={pinCoords?.lat ?? ""}
                     onChange={(e) => {
                       const lat = parseFloat(e.target.value);
-                      setPinCoords((prev) => ({ lon: prev?.lon || 0, lat: isNaN(lat) ? 0 : lat }));
+                      setPinCoords((prev) => ({ lon: prev?.lon ?? 0, lat: isNaN(lat) ? 0 : lat }));
                     }}
                   />
                 </div>
@@ -672,7 +675,7 @@ export default function App() {
                     value={pinCoords?.lon ?? ""}
                     onChange={(e) => {
                       const lon = parseFloat(e.target.value);
-                      setPinCoords((prev) => ({ lat: prev?.lat || 0, lon: isNaN(lon) ? 0 : lon }));
+                      setPinCoords((prev) => ({ lat: prev?.lat ?? 0, lon: isNaN(lon) ? 0 : lon }));
                     }}
                   />
                 </div>

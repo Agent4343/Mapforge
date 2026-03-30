@@ -1,7 +1,7 @@
 """Marketplace router — list, browse, purchase, review, seller dashboard."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -259,15 +259,18 @@ async def create_review(
     db.add(review)
 
     # Update listing rating atomically to avoid race conditions
-    listing_result = await db.execute(
-        select(MarketplaceListing).where(MarketplaceListing.id == req.listing_id)
+    await db.execute(
+        update(MarketplaceListing)
+        .where(MarketplaceListing.id == req.listing_id)
+        .values(
+            average_rating=func.round(
+                (MarketplaceListing.average_rating * MarketplaceListing.rating_count + req.rating)
+                / (MarketplaceListing.rating_count + 1),
+                2,
+            ),
+            rating_count=MarketplaceListing.rating_count + 1,
+        )
     )
-    listing = listing_result.scalar_one_or_none()
-    if not listing:
-        raise HTTPException(status_code=404, detail="Listing not found.")
-    total_rating = listing.average_rating * listing.rating_count + req.rating
-    listing.rating_count += 1
-    listing.average_rating = round(total_rating / listing.rating_count, 2)
 
     await db.commit()
     await db.refresh(review)

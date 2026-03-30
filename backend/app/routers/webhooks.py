@@ -354,6 +354,15 @@ async def _handle_etsy_order_paid(db: AsyncSession, data: dict, shop_id: str):
     elif isinstance(price_raw, (int, float)):
         price_cents = int(price_raw * 100)
 
+    # Idempotency: reject duplicate webhooks for the same receipt
+    if receipt_id:
+        existing = await db.execute(
+            select(DesignCredit).where(DesignCredit.etsy_receipt_id == receipt_id)
+        )
+        if existing.scalar_one_or_none():
+            log.info(f"Duplicate Etsy webhook for receipt {receipt_id} — skipping")
+            return
+
     # Determine product type from listing title (basic heuristic)
     title_lower = (listing_title or "").lower()
     product_type = "lake"  # default

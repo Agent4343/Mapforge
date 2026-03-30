@@ -147,11 +147,11 @@ export default function AdminDashboard({ onBack }) {
               <span className="etsy-badge">Etsy API Connected</span>
               <div className="etsy-settings-detail">
                 <span className="etsy-settings-label">API Key:</span>
-                <span className="etsy-settings-value">{etsySettings.api_key}</span>
+                <span className="etsy-settings-value">{etsySettings.api_key ? etsySettings.api_key.slice(0, 8) + "••••••••" : "Not set"}</span>
               </div>
               <div className="etsy-settings-detail">
                 <span className="etsy-settings-label">Secret:</span>
-                <span className="etsy-settings-value">{etsySettings.api_secret}</span>
+                <span className="etsy-settings-value">••••••••</span>
               </div>
               {etsySettings.redirect_uri && (
                 <div className="etsy-settings-detail">

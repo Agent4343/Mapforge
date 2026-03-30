@@ -29,7 +29,8 @@ limiter = Limiter(key_func=get_remote_address)
 
 
 @router.post("/register", response_model=AuthResponse, status_code=201)
-async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("5/minute")
+async def register(request: Request, req: RegisterRequest, db: AsyncSession = Depends(get_db)):
     """Create a new user account."""
     # Check existing
     existing = await db.execute(
@@ -69,12 +70,14 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/login", response_model=AuthResponse)
-async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("10/minute")
+async def login(request: Request, req: LoginRequest, db: AsyncSession = Depends(get_db)):
     """Login and get access token."""
     result = await db.execute(select(User).where(User.email == req.email))
     user = result.scalar_one_or_none()
 
     if not user or not verify_password(req.password, user.hashed_password):
+        log.warning(f"Failed login attempt for email: {req.email}")
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     # Auto-promote admin if not already

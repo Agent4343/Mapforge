@@ -181,16 +181,15 @@ async def etsy_debug(
     if secret and "\n" in secret:
         issues.append("Shared Secret contains newlines")
 
-    # Try a simple API call to test
+    # Try a simple API call to test connectivity (credentials used only in-flight)
     test_result = None
     if key and secret:
         import httpx
-        header_val = f"{key}:{secret}"
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.get(
                     "https://api.etsy.com/v3/application/openapi-ping",
-                    headers={"x-api-key": header_val},
+                    headers={"x-api-key": f"{key}:{secret}"},
                     timeout=10.0,
                 )
                 test_result = {
@@ -203,9 +202,8 @@ async def etsy_debug(
     return {
         "key_length": len(key),
         "secret_length": len(secret),
-        "key_preview": f"{key[:8]}...{key[-4:]}" if len(key) > 12 else key,
-        "secret_preview": f"{secret[:4]}...{secret[-4:]}" if len(secret) > 8 else "TOO_SHORT",
-        "header_format": f"{key[:6]}..:{secret[:4]}..",
+        "key_configured": bool(key),
+        "secret_configured": bool(secret),
         "issues": issues,
         "ping_test": test_result,
         "redirect_uri": creds.get("redirect_uri", ""),

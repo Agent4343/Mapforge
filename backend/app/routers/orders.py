@@ -16,14 +16,15 @@ import json
 import secrets
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.config import settings
-from app.database import async_session
+from app.database import async_session, get_db
 from app.logging_config import log
-from app.models.db_models import DesignCredit, GeneratedFile
+from app.models.db_models import DesignCredit, GeneratedFile, User
+from app.services.auth import get_current_user
 
 router = APIRouter(prefix="/api/v1/orders", tags=["orders"])
 
@@ -239,11 +240,18 @@ async def download_files(token: str, format: str = Query("png")):
     if not file_data:
         raise HTTPException(status_code=404, detail="File data not found in storage")
 
-    # Increment download count
+    # Atomically increment download count with race-condition guard
     async with async_session() as db:
-        result = await db.execute(select(DesignCredit).where(DesignCredit.id == credit.id))
-        c = result.scalar_one()
-        c.download_count += 1
+        result = await db.execute(
+            update(DesignCredit)
+            .where(
+                DesignCredit.id == credit.id,
+                DesignCredit.download_count < DesignCredit.max_downloads,
+            )
+            .values(download_count=DesignCredit.download_count + 1)
+        )
+        if result.rowcount == 0:
+            raise HTTPException(status_code=403, detail="Download limit reached.")
         await db.commit()
 
     safe_name = (credit.location_name or "mapforge").replace(" ", "_").lower()[:50]
@@ -291,11 +299,14 @@ async def create_credit_manually(
     product_tier: str = "standard",
     etsy_buyer_email: str | None = None,
     max_downloads: int = 5,
+    user: User = Depends(get_current_user),
 ):
-    """Manually create a design credit (admin/testing use).
+    """Manually create a design credit (admin only).
 
     Returns the unique design link that you can share with a customer.
     """
+    if user.tier != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
     token = secrets.token_urlsafe(32)
     frontend_url = settings.FRONTEND_URL or "http://localhost:5173"
 
