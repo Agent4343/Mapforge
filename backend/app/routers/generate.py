@@ -306,6 +306,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         show_scale_bar=req.show_scale_bar,
         gradient_water=req.gradient_water,
         land_shadow=req.land_shadow,
+        dedication=req.dedication,
+        show_map_labels=req.show_map_labels,
     )
 
     # Store files + generate derivatives (only for authenticated users)
@@ -579,6 +581,8 @@ async def generate_pin(
         show_scale_bar=req.show_scale_bar,
         gradient_water=req.gradient_water,
         land_shadow=req.land_shadow,
+        dedication=req.dedication,
+        show_map_labels=req.show_map_labels,
     )
 
     # Store files and generate derivatives (only for authenticated users — visitors just get a preview)

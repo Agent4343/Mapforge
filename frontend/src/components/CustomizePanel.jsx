@@ -26,6 +26,14 @@ const SUBTITLE_PRESETS = [
   "Forever & Always",
 ];
 
+const DEDICATION_PRESETS = [
+  "Ashley & Family",
+  "Summer 2024",
+  "Our Happy Place",
+  "The Cottage",
+  "With Love",
+];
+
 export default function CustomizePanel({ config, onChange, user }) {
   function update(key, value) {
     onChange({ ...config, [key]: value });
@@ -75,6 +83,34 @@ export default function CustomizePanel({ config, onChange, user }) {
               </button>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Dedication / Personalization — Print mode */}
+      {isPrint && (
+        <div className="control-group">
+          <label>Dedication</label>
+          <input
+            type="text"
+            value={config.dedication || ""}
+            onChange={(e) => update("dedication", e.target.value)}
+            placeholder="Ashley & Family / Summer 2024"
+            maxLength={120}
+          />
+          <div className="preset-chips">
+            {DEDICATION_PRESETS.map((preset) => (
+              <button
+                key={preset}
+                className={`preset-chip${config.dedication === preset ? " active" : ""}`}
+                onClick={() => update("dedication", config.dedication === preset ? "" : preset)}
+              >
+                {preset}
+              </button>
+            ))}
+          </div>
+          <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: "4px 0 0" }}>
+            Add names, a date, or a personal phrase below the coordinates.
+          </p>
         </div>
       )}
 
@@ -396,6 +432,18 @@ export default function CustomizePanel({ config, onChange, user }) {
                 type="checkbox"
                 checked={config.landShadow !== false}
                 onChange={(e) => update("landShadow", e.target.checked)}
+              />
+              <span className="toggle-slider" />
+            </label>
+          </div>
+
+          <div className="toggle-row">
+            <label>Map Labels</label>
+            <label className="toggle-switch">
+              <input
+                type="checkbox"
+                checked={config.showMapLabels || false}
+                onChange={(e) => update("showMapLabels", e.target.checked)}
               />
               <span className="toggle-slider" />
             </label>

@@ -110,6 +110,8 @@ def generate_svg(
     show_scale_bar: bool = False,
     gradient_water: bool = True,
     land_shadow: bool = True,
+    dedication: str = "",
+    show_map_labels: bool = False,
 ) -> dict:
     """Generate an SVG string from processed geometry.
 
@@ -148,6 +150,8 @@ def generate_svg(
             show_scale_bar=show_scale_bar,
             gradient_water=gradient_water,
             land_shadow=land_shadow,
+            dedication=dedication,
+            show_map_labels=show_map_labels,
         )
 
     return _generate_cnc_svg(
@@ -381,6 +385,8 @@ def _generate_print_svg(
     show_scale_bar: bool = False,
     gradient_water: bool = True,
     land_shadow: bool = True,
+    dedication: str = "",
+    show_map_labels: bool = False,
 ) -> dict:
     """Generate a poster-style print SVG with themed colors, filled regions,
     and clean typography matching premium city map wall art.
@@ -528,8 +534,14 @@ def _generate_print_svg(
                 "offset_y": (orig_transform["offset_y"] - geo_min_y) * poster_scale + remap_offset_y,
             }
 
-    # Resolve font family
-    ff = FONT_FAMILIES.get(font_family, FONT_FAMILIES["sans"])
+    # Resolve font families — serif for title, sans-serif for details
+    # unless the user/layout explicitly chose a different font
+    ff_title = FONT_FAMILIES.get(font_family, FONT_FAMILIES["sans"])
+    ff_detail = FONT_FAMILIES["sans"]  # coordinates, dedication always clean sans
+    if font_family in ("serif", "script", "slab"):
+        ff_detail = FONT_FAMILIES["sans"]  # contrast: serif title, sans details
+    else:
+        ff_detail = ff_title  # user chose sans/mono/etc — keep consistent
 
     # Calculate bleed dimensions
     bleed = BLEED_MM if include_bleed else 0.0
@@ -659,9 +671,9 @@ def _generate_print_svg(
     if is_street_map:
         # Street maps: fill the boundary polygon with land color to create
         # visible contrast between the city area and the white mat border.
-        # Streets and water are layered on top.
         # Sparse areas get a bolder boundary stroke for more definition.
-        geo_stroke_w = "1.2" if is_sparse_area else "0.8"
+        # Min 0.75pt (0.26mm) for print clarity.
+        geo_stroke_w = "1.4" if is_sparse_area else "1.0"
         for exterior, holes in polygons:
             path_d = _coords_to_path(exterior)
             for hole in holes:
@@ -674,7 +686,7 @@ def _generate_print_svg(
     else:
         # Province/lake/park maps: filled polygon is the main visual.
         # With water-colored background, the land shape pops beautifully.
-        # Use a bold stroke to define the coastline edge.
+        # Bold stroke (1.2mm) for crisp coastline definition at print sizes.
         for exterior, holes in polygons:
             path_d = _coords_to_path(exterior)
             for hole in holes:
@@ -682,7 +694,7 @@ def _generate_print_svg(
             lines.append(
                 f'      <path d="{path_d}"'
                 f' fill="{theme["land"]}" stroke="{theme["land_stroke"]}"'
-                f' stroke-width="1.0" fill-rule="evenodd" stroke-linejoin="round"/>'
+                f' stroke-width="1.2" fill-rule="evenodd" stroke-linejoin="round"/>'
             )
     lines.append("    </g>")
 
@@ -780,19 +792,19 @@ def _generate_print_svg(
     lines.append("  </g>")  # close map clip group
     lines.append("")
 
-    # Map frame and text — depends on layout
+    # Map frame and text — depends on layout (reduced border for cleaner look)
     if layout.get("map_frame", False) and not full_bleed_map:
-        inset = 1.5
+        inset = 1.2
         lines.append('  <g id="map_frame">')
         lines.append(
             f'    <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"'
-            f' fill="none" stroke="{theme["land_stroke"]}" stroke-width="0.6"/>'
+            f' fill="none" stroke="{theme["land_stroke"]}" stroke-width="0.4"/>'
         )
         lines.append(
             f'    <rect x="{round(map_x - inset, 2)}" y="{round(map_y - inset, 2)}"'
             f' width="{round(map_w + 2 * inset, 2)}" height="{round(map_h + 2 * inset, 2)}"'
-            f' fill="none" stroke="{theme["land_stroke"]}" stroke-width="0.25"'
-            f' opacity="0.5"/>'
+            f' fill="none" stroke="{theme["land_stroke"]}" stroke-width="0.2"'
+            f' opacity="0.4"/>'
         )
         lines.append("  </g>")
         lines.append("")
@@ -802,27 +814,28 @@ def _generate_print_svg(
         _add_ornate_corners(lines, map_x, map_y, map_w, map_h, theme)
         lines.append("")
 
-    # Separator line between map and text area (only for non-overlay layouts)
+    # Separator line between map and text area (thinner for cleaner look)
     text_position = layout["text_position"]
     if layout.get("separator", False) and text_area_h > 0:
         if text_position == "top":
             sep_y = round(map_y - text_area_h * 0.10, 2)
         else:
             sep_y = round(map_y + map_h + text_area_h * 0.10, 2)
-        sep_margin = round(board_w * 0.25, 2)
+        sep_margin = round(board_w * 0.28, 2)
         lines.append(
             f'  <line x1="{sep_margin}" y1="{sep_y}" x2="{round(board_w - sep_margin, 2)}" y2="{sep_y}"'
-            f' stroke="{theme["land_stroke"]}" stroke-width="0.3" opacity="0.4"/>'
+            f' stroke="{theme["land_stroke"]}" stroke-width="0.2" opacity="0.35"/>'
         )
         lines.append("")
 
     # --- Text rendering based on layout text_position ---
     text_center_x = round(board_w / 2, 2)
 
-    # Print-mode font sizes
-    title_size = round(font_size_mm * 1.6, 2)
-    subtitle_size = round(font_size_mm * 0.65, 2)
+    # Print-mode font sizes — title reduced 15-20%, subtitle increased for balance
+    title_size = round(font_size_mm * 1.35, 2)
+    subtitle_size = round(font_size_mm * 0.75, 2)
     coord_size = round(font_size_mm * 0.45, 2)
+    dedication_size = round(font_size_mm * 0.55, 2)
 
     title_text = location_name.upper()
     char_width_factor = 0.75
@@ -838,13 +851,13 @@ def _generate_print_svg(
         # Overlay text on the map with a semi-transparent backdrop
         if text_position == "overlay_center":
             overlay_y = round(board_h * 0.45, 2)
-            title_size = round(font_size_mm * 2.2, 2)
+            title_size = round(font_size_mm * 1.85, 2)
             title_tracking = title_size * 0.3
         else:
             overlay_y = round(board_h * 0.82, 2)
 
         # Semi-transparent text backdrop
-        backdrop_h = round(font_size_mm * 4.5, 2)
+        backdrop_h = round(font_size_mm * 5.0, 2)
         backdrop_y = round(overlay_y - font_size_mm * 1.5, 2)
         lines.append('  <g id="poster_text">')
         lines.append(
@@ -854,16 +867,16 @@ def _generate_print_svg(
         text_y = overlay_y
         lines.append(
             f'    <text x="{text_center_x}" y="{round(text_y, 2)}"'
-            f' text-anchor="middle" font-family="{ff}"'
+            f' text-anchor="middle" font-family="{ff_title}"'
             f' font-size="{title_size}" font-weight="bold"'
             f' letter-spacing="{round(title_tracking, 2)}"'
             f' fill="{theme["text_primary"]}">{_escape_xml(title_text)}</text>'
         )
-        next_y = text_y + title_size * 1.1
+        next_y = text_y + title_size * 1.2
         if subtitle:
             lines.append(
                 f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
-                f' text-anchor="middle" font-family="{ff}"'
+                f' text-anchor="middle" font-family="{ff_detail}"'
                 f' font-size="{subtitle_size}" font-weight="300"'
                 f' letter-spacing="{round(subtitle_size * 0.25, 2)}"'
                 f' fill="{theme["text_secondary"]}">{_escape_xml(subtitle)}</text>'
@@ -877,29 +890,38 @@ def _generate_print_svg(
             coord_text = f"{abs(lat):.6f}\u00b0 {lat_dir}  /  {abs(lon):.6f}\u00b0 {lon_dir}"
             lines.append(
                 f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
-                f' text-anchor="middle" font-family="{ff}"'
+                f' text-anchor="middle" font-family="{ff_detail}"'
                 f' font-size="{coord_size}"'
                 f' letter-spacing="{round(coord_size * 0.15, 2)}"'
                 f' fill="{theme["text_secondary"]}">{coord_text}</text>'
+            )
+            next_y += coord_size * 1.8
+        if dedication:
+            lines.append(
+                f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
+                f' text-anchor="middle" font-family="{ff_detail}"'
+                f' font-size="{dedication_size}" font-style="italic"'
+                f' letter-spacing="{round(dedication_size * 0.1, 2)}"'
+                f' fill="{theme["text_secondary"]}">{_escape_xml(dedication)}</text>'
             )
         lines.append("  </g>")
         lines.append("")
     elif text_position == "top":
         # Editorial: large text header above the map
-        text_start_y = round(mat_y + text_area_h * 0.45, 2)
+        text_start_y = round(mat_y + text_area_h * 0.40, 2)
         lines.append('  <g id="poster_text">')
         lines.append(
             f'    <text x="{text_center_x}" y="{round(text_start_y, 2)}"'
-            f' text-anchor="middle" font-family="{ff}"'
+            f' text-anchor="middle" font-family="{ff_title}"'
             f' font-size="{title_size}" font-weight="bold"'
             f' letter-spacing="{round(title_tracking, 2)}"'
             f' fill="{theme["text_primary"]}">{_escape_xml(title_text)}</text>'
         )
-        next_y = text_start_y + title_size * 1.1
+        next_y = text_start_y + title_size * 1.25
         if subtitle:
             lines.append(
                 f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
-                f' text-anchor="middle" font-family="{ff}"'
+                f' text-anchor="middle" font-family="{ff_detail}"'
                 f' font-size="{subtitle_size}" font-weight="300"'
                 f' letter-spacing="{round(subtitle_size * 0.25, 2)}"'
                 f' fill="{theme["text_secondary"]}">{_escape_xml(subtitle)}</text>'
@@ -913,10 +935,19 @@ def _generate_print_svg(
             coord_text = f"{abs(lat):.6f}\u00b0 {lat_dir}  /  {abs(lon):.6f}\u00b0 {lon_dir}"
             lines.append(
                 f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
-                f' text-anchor="middle" font-family="{ff}"'
+                f' text-anchor="middle" font-family="{ff_detail}"'
                 f' font-size="{coord_size}"'
                 f' letter-spacing="{round(coord_size * 0.15, 2)}"'
                 f' fill="{theme["text_secondary"]}">{coord_text}</text>'
+            )
+            next_y += coord_size * 1.8
+        if dedication:
+            lines.append(
+                f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
+                f' text-anchor="middle" font-family="{ff_detail}"'
+                f' font-size="{dedication_size}" font-style="italic"'
+                f' letter-spacing="{round(dedication_size * 0.1, 2)}"'
+                f' fill="{theme["text_secondary"]}">{_escape_xml(dedication)}</text>'
             )
         lines.append("  </g>")
         lines.append("")
@@ -924,23 +955,23 @@ def _generate_print_svg(
         # Classic/vintage: text below the map
         if text_area_h > 0:
             sep_y_ref = round(map_y + map_h + text_area_h * 0.10, 2)
-            text_start_y = round(sep_y_ref + text_area_h * 0.22, 2)
+            text_start_y = round(sep_y_ref + text_area_h * 0.20, 2)
         else:
             text_start_y = round(board_h - font_size_mm * 3, 2)
 
         lines.append('  <g id="poster_text">')
         lines.append(
             f'    <text x="{text_center_x}" y="{round(text_start_y, 2)}"'
-            f' text-anchor="middle" font-family="{ff}"'
+            f' text-anchor="middle" font-family="{ff_title}"'
             f' font-size="{title_size}" font-weight="bold"'
             f' letter-spacing="{round(title_tracking, 2)}"'
             f' fill="{theme["text_primary"]}">{_escape_xml(title_text)}</text>'
         )
-        next_y = text_start_y + title_size * 1.1
+        next_y = text_start_y + title_size * 1.25
         if subtitle:
             lines.append(
                 f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
-                f' text-anchor="middle" font-family="{ff}"'
+                f' text-anchor="middle" font-family="{ff_detail}"'
                 f' font-size="{subtitle_size}" font-weight="300"'
                 f' letter-spacing="{round(subtitle_size * 0.25, 2)}"'
                 f' fill="{theme["text_secondary"]}">{_escape_xml(subtitle)}</text>'
@@ -954,13 +985,27 @@ def _generate_print_svg(
             coord_text = f"{abs(lat):.6f}\u00b0 {lat_dir}  /  {abs(lon):.6f}\u00b0 {lon_dir}"
             lines.append(
                 f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
-                f' text-anchor="middle" font-family="{ff}"'
+                f' text-anchor="middle" font-family="{ff_detail}"'
                 f' font-size="{coord_size}"'
                 f' letter-spacing="{round(coord_size * 0.15, 2)}"'
                 f' fill="{theme["text_secondary"]}">{coord_text}</text>'
             )
+            next_y += coord_size * 1.8
+        if dedication:
+            lines.append(
+                f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
+                f' text-anchor="middle" font-family="{ff_detail}"'
+                f' font-size="{dedication_size}" font-style="italic"'
+                f' letter-spacing="{round(dedication_size * 0.1, 2)}"'
+                f' fill="{theme["text_secondary"]}">{_escape_xml(dedication)}</text>'
+            )
         lines.append("  </g>")
         lines.append("")
+
+    # Geographic map labels (water body names, place names on the map itself)
+    if show_map_labels:
+        _render_map_labels(lines, water_data, location_name, map_x, map_y, map_w, map_h, theme, processed)
+        layer_count += 1
 
     # Close the bleed offset group
     if include_bleed:
@@ -982,6 +1027,139 @@ def _generate_print_svg(
         "path_count": path_count,
         "layer_count": layer_count,
     }
+
+
+def _render_focal_point(
+    lines: list[str],
+    cx: float,
+    cy: float,
+    label: str,
+    theme: dict,
+    map_w: float,
+    map_h: float,
+) -> None:
+    """Render a subtle focal point circle with optional label at a location.
+
+    Draws a thin concentric ring (no fill) to mark a point of interest
+    without overwhelming the map design. Ideal for 'where we met' or
+    'our cottage' style personalized prints.
+    """
+    r_outer = min(map_w, map_h) * 0.025
+    r_inner = r_outer * 0.55
+    stroke_color = theme.get("text_primary", "#1a1a1a")
+
+    lines.append('  <g id="focal_point" opacity="0.7">')
+    # Outer ring
+    lines.append(
+        f'    <circle cx="{round(cx, 2)}" cy="{round(cy, 2)}" r="{round(r_outer, 2)}"'
+        f' fill="none" stroke="{stroke_color}" stroke-width="0.5"/>'
+    )
+    # Inner ring
+    lines.append(
+        f'    <circle cx="{round(cx, 2)}" cy="{round(cy, 2)}" r="{round(r_inner, 2)}"'
+        f' fill="none" stroke="{stroke_color}" stroke-width="0.3"/>'
+    )
+    # Center dot
+    lines.append(
+        f'    <circle cx="{round(cx, 2)}" cy="{round(cy, 2)}" r="{round(r_inner * 0.25, 2)}"'
+        f' fill="{stroke_color}" stroke="none"/>'
+    )
+    # Label to the right of the circle
+    if label:
+        label_size = round(min(map_w, map_h) * 0.022, 2)
+        label_x = round(cx + r_outer * 1.5, 2)
+        label_y = round(cy + label_size * 0.35, 2)
+        map_bg = theme.get("map_bg", "#ffffff")
+        # Halo for readability
+        lines.append(
+            f'    <text x="{label_x}" y="{label_y}"'
+            f' font-family="Arial, Helvetica, sans-serif"'
+            f' font-size="{label_size}" font-weight="bold"'
+            f' fill="none" stroke="{map_bg}" stroke-width="{round(label_size * 0.3, 2)}"'
+            f'>{_escape_xml(label)}</text>'
+        )
+        lines.append(
+            f'    <text x="{label_x}" y="{label_y}"'
+            f' font-family="Arial, Helvetica, sans-serif"'
+            f' font-size="{label_size}" font-weight="bold"'
+            f' fill="{stroke_color}">{_escape_xml(label)}</text>'
+        )
+    lines.append("  </g>")
+
+
+def _render_map_labels(
+    lines: list[str],
+    water_data: dict | None,
+    location_name: str,
+    map_x: float,
+    map_y: float,
+    map_w: float,
+    map_h: float,
+    theme: dict,
+    processed: dict,
+) -> None:
+    """Render minimal geographic labels on the map (water body names, location name).
+
+    Labels are placed with a background halo for readability and use
+    a subtle opacity so they don't overpower the map design.
+    """
+    text_color = theme.get("text_primary", "#1a1a1a")
+    map_bg = theme.get("map_bg", "#ffffff")
+    label_size = round(min(map_w, map_h) * 0.025, 2)
+    small_label_size = round(label_size * 0.8, 2)
+
+    lines.append('  <g id="map_labels" opacity="0.55">')
+
+    placed_labels: list[tuple[float, float]] = []
+
+    # Water body labels — placed at centroid of largest water polygons
+    if water_data:
+        transform = processed.get("transform")
+        water_polys = water_data.get("water_polygons", [])
+
+        # Sort by size (number of coords as proxy) and take top 3
+        named_polys = [(coords, name) for coords, _wt, name in water_polys if name and len(coords) >= 6]
+        named_polys.sort(key=lambda x: len(x[0]), reverse=True)
+
+        for coords, name in named_polys[:3]:
+            board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
+            if not board_coords:
+                continue
+            # Centroid approximation
+            cx = sum(x for x, y in board_coords) / len(board_coords)
+            cy = sum(y for x, y in board_coords) / len(board_coords)
+
+            # Check bounds
+            if cx < map_x or cx > map_x + map_w or cy < map_y or cy > map_y + map_h:
+                continue
+
+            # Check overlap with already placed labels
+            too_close = False
+            for px, py in placed_labels:
+                if math.hypot(cx - px, cy - py) < label_size * 5:
+                    too_close = True
+                    break
+            if too_close:
+                continue
+
+            placed_labels.append((cx, cy))
+
+            # Halo
+            lines.append(
+                f'    <text x="{round(cx, 2)}" y="{round(cy, 2)}"'
+                f' text-anchor="middle" font-family="Georgia, serif"'
+                f' font-size="{small_label_size}" font-style="italic"'
+                f' fill="none" stroke="{map_bg}" stroke-width="{round(small_label_size * 0.35, 2)}"'
+                f'>{_escape_xml(name)}</text>'
+            )
+            lines.append(
+                f'    <text x="{round(cx, 2)}" y="{round(cy, 2)}"'
+                f' text-anchor="middle" font-family="Georgia, serif"'
+                f' font-size="{small_label_size}" font-style="italic"'
+                f' fill="{text_color}">{_escape_xml(name)}</text>'
+            )
+
+    lines.append("  </g>")
 
 
 def _generate_vintage_map_svg(
@@ -1193,7 +1371,7 @@ def _generate_vintage_map_svg(
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
             path_d = _coords_to_open_path(board_coords)
-            width = 0.7 if water_type in ("river", "coastline") else 0.35
+            width = 0.9 if water_type in ("river", "coastline") else 0.45
             lines.append(
                 f'      <path d="{path_d}"'
                 f' fill="none" stroke="{ink_light}" stroke-width="{width}"'
@@ -1277,10 +1455,10 @@ def _generate_vintage_map_svg(
     lines.append("  </g>")  # close map clip
     lines.append("")
 
-    # --- Text area below the map ---
+    # --- Text area below the map (vintage uses slightly smaller title) ---
     text_center_x = round(board_w / 2, 2)
-    title_size = round(font_size_mm * 1.5, 2)
-    subtitle_size = round(font_size_mm * 0.6, 2)
+    title_size = round(font_size_mm * 1.3, 2)
+    subtitle_size = round(font_size_mm * 0.7, 2)
     coord_size = round(font_size_mm * 0.45, 2)
 
     title_text = location_name.upper()
@@ -1741,7 +1919,7 @@ def _render_print_water(lines: list[str], water_data: dict, processed: dict, the
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="{fill}" stroke="{theme["water_stroke"]}"'
-            f' stroke-width="0.5" stroke-linejoin="round"/>'
+            f' stroke-width="0.6" stroke-linejoin="round"/>'
         )
 
     for coords, water_type, name in water_data.get("waterways", []):
@@ -1749,7 +1927,8 @@ def _render_print_water(lines: list[str], water_data: dict, processed: dict, the
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
-        width = 1.0 if water_type in ("river", "coastline") else 0.4
+        # Min 0.5pt for print — rivers get bolder stroke
+        width = 1.2 if water_type in ("river", "coastline") else 0.5
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="none" stroke="{theme["water_stroke"]}" stroke-width="{width}"'

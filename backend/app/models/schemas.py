@@ -194,9 +194,12 @@ class GenerateRequest(BaseModel):
     poster_layout: str = "classic"  # classic, minimal, editorial, bold, vintage
     heart_lat: Optional[float] = Field(None, ge=-90, le=90)
     heart_lon: Optional[float] = Field(None, ge=-180, le=180)
+    # Personalization
+    dedication: str = Field("", max_length=120, description="Personal dedication line, e.g. 'Ashley & Family / Summer 2024'")
     # Professional map elements
     show_compass: bool = False
     show_scale_bar: bool = False
+    show_map_labels: bool = False  # Geographic labels (water body names, place names)
     gradient_water: bool = True  # Use gradient fills for water bodies
     land_shadow: bool = True     # Subtle drop shadow on land mass
     # Print production fields
@@ -232,9 +235,12 @@ class PinGenerateRequest(BaseModel):
     output_mode: str = "print"
     color_theme: str = "classic"
     poster_layout: str = "classic"
+    # Personalization
+    dedication: str = Field("", max_length=120)
     # Professional map elements
     show_compass: bool = False
     show_scale_bar: bool = False
+    show_map_labels: bool = False
     gradient_water: bool = True
     land_shadow: bool = True
     # Print production fields
