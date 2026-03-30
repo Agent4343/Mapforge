@@ -21,15 +21,7 @@ class Settings:
     DATABASE_URL: str = _fixup_db_url(os.getenv("DATABASE_URL", "sqlite+aiosqlite:////tmp/mapforge.db"))
 
     # Auth — SECRET_KEY must be set in production via environment variable
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "")
-    if not SECRET_KEY:
-        import warnings
-        warnings.warn(
-            "SECRET_KEY is not set — using insecure fallback. "
-            "Set SECRET_KEY environment variable in production!",
-            stacklevel=2,
-        )
-        SECRET_KEY = "INSECURE-DEV-KEY-CHANGE-ME"
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "") or "INSECURE-DEV-KEY-CHANGE-ME"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
     ALGORITHM: str = "HS256"
 
