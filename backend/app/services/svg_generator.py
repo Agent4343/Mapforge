@@ -12,6 +12,7 @@ Also retains CNC SVG generation for legacy/internal use.
 import math
 from datetime import datetime, timezone
 
+from app.logging_config import log
 from app.models.schemas import CutStyle
 from app.services.geometry_processor import transform_wgs84_to_board
 
@@ -1172,8 +1173,20 @@ def _generate_vintage_map_svg(
     lines.append("  </g>")
     lines.append("")
 
-    # Geographic scale for filtering features by zoom level
-    geo_extent_mm = max(geo_w, geo_h) if geo_w > 0 else 500
+    # Determine map density for scale-based filtering.
+    # Use total feature count as proxy for geographic scale:
+    #   > 5000 features → province/island (e.g. Cape Breton: ~40K)
+    #   1000-5000       → large region/county
+    #   200-1000        → city
+    #   < 200           → neighbourhood
+    total_water = 0
+    total_roads = 0
+    if water_data:
+        total_water = len(water_data.get("water_polygons", [])) + len(water_data.get("waterways", []))
+    if streets_data:
+        total_roads = len(streets_data.get("major_roads", [])) + len(streets_data.get("minor_roads", []))
+    total_features = total_water + total_roads
+    log.info(f"Vintage map: {total_roads} roads + {total_water} water features = {total_features} total")
 
     # All map content clipped to map area
     lines.append(f'  <g clip-path="url(#map_clip)">')
@@ -1200,7 +1213,8 @@ def _generate_vintage_map_svg(
     lines.append("    </g>")
 
     # Layer 3b: Water features — darker tinted fill for lakes, rivers, bays
-    # At large scale, skip streams to avoid visual clutter (thousands of them)
+    # At large scale (many features), skip streams to avoid visual clutter
+    is_large_scale = total_features > 1000
     if water_data:
         transform = processed.get("transform")
         lines.append('    <g id="water_features">')
@@ -1210,13 +1224,13 @@ def _generate_vintage_map_svg(
             if len(coords) < 3:
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
-            # At province scale, skip tiny ponds (bounding box < 2mm)
-            if geo_extent_mm > 400:
+            # At province/island scale, skip tiny ponds (bounding box < 3mm)
+            if is_large_scale:
                 xs = [p[0] for p in board_coords]
                 ys = [p[1] for p in board_coords]
                 poly_w = max(xs) - min(xs)
                 poly_h = max(ys) - min(ys)
-                if poly_w < 2.0 and poly_h < 2.0:
+                if poly_w < 3.0 and poly_h < 3.0:
                     continue
             path_d = _coords_to_path(board_coords)
             lines.append(
@@ -1226,12 +1240,12 @@ def _generate_vintage_map_svg(
             )
             path_count += 1
 
-        # Waterways: at island/province scale only show rivers, skip streams
+        # Waterways: at large scale only show rivers, skip streams entirely
         for coords, water_type, name in water_data.get("waterways", []):
             if len(coords) < 2:
                 continue
-            # At large scale, only render rivers and coastlines — skip streams
-            if geo_extent_mm > 400 and water_type not in ("river", "coastline"):
+            # At large scale, only render rivers and coastlines — skip streams/canals
+            if is_large_scale and water_type not in ("river", "coastline"):
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
             path_d = _coords_to_open_path(board_coords)
@@ -1252,31 +1266,32 @@ def _generate_vintage_map_svg(
         transform = processed.get("transform")
         lines.append('    <g id="streets">')
 
-        total_roads = len(streets_data.get("major_roads", [])) + len(streets_data.get("minor_roads", []))
-
-        # Scale categories (rough real-world equivalents):
-        #   > 600mm geo → province/island scale (e.g. Cape Breton ~130km)
-        #   300-600mm   → large region/county
-        #   150-300mm   → city scale
-        #   < 150mm     → neighbourhood/community
-        if geo_extent_mm > 600:
+        # Filter roads based on total feature density:
+        #   > 5000 → province/island (Cape Breton: ~40K features)
+        #   1000-5000 → large region
+        #   200-1000  → city
+        #   < 200     → neighbourhood
+        if total_features > 5000:
             # Province/island: only highways, trunk, primary, secondary
             skip_classes = {"tertiary", "tertiary_link",
                            "residential", "unclassified", "living_street", "service",
                            "track", "pedestrian", "footway", "cycleway", "path",
                            "steps", "bridleway"}
-        elif geo_extent_mm > 300:
-            # Large region: major + tertiary + residential
-            skip_classes = {"service", "track", "pedestrian", "footway", "cycleway",
-                           "path", "steps", "bridleway"}
-        elif geo_extent_mm > 150:
-            # City: skip only trails/footpaths
-            skip_classes = {"pedestrian", "footway", "cycleway", "path", "steps", "bridleway"}
+        elif total_features > 1000:
+            # Large region: add tertiary, skip small stuff
+            skip_classes = {"residential", "unclassified", "living_street", "service",
+                           "track", "pedestrian", "footway", "cycleway", "path",
+                           "steps", "bridleway"}
+        elif total_features > 200:
+            # City: skip trails/footpaths/tracks
+            skip_classes = {"track", "pedestrian", "footway", "cycleway", "path", "steps", "bridleway"}
         else:
             # Neighbourhood: show everything
             skip_classes = set()
 
-        is_sparse = total_roads < 120
+        log.info(f"Vintage streets: skipping {skip_classes} (total_features={total_features})")
+
+        is_sparse = total_features < 200
 
         # Width table — sparse maps get thicker lines for visual impact
         if is_sparse:
