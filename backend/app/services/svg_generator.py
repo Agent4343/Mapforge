@@ -1000,24 +1000,166 @@ def _generate_vintage_map_svg(
 ) -> dict:
     """Generate a clean modern map poster — Mapiful/Grafomap style.
 
-    White background, black street lines creating rich texture,
-    light gray water, clean triple-line border, bold typography.
+    Uses intelligent location analysis to auto-tune rendering:
+    - Detects location type (island, coastal city, inland city, rural)
+    - Adjusts stroke widths, filtering, and water emphasis accordingly
+    - Optimizes compass placement to avoid overlapping dense areas
     """
     board_w, board_h = processed["board_mm"]
     polygons = processed["polygons"]
     latlon = center_latlon or processed.get("center_latlon", (0, 0))
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # Clean monochrome palette — black ink on white
-    ink = "#1a1a1a"          # Near-black for major roads
-    ink_light = "#333333"    # Dark gray for minor roads
-    ink_faint = "#555555"    # Medium gray for trails/paths
-    bg = "#ffffff"           # Pure white background
-    water_fill = "#e8e8e8"   # Light gray for water bodies
-    water_ocean = "#f0f0f0"  # Very light gray ocean
-    coast_stroke = "#333333"  # Gray coastline
-    border_color = "#1a1a1a"  # Black border
-    separator_color = "#999999"  # Gray separator
+    # ── Intelligent Location Analysis ──────────────────────────────
+    # Analyze the geographic data to determine what kind of place this
+    # is and how to render it for maximum visual impact.
+
+    total_water = 0
+    total_roads = 0
+    has_coastline = False
+    total_waterways = 0
+    total_water_polys = 0
+    if water_data:
+        total_water_polys = len(water_data.get("water_polygons", []))
+        total_waterways = len(water_data.get("waterways", []))
+        total_water = total_water_polys + total_waterways
+        # Check if any waterways are coastlines
+        for _, wtype, _ in water_data.get("waterways", []):
+            if wtype == "coastline":
+                has_coastline = True
+                break
+    if streets_data:
+        total_roads = len(streets_data.get("major_roads", [])) + len(streets_data.get("minor_roads", []))
+    total_features = total_water + total_roads
+
+    # Calculate land coverage ratio (how much of the map is land vs water)
+    land_area_px = 0
+    map_area_px = board_w * board_h
+    for exterior, _ in polygons:
+        if len(exterior) >= 3:
+            # Shoelace formula for polygon area
+            area = 0
+            n = len(exterior)
+            for i in range(n):
+                j = (i + 1) % n
+                area += exterior[i][0] * exterior[j][1]
+                area -= exterior[j][0] * exterior[i][1]
+            land_area_px += abs(area) / 2
+    land_ratio = land_area_px / map_area_px if map_area_px > 0 else 0.5
+
+    # Classify the location
+    # island: has coastline AND significant water around it (land < 70% of map)
+    # coastal: has coastline but mostly land (land > 70%)
+    # water_rich: lots of lakes/rivers (>30% of features are water) but no coast
+    # urban_dense: many roads (>500) with low water
+    # rural: few features overall
+    is_island = has_coastline and land_ratio < 0.70
+    is_coastal = has_coastline and land_ratio >= 0.70
+    is_water_rich = not has_coastline and total_water > total_features * 0.3
+    is_urban = total_roads > 500
+    is_rural = total_features < 200
+
+    location_type = "urban"
+    if is_island:
+        location_type = "island"
+    elif is_coastal:
+        location_type = "coastal"
+    elif is_rural:
+        location_type = "rural"
+    elif is_water_rich:
+        location_type = "water_rich"
+
+    log.info(
+        f"Vintage map analysis: type={location_type}, "
+        f"features={total_features} (roads={total_roads}, water={total_water}), "
+        f"land_ratio={land_ratio:.1%}, coastline={has_coastline}"
+    )
+
+    # ── Adaptive Rendering Parameters ──────────────────────────────
+    # Tune colors, strokes, and layout based on location type.
+
+    # Base monochrome palette
+    ink = "#1a1a1a"
+    ink_light = "#333333"
+    ink_faint = "#555555"
+    bg = "#ffffff"
+    border_color = "#1a1a1a"
+    separator_color = "#999999"
+
+    # Water colors: emphasize water more for islands and coastal areas
+    if is_island:
+        water_fill = "#dcdcdc"    # Slightly darker gray — water is a key feature
+        water_ocean = "#e8e8e8"   # Visible ocean surrounding the island
+        coast_stroke = "#1a1a1a"  # Strong coastline — it defines the shape
+    elif is_coastal or is_water_rich:
+        water_fill = "#e2e2e2"    # Medium gray for prominent water features
+        water_ocean = "#ececec"   # Noticeable ocean
+        coast_stroke = "#2a2a2a"  # Bold coast
+    else:
+        water_fill = "#e8e8e8"    # Standard light gray
+        water_ocean = "#f0f0f0"   # Very subtle
+        coast_stroke = "#333333"  # Standard
+
+    # Coastline width: thinner for large maps to avoid visual dominance
+    if total_features > 2000:
+        coast_width = 0.2   # Province/island: thin, refined
+    elif total_features > 500:
+        coast_width = 0.35  # City: moderate
+    else:
+        coast_width = 0.5   # Small area: bolder for definition
+
+    # Road filtering: show more streets in urban areas for dense texture
+    if total_features > 5000:
+        skip_classes = {"residential", "unclassified", "living_street", "service",
+                       "track", "pedestrian", "footway", "cycleway", "path",
+                       "steps", "bridleway"}
+    elif total_features > 2000:
+        skip_classes = {"track", "pedestrian", "footway", "cycleway", "path", "steps", "bridleway"}
+    else:
+        skip_classes = set()  # Show everything for maximum texture
+
+    # Road widths: scale based on density
+    if is_rural or total_features < 200:
+        road_widths = {
+            "motorway": 1.6, "motorway_link": 1.2,
+            "trunk": 1.4, "trunk_link": 1.0,
+            "primary": 1.2, "primary_link": 0.9,
+            "secondary": 0.9, "secondary_link": 0.7,
+            "tertiary": 0.6, "tertiary_link": 0.5,
+            "residential": 0.4, "unclassified": 0.4,
+            "living_street": 0.4, "service": 0.3, "track": 0.2,
+            "pedestrian": 0.15, "footway": 0.12, "cycleway": 0.12,
+            "path": 0.12, "steps": 0.1, "bridleway": 0.12,
+        }
+    elif total_features > 2000:
+        # Dense: thinner lines so they don't blob together
+        road_widths = {
+            "motorway": 0.9, "motorway_link": 0.65,
+            "trunk": 0.8, "trunk_link": 0.6,
+            "primary": 0.65, "primary_link": 0.5,
+            "secondary": 0.5, "secondary_link": 0.35,
+            "tertiary": 0.3, "tertiary_link": 0.2,
+            "residential": 0.15, "unclassified": 0.15,
+            "living_street": 0.15, "service": 0.1, "track": 0.08,
+            "pedestrian": 0.06, "footway": 0.05, "cycleway": 0.05,
+            "path": 0.05, "steps": 0.04, "bridleway": 0.05,
+        }
+    else:
+        road_widths = {
+            "motorway": 1.1, "motorway_link": 0.8,
+            "trunk": 1.0, "trunk_link": 0.7,
+            "primary": 0.8, "primary_link": 0.6,
+            "secondary": 0.6, "secondary_link": 0.45,
+            "tertiary": 0.35, "tertiary_link": 0.25,
+            "residential": 0.18, "unclassified": 0.18,
+            "living_street": 0.18, "service": 0.12, "track": 0.1,
+            "pedestrian": 0.08, "footway": 0.06, "cycleway": 0.06,
+            "path": 0.06, "steps": 0.05, "bridleway": 0.06,
+        }
+
+    # Compass: smaller for dense maps, positioned to avoid coverage
+    compass_size_pct = 0.045 if total_features > 1000 else 0.055
+    show_compass_auto = show_compass  # Respect user's choice
 
     # Layout: text at bottom (15% of height), generous margins
     margin = round(board_w * 0.06, 2)
@@ -1092,7 +1234,7 @@ def _generate_vintage_map_svg(
         f' width="{svg_w}mm" height="{svg_h}mm"'
         f' viewBox="0 0 {svg_w} {svg_h}">'
     )
-    lines.append(f"  <!-- MapForge Vintage Map v1.0 -->")
+    lines.append(f"  <!-- MapForge Map Poster v2.0 | type={location_type} -->")
     lines.append(f"  <!-- Location: {_escape_xml(location_name)} -->")
     lines.append("  <!-- Geographic data: © OpenStreetMap contributors (ODbL) -->")
     lines.append(f"  <!-- Generated: {timestamp} -->")
@@ -1138,29 +1280,13 @@ def _generate_vintage_map_svg(
     lines.append("  </g>")
     lines.append("")
 
-    # Determine map density for scale-based filtering.
-    # Use total feature count as proxy for geographic scale:
-    #   > 5000 features → province/island (e.g. Cape Breton: ~40K)
-    #   1000-5000       → large region/county
-    #   200-1000        → city
-    #   < 200           → neighbourhood
-    total_water = 0
-    total_roads = 0
-    if water_data:
-        total_water = len(water_data.get("water_polygons", [])) + len(water_data.get("waterways", []))
-    if streets_data:
-        total_roads = len(streets_data.get("major_roads", [])) + len(streets_data.get("minor_roads", []))
-    total_features = total_water + total_roads
-    log.info(f"Vintage map: {total_roads} roads + {total_water} water features = {total_features} total")
-
     # All map content clipped to map area
     lines.append(f'  <g clip-path="url(#map_clip)">')
 
-    # Layer 2.5: Ocean background — light gray
+    # Ocean background
     lines.append(f'    <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}" fill="{water_ocean}"/>')
 
-    # Layer 3a: Land polygons — white fill, coastline scales with map density
-    coast_width = 0.25 if total_features > 1000 else 0.4
+    # Land polygons — white fill, adaptive coastline
     lines.append('    <g id="land_mass">')
     for exterior, holes in polygons:
         if len(exterior) < 3:
@@ -1177,7 +1303,7 @@ def _generate_vintage_map_svg(
         path_count += 1
     lines.append("    </g>")
 
-    # Layer 3b: Water features — clean gray fill
+    # Water features — clean gray fill, filtering based on analysis
     is_large_scale = total_features > 1000
     if water_data:
         transform = processed.get("transform")
@@ -1215,65 +1341,18 @@ def _generate_vintage_map_svg(
             path_count += 1
         lines.append("    </g>")
 
-    # Layer 4: Streets — monochrome line art
-    # Filter road classes based on geographic scale to avoid visual clutter.
-    # Large areas (provinces, islands) show only major roads; small areas
-    # (cities, communities) show all streets down to footpaths.
+    # Streets — rendered using analysis-driven widths and filtering
     if streets_data:
         transform = processed.get("transform")
         lines.append('    <g id="streets">')
 
-        # Scale-based filtering: only filter at very large (province) scale.
-        # Cities should show ALL streets for that dense texture.
-        if total_features > 5000:
-            # Province/island: show down to tertiary
-            skip_classes = {"residential", "unclassified", "living_street", "service",
-                           "track", "pedestrian", "footway", "cycleway", "path",
-                           "steps", "bridleway"}
-        elif total_features > 2000:
-            # Large region: skip only trails
-            skip_classes = {"track", "pedestrian", "footway", "cycleway", "path", "steps", "bridleway"}
-        else:
-            # City/neighbourhood: show everything for dense texture
-            skip_classes = set()
-
-        log.info(f"Vintage streets: skipping {skip_classes} (total_features={total_features})")
-
-        is_sparse = total_features < 200
-
-        # Width table — clear hierarchy: major roads bold, minor roads thin
-        if is_sparse:
-            vintage_widths = {
-                "motorway": 1.6, "motorway_link": 1.2,
-                "trunk": 1.4, "trunk_link": 1.0,
-                "primary": 1.2, "primary_link": 0.9,
-                "secondary": 0.9, "secondary_link": 0.7,
-                "tertiary": 0.6, "tertiary_link": 0.5,
-                "residential": 0.4, "unclassified": 0.4,
-                "living_street": 0.4, "service": 0.3, "track": 0.2,
-                "pedestrian": 0.15, "footway": 0.12, "cycleway": 0.12,
-                "path": 0.12, "steps": 0.1, "bridleway": 0.12,
-            }
-        else:
-            vintage_widths = {
-                "motorway": 1.1, "motorway_link": 0.8,
-                "trunk": 1.0, "trunk_link": 0.7,
-                "primary": 0.8, "primary_link": 0.6,
-                "secondary": 0.6, "secondary_link": 0.45,
-                "tertiary": 0.35, "tertiary_link": 0.25,
-                "residential": 0.18, "unclassified": 0.18,
-                "living_street": 0.18, "service": 0.12, "track": 0.1,
-                "pedestrian": 0.08, "footway": 0.06, "cycleway": 0.06,
-                "path": 0.06, "steps": 0.05, "bridleway": 0.06,
-            }
-
-        # Draw roads — minor first, major on top; skip classes too small for this scale
+        # Minor roads first (drawn underneath major roads)
         for coords, road_class, _width, name in streets_data.get("minor_roads", []):
             if len(coords) < 2 or road_class in skip_classes:
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
             path_d = _coords_to_open_path(board_coords)
-            w = vintage_widths.get(road_class, 0.15)
+            w = road_widths.get(road_class, 0.15)
             color = ink_faint if road_class in ("footway", "cycleway", "path", "steps", "bridleway") else ink_light
             lines.append(
                 f'      <path d="{path_d}"'
@@ -1287,7 +1366,7 @@ def _generate_vintage_map_svg(
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
             path_d = _coords_to_open_path(board_coords)
-            w = vintage_widths.get(road_class, 0.5)
+            w = road_widths.get(road_class, 0.5)
             lines.append(
                 f'      <path d="{path_d}"'
                 f' fill="none" stroke="{ink}" stroke-width="{w}"'
@@ -1297,9 +1376,10 @@ def _generate_vintage_map_svg(
 
         lines.append("    </g>")
 
-    # Vintage compass rose (bottom-right, smaller)
-    if show_compass:
-        _add_vintage_compass(lines, map_x, map_y, map_w, map_h, ink, ink_light)
+    # Compass rose — size driven by analysis
+    if show_compass_auto:
+        _add_vintage_compass(lines, map_x, map_y, map_w, map_h, ink, ink_light,
+                             size_pct=compass_size_pct)
 
     lines.append("  </g>")  # close map clip
     lines.append("")
@@ -1386,9 +1466,10 @@ def _add_vintage_compass(
     map_h: float,
     ink: str,
     ink_light: str,
+    size_pct: float = 0.055,
 ) -> None:
     """Add a clean compass rose."""
-    size = min(map_w, map_h) * 0.055
+    size = min(map_w, map_h) * size_pct
     cx = round(map_x + map_w - size * 2.5, 2)
     cy = round(map_y + map_h - size * 2.5, 2)
     r = lambda v: round(v, 2)
