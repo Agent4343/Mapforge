@@ -1172,6 +1172,9 @@ def _generate_vintage_map_svg(
     lines.append("  </g>")
     lines.append("")
 
+    # Geographic scale for filtering features by zoom level
+    geo_extent_mm = max(geo_w, geo_h) if geo_w > 0 else 500
+
     # All map content clipped to map area
     lines.append(f'  <g clip-path="url(#map_clip)">')
 
@@ -1197,13 +1200,24 @@ def _generate_vintage_map_svg(
     lines.append("    </g>")
 
     # Layer 3b: Water features — darker tinted fill for lakes, rivers, bays
+    # At large scale, skip streams to avoid visual clutter (thousands of them)
     if water_data:
         transform = processed.get("transform")
         lines.append('    <g id="water_features">')
+
+        # Filter small water polygons at large scale
         for coords, water_type, name in water_data.get("water_polygons", []):
             if len(coords) < 3:
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
+            # At province scale, skip tiny ponds (bounding box < 2mm)
+            if geo_extent_mm > 400:
+                xs = [p[0] for p in board_coords]
+                ys = [p[1] for p in board_coords]
+                poly_w = max(xs) - min(xs)
+                poly_h = max(ys) - min(ys)
+                if poly_w < 2.0 and poly_h < 2.0:
+                    continue
             path_d = _coords_to_path(board_coords)
             lines.append(
                 f'      <path d="{path_d}"'
@@ -1211,8 +1225,13 @@ def _generate_vintage_map_svg(
                 f' stroke-linejoin="round"/>'
             )
             path_count += 1
+
+        # Waterways: at island/province scale only show rivers, skip streams
         for coords, water_type, name in water_data.get("waterways", []):
             if len(coords) < 2:
+                continue
+            # At large scale, only render rivers and coastlines — skip streams
+            if geo_extent_mm > 400 and water_type not in ("river", "coastline"):
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
             path_d = _coords_to_open_path(board_coords)
@@ -1235,25 +1254,24 @@ def _generate_vintage_map_svg(
 
         total_roads = len(streets_data.get("major_roads", [])) + len(streets_data.get("minor_roads", []))
 
-        # Determine geographic scale from geometry extent (in mm at board scale)
-        geo_extent_mm = max(geo_w, geo_h) if geo_w > 0 else 500
         # Scale categories (rough real-world equivalents):
-        #   > 800mm geo → province/island scale (e.g. Cape Breton ~130km)
-        #   400-800mm   → large region/county
-        #   200-400mm   → city scale
-        #   < 200mm     → neighbourhood/community
-        if geo_extent_mm > 800:
-            # Province/island: only highways and primary roads
-            skip_classes = {"residential", "unclassified", "living_street", "service",
+        #   > 600mm geo → province/island scale (e.g. Cape Breton ~130km)
+        #   300-600mm   → large region/county
+        #   150-300mm   → city scale
+        #   < 150mm     → neighbourhood/community
+        if geo_extent_mm > 600:
+            # Province/island: only highways, trunk, primary, secondary
+            skip_classes = {"tertiary", "tertiary_link",
+                           "residential", "unclassified", "living_street", "service",
                            "track", "pedestrian", "footway", "cycleway", "path",
                            "steps", "bridleway"}
-        elif geo_extent_mm > 400:
-            # Large region: skip footpaths and tracks
+        elif geo_extent_mm > 300:
+            # Large region: major + tertiary + residential
             skip_classes = {"service", "track", "pedestrian", "footway", "cycleway",
                            "path", "steps", "bridleway"}
-        elif geo_extent_mm > 200:
+        elif geo_extent_mm > 150:
             # City: skip only trails/footpaths
-            skip_classes = {"footway", "cycleway", "path", "steps", "bridleway"}
+            skip_classes = {"pedestrian", "footway", "cycleway", "path", "steps", "bridleway"}
         else:
             # Neighbourhood: show everything
             skip_classes = set()
