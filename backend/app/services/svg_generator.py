@@ -1159,7 +1159,8 @@ def _generate_vintage_map_svg(
     # Layer 2.5: Ocean background — light gray
     lines.append(f'    <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}" fill="{water_ocean}"/>')
 
-    # Layer 3a: Land polygons — white fill, thin gray coastline
+    # Layer 3a: Land polygons — white fill, coastline scales with map density
+    coast_width = 0.25 if total_features > 1000 else 0.4
     lines.append('    <g id="land_mass">')
     for exterior, holes in polygons:
         if len(exterior) < 3:
@@ -1170,7 +1171,7 @@ def _generate_vintage_map_svg(
                 path_d += " " + _coords_to_path(hole)
         lines.append(
             f'      <path d="{path_d}" fill="{bg}"'
-            f' stroke="{coast_stroke}" stroke-width="0.4"'
+            f' stroke="{coast_stroke}" stroke-width="{coast_width}"'
             f' stroke-linejoin="round"/>'
         )
         path_count += 1
@@ -1386,10 +1387,10 @@ def _add_vintage_compass(
     ink: str,
     ink_light: str,
 ) -> None:
-    """Add an ornate vintage-style compass rose — large and detailed."""
-    size = min(map_w, map_h) * 0.09
-    cx = round(map_x + map_w - size * 2.2, 2)
-    cy = round(map_y + map_h - size * 2.2, 2)
+    """Add a clean compass rose."""
+    size = min(map_w, map_h) * 0.055
+    cx = round(map_x + map_w - size * 2.5, 2)
+    cy = round(map_y + map_h - size * 2.5, 2)
     r = lambda v: round(v, 2)
 
     lines.append(f'    <g id="compass_rose" opacity="0.70">')
