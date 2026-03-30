@@ -1225,16 +1225,42 @@ def _generate_vintage_map_svg(
             path_count += 1
         lines.append("    </g>")
 
-    # Layer 4: Streets — bold monochrome line art, ALL roads visible
-    # Auto-detect sparse maps and boost widths accordingly
+    # Layer 4: Streets — monochrome line art
+    # Filter road classes based on geographic scale to avoid visual clutter.
+    # Large areas (provinces, islands) show only major roads; small areas
+    # (cities, communities) show all streets down to footpaths.
     if streets_data:
         transform = processed.get("transform")
         lines.append('    <g id="streets">')
 
         total_roads = len(streets_data.get("major_roads", [])) + len(streets_data.get("minor_roads", []))
+
+        # Determine geographic scale from geometry extent (in mm at board scale)
+        geo_extent_mm = max(geo_w, geo_h) if geo_w > 0 else 500
+        # Scale categories (rough real-world equivalents):
+        #   > 800mm geo → province/island scale (e.g. Cape Breton ~130km)
+        #   400-800mm   → large region/county
+        #   200-400mm   → city scale
+        #   < 200mm     → neighbourhood/community
+        if geo_extent_mm > 800:
+            # Province/island: only highways and primary roads
+            skip_classes = {"residential", "unclassified", "living_street", "service",
+                           "track", "pedestrian", "footway", "cycleway", "path",
+                           "steps", "bridleway"}
+        elif geo_extent_mm > 400:
+            # Large region: skip footpaths and tracks
+            skip_classes = {"service", "track", "pedestrian", "footway", "cycleway",
+                           "path", "steps", "bridleway"}
+        elif geo_extent_mm > 200:
+            # City: skip only trails/footpaths
+            skip_classes = {"footway", "cycleway", "path", "steps", "bridleway"}
+        else:
+            # Neighbourhood: show everything
+            skip_classes = set()
+
         is_sparse = total_roads < 120
 
-        # Width table — sparse maps get ~2.5x thicker lines for visual impact
+        # Width table — sparse maps get thicker lines for visual impact
         if is_sparse:
             vintage_widths = {
                 "motorway": 2.2, "motorway_link": 1.6,
@@ -1260,9 +1286,9 @@ def _generate_vintage_map_svg(
                 "path": 0.12, "steps": 0.1, "bridleway": 0.12,
             }
 
-        # Draw all roads — minor first, major on top
+        # Draw roads — minor first, major on top; skip classes too small for this scale
         for coords, road_class, _width, name in streets_data.get("minor_roads", []):
-            if len(coords) < 2:
+            if len(coords) < 2 or road_class in skip_classes:
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
             path_d = _coords_to_open_path(board_coords)
@@ -1276,7 +1302,7 @@ def _generate_vintage_map_svg(
             path_count += 1
 
         for coords, road_class, _width, name in streets_data.get("major_roads", []):
-            if len(coords) < 2:
+            if len(coords) < 2 or road_class in skip_classes:
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
             path_d = _coords_to_open_path(board_coords)
