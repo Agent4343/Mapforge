@@ -1108,17 +1108,22 @@ def _generate_vintage_map_svg(
     else:
         coast_width = 0.5   # Small area: bolder for definition
 
-    # Road filtering: show more streets in urban areas for dense texture
-    if total_features > 5000:
-        skip_classes = {"residential", "unclassified", "living_street", "service",
-                       "track", "pedestrian", "footway", "cycleway", "path",
-                       "steps", "bridleway"}
-    elif total_features > 2000:
-        skip_classes = {"track", "pedestrian", "footway", "cycleway", "path", "steps", "bridleway"}
+    # Road filtering: residential streets create the dense texture that sells.
+    # Only filter non-road features (paths, tracks) at high density.
+    if total_features > 10000:
+        # Very large province: show down to residential, skip service/trails
+        skip_classes = {"service", "track", "pedestrian", "footway",
+                       "cycleway", "path", "steps", "bridleway"}
+    elif total_features > 5000:
+        # Large area: skip only pedestrian trails
+        skip_classes = {"track", "pedestrian", "footway", "cycleway",
+                       "path", "steps", "bridleway"}
     else:
         skip_classes = set()  # Show everything for maximum texture
 
     # Road widths: scale based on density
+    # Key insight: residential streets at thin widths create the dense
+    # Mapiful texture that sells. Major roads should be clearly bolder.
     if is_rural or total_features < 200:
         road_widths = {
             "motorway": 1.6, "motorway_link": 1.2,
@@ -1131,18 +1136,31 @@ def _generate_vintage_map_svg(
             "pedestrian": 0.15, "footway": 0.12, "cycleway": 0.12,
             "path": 0.12, "steps": 0.1, "bridleway": 0.12,
         }
+    elif total_features > 5000:
+        # Very dense: ultra-thin residential for texture, bold highways
+        road_widths = {
+            "motorway": 1.0, "motorway_link": 0.7,
+            "trunk": 0.9, "trunk_link": 0.6,
+            "primary": 0.7, "primary_link": 0.5,
+            "secondary": 0.5, "secondary_link": 0.35,
+            "tertiary": 0.25, "tertiary_link": 0.18,
+            "residential": 0.10, "unclassified": 0.10,
+            "living_street": 0.10, "service": 0.08, "track": 0.06,
+            "pedestrian": 0.05, "footway": 0.04, "cycleway": 0.04,
+            "path": 0.04, "steps": 0.03, "bridleway": 0.04,
+        }
     elif total_features > 2000:
-        # Dense: thinner lines so they don't blob together
+        # Dense city: thin residential, clear highway hierarchy
         road_widths = {
             "motorway": 0.9, "motorway_link": 0.65,
             "trunk": 0.8, "trunk_link": 0.6,
             "primary": 0.65, "primary_link": 0.5,
             "secondary": 0.5, "secondary_link": 0.35,
             "tertiary": 0.3, "tertiary_link": 0.2,
-            "residential": 0.15, "unclassified": 0.15,
-            "living_street": 0.15, "service": 0.1, "track": 0.08,
-            "pedestrian": 0.06, "footway": 0.05, "cycleway": 0.05,
-            "path": 0.05, "steps": 0.04, "bridleway": 0.05,
+            "residential": 0.12, "unclassified": 0.12,
+            "living_street": 0.12, "service": 0.08, "track": 0.06,
+            "pedestrian": 0.05, "footway": 0.04, "cycleway": 0.04,
+            "path": 0.04, "steps": 0.03, "bridleway": 0.04,
         }
     else:
         road_widths = {
@@ -1435,7 +1453,7 @@ def _generate_vintage_map_svg(
             f' text-anchor="middle" font-family="{ff}"'
             f' font-size="{coord_size}"'
             f' letter-spacing="{round(coord_size * 0.15, 2)}"'
-            f' fill="{separator_color}">{coord_text}</text>'
+            f' fill="{ink_light}">{coord_text}</text>'
         )
     lines.append("  </g>")
     lines.append("")
