@@ -1009,18 +1009,19 @@ def _generate_vintage_map_svg(
     latlon = center_latlon or processed.get("center_latlon", (0, 0))
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # Vintage color palette — rich monochrome ink on warm parchment
-    ink = "#1a1208"          # Deep brown-black ink
-    ink_light = "#34281a"    # Medium ink for secondary features
-    ink_faint = "#4a3c2a"    # Faint ink for detail roads
-    parchment = "#f0e8d0"   # Light warm parchment base
-    parchment_mid = "#e4d8bc" # Mid-tone for subtle variation
-    parchment_edge = "#c8b898"  # Gentle edge darkening
-    water_fill = "#d8ccac"  # Lake/river fill — subtle tint darker than land
-    water_ocean = "#ddd0b0"  # Ocean background — just slightly darker than parchment
-    coast_stroke = "#2a1e10"  # Bold coastline stroke
-    border_color = "#2a1e10"  # Border line color
-    separator_color = "#8a7a58"  # Decorative line separator
+    # Vintage color palette — soft muted brown ink on light parchment
+    # Inspired by premium Etsy map prints: thin delicate lines, warm tones
+    ink = "#3d3225"          # Warm dark brown (NOT black)
+    ink_light = "#5a4e3c"    # Medium brown for secondary features
+    ink_faint = "#7a6e5c"    # Light brown for minor detail
+    parchment = "#f5f0e4"   # Very light warm cream
+    parchment_mid = "#ece5d5" # Subtle mid-tone
+    parchment_edge = "#ddd4c0"  # Gentle edge
+    water_fill = "#e5dece"  # Lakes — barely darker than land
+    water_ocean = "#ebe4d4"  # Ocean — very subtle warm tint
+    coast_stroke = "#5a4e3c"  # Medium brown coastline (not black)
+    border_color = "#3d3225"  # Border matches ink
+    separator_color = "#9a8e78"  # Soft brown separator
 
     # Layout: text at bottom (12% of height), map fills more space
     margin = round(board_w * 0.05, 2)
@@ -1177,23 +1178,23 @@ def _generate_vintage_map_svg(
     b_mid = round(margin * 0.60, 2)
     b_inner = round(margin * 0.75, 2)
     lines.append('  <g id="decorative_border">')
-    # Outer bold line
+    # Outer line
     lines.append(
         f'    <rect x="{b_outer}" y="{b_outer}"'
         f' width="{round(board_w - 2 * b_outer, 2)}" height="{round(board_h - 2 * b_outer, 2)}"'
-        f' fill="none" stroke="{border_color}" stroke-width="0.9"/>'
+        f' fill="none" stroke="{border_color}" stroke-width="0.5"/>'
     )
-    # Middle thin line
+    # Middle hairline
     lines.append(
         f'    <rect x="{b_mid}" y="{b_mid}"'
         f' width="{round(board_w - 2 * b_mid, 2)}" height="{round(board_h - 2 * b_mid, 2)}"'
-        f' fill="none" stroke="{border_color}" stroke-width="0.25"/>'
+        f' fill="none" stroke="{border_color}" stroke-width="0.15"/>'
     )
-    # Inner bold line
+    # Inner line
     lines.append(
         f'    <rect x="{b_inner}" y="{b_inner}"'
         f' width="{round(board_w - 2 * b_inner, 2)}" height="{round(board_h - 2 * b_inner, 2)}"'
-        f' fill="none" stroke="{border_color}" stroke-width="0.6"/>'
+        f' fill="none" stroke="{border_color}" stroke-width="0.35"/>'
     )
     # Corner ornaments — small diamond at each corner where lines meet
     corner_size = round(margin * 0.12, 2)
@@ -1231,21 +1232,10 @@ def _generate_vintage_map_svg(
     # All map content clipped to map area
     lines.append(f'  <g clip-path="url(#map_clip)">')
 
-    # Layer 2.5: Ocean background — subtle warm tint, lighter than before
+    # Layer 2.5: Ocean background — very subtle warm tint
     lines.append(f'    <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}" fill="{water_ocean}"/>')
 
-    # Layer 3a: Land polygons with very subtle drop shadow for depth
-    shadow_offset = round(min(map_w, map_h) * 0.003, 2)
-    lines.append(f'    <g id="land_shadow" opacity="0.08">')
-    for exterior, holes in polygons:
-        if len(exterior) < 3:
-            continue
-        shadow_ext = [(round(x + shadow_offset, 2), round(y + shadow_offset, 2)) for x, y in exterior]
-        path_d = _coords_to_path(shadow_ext)
-        lines.append(f'      <path d="{path_d}" fill="#2a1e10" stroke="none"/>')
-    lines.append("    </g>")
-
-    # Land fill
+    # Layer 3a: Land polygons — clean fill with thin coastline
     lines.append('    <g id="land_mass">')
     for exterior, holes in polygons:
         if len(exterior) < 3:
@@ -1256,7 +1246,7 @@ def _generate_vintage_map_svg(
                 path_d += " " + _coords_to_path(hole)
         lines.append(
             f'      <path d="{path_d}" fill="{parchment}"'
-            f' stroke="{coast_stroke}" stroke-width="0.8"'
+            f' stroke="{coast_stroke}" stroke-width="0.5"'
             f' stroke-linejoin="round"/>'
         )
         path_count += 1
@@ -1281,13 +1271,13 @@ def _generate_vintage_map_svg(
                 if poly_w < 3.0 and poly_h < 3.0:
                     continue
             path_d = _coords_to_path(board_coords)
-            # Solid fill
+            # Subtle fill with thin stroke
             lines.append(
                 f'      <path d="{path_d}"'
-                f' fill="{water_fill}" stroke="{ink_light}" stroke-width="0.5"'
+                f' fill="{water_fill}" stroke="{ink_faint}" stroke-width="0.3"'
                 f' stroke-linejoin="round"/>'
             )
-            # Hatch overlay for engraved texture
+            # Fine hatch overlay
             lines.append(
                 f'      <path d="{path_d}"'
                 f' fill="url(#water_hatch)" stroke="none"/>'
@@ -1302,10 +1292,10 @@ def _generate_vintage_map_svg(
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
             path_d = _coords_to_open_path(board_coords)
-            width = 1.2 if water_type in ("river", "coastline") else 0.5
+            width = 0.6 if water_type in ("river", "coastline") else 0.3
             lines.append(
                 f'      <path d="{path_d}"'
-                f' fill="none" stroke="{ink_light}" stroke-width="{width}"'
+                f' fill="none" stroke="{ink_faint}" stroke-width="{width}"'
                 f' stroke-linecap="round" stroke-linejoin="round"/>'
             )
             path_count += 1
@@ -1346,30 +1336,30 @@ def _generate_vintage_map_svg(
 
         is_sparse = total_features < 200
 
-        # Width table — sparse maps get thicker lines for visual impact
+        # Width table — thin delicate lines for premium look
         if is_sparse:
             vintage_widths = {
-                "motorway": 2.2, "motorway_link": 1.6,
-                "trunk": 2.0, "trunk_link": 1.4,
-                "primary": 1.8, "primary_link": 1.2,
-                "secondary": 1.3, "secondary_link": 1.0,
-                "tertiary": 0.9, "tertiary_link": 0.7,
-                "residential": 0.6, "unclassified": 0.6,
-                "living_street": 0.6, "service": 0.45, "track": 0.35,
-                "pedestrian": 0.3, "footway": 0.2, "cycleway": 0.2,
-                "path": 0.2, "steps": 0.15, "bridleway": 0.2,
+                "motorway": 1.2, "motorway_link": 0.9,
+                "trunk": 1.0, "trunk_link": 0.8,
+                "primary": 0.9, "primary_link": 0.7,
+                "secondary": 0.7, "secondary_link": 0.5,
+                "tertiary": 0.5, "tertiary_link": 0.4,
+                "residential": 0.35, "unclassified": 0.35,
+                "living_street": 0.35, "service": 0.25, "track": 0.2,
+                "pedestrian": 0.15, "footway": 0.12, "cycleway": 0.12,
+                "path": 0.12, "steps": 0.1, "bridleway": 0.12,
             }
         else:
             vintage_widths = {
-                "motorway": 1.4, "motorway_link": 1.0,
-                "trunk": 1.2, "trunk_link": 0.9,
-                "primary": 1.0, "primary_link": 0.7,
-                "secondary": 0.8, "secondary_link": 0.6,
-                "tertiary": 0.55, "tertiary_link": 0.4,
-                "residential": 0.3, "unclassified": 0.3,
-                "living_street": 0.3, "service": 0.2, "track": 0.2,
-                "pedestrian": 0.15, "footway": 0.12, "cycleway": 0.12,
-                "path": 0.12, "steps": 0.1, "bridleway": 0.12,
+                "motorway": 0.8, "motorway_link": 0.6,
+                "trunk": 0.7, "trunk_link": 0.5,
+                "primary": 0.6, "primary_link": 0.45,
+                "secondary": 0.45, "secondary_link": 0.35,
+                "tertiary": 0.3, "tertiary_link": 0.25,
+                "residential": 0.2, "unclassified": 0.2,
+                "living_street": 0.2, "service": 0.15, "track": 0.12,
+                "pedestrian": 0.1, "footway": 0.08, "cycleway": 0.08,
+                "path": 0.08, "steps": 0.06, "bridleway": 0.08,
             }
 
         # Draw roads — minor first, major on top; skip classes too small for this scale
@@ -1522,7 +1512,7 @@ def _add_vintage_compass(
     cy = round(map_y + map_h - size * 2.2, 2)
     r = lambda v: round(v, 2)
 
-    lines.append(f'    <g id="compass_rose" opacity="0.80">')
+    lines.append(f'    <g id="compass_rose" opacity="0.70">')
 
     # Double outer circle
     lines.append(
