@@ -482,7 +482,7 @@ COLOR_THEMES = {
         "colors": {
             "#2a2a2a": "#d8c8a8",
             "#1a1a1a": "#2a2018",
-            "#d4e6f1": "#e8dcc4",
+            "#d4e6f1": "#c4b494",
             "#7fb3d3": "#3a3020",
             "#333333": "#2a2018",
             "#555555": "#4a3828",
@@ -492,10 +492,10 @@ COLOR_THEMES = {
         },
         "poster": {
             "mat": "#f0e6d0",
-            "map_bg": "#f0e6d0",
-            "land": "#f0e6d0",
-            "land_stroke": "#4a3828",
-            "water": "#f0e6d0",
+            "map_bg": "#c4b494",
+            "land": "#e8dcc0",
+            "land_stroke": "#2a2010",
+            "water": "#c4b494",
             "water_stroke": "#3a3020",
             "street_major": "#2a2018",
             "street_minor": "#4a3828",

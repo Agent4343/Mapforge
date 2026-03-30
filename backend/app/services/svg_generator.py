@@ -1014,7 +1014,9 @@ def _generate_vintage_map_svg(
     ink_faint = "#5a4a38"    # Faint ink for detail roads
     parchment = "#e8dcc0"   # Base parchment color
     parchment_edge = "#c8b890"  # Darker edge color for vignette
-    water_tint = "#d0c4a4"  # Subtle darker tint for water areas
+    water_tint = "#b8a880"  # Visible darker tint for water areas (strong contrast)
+    water_ocean = "#c4b494"  # Ocean background fill (between water_tint and parchment)
+    coast_stroke = "#2a2010"  # Bold coastline stroke
 
     # Layout: text at bottom (15% of height), map fills the rest
     margin = round(board_w * 0.04, 2)
@@ -1173,7 +1175,28 @@ def _generate_vintage_map_svg(
     # All map content clipped to map area
     lines.append(f'  <g clip-path="url(#map_clip)">')
 
-    # Layer 3: Water features — subtle tinted fill so water is distinguishable
+    # Layer 2.5: Ocean background — fill the entire map area with water tone
+    # so that islands/coastal areas have visible water surrounding them
+    lines.append(f'    <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}" fill="{water_ocean}"/>')
+
+    # Layer 3a: Land polygons — fill with parchment so land stands out from ocean
+    lines.append('    <g id="land_mass">')
+    for exterior, holes in polygons:
+        if len(exterior) < 3:
+            continue
+        path_d = _coords_to_path(exterior)
+        for hole in holes:
+            if len(hole) >= 3:
+                path_d += " " + _coords_to_path(hole)
+        lines.append(
+            f'      <path d="{path_d}" fill="{parchment}"'
+            f' stroke="{coast_stroke}" stroke-width="1.2"'
+            f' stroke-linejoin="round"/>'
+        )
+        path_count += 1
+    lines.append("    </g>")
+
+    # Layer 3b: Water features — darker tinted fill for lakes, rivers, bays
     if water_data:
         transform = processed.get("transform")
         lines.append('    <g id="water_features">')
@@ -1184,7 +1207,7 @@ def _generate_vintage_map_svg(
             path_d = _coords_to_path(board_coords)
             lines.append(
                 f'      <path d="{path_d}"'
-                f' fill="{water_tint}" stroke="{ink_light}" stroke-width="0.5"'
+                f' fill="{water_tint}" stroke="{ink_light}" stroke-width="0.6"'
                 f' stroke-linejoin="round"/>'
             )
             path_count += 1
@@ -1193,7 +1216,7 @@ def _generate_vintage_map_svg(
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
             path_d = _coords_to_open_path(board_coords)
-            width = 0.7 if water_type in ("river", "coastline") else 0.35
+            width = 1.0 if water_type in ("river", "coastline") else 0.5
             lines.append(
                 f'      <path d="{path_d}"'
                 f' fill="none" stroke="{ink_light}" stroke-width="{width}"'
@@ -1201,9 +1224,6 @@ def _generate_vintage_map_svg(
             )
             path_count += 1
         lines.append("    </g>")
-
-    # No land boundary outlines — the streets define the shape,
-    # admin boundary polygons look ugly as geometric lines
 
     # Layer 4: Streets — bold monochrome line art, ALL roads visible
     # Auto-detect sparse maps and boost widths accordingly
@@ -1214,30 +1234,30 @@ def _generate_vintage_map_svg(
         total_roads = len(streets_data.get("major_roads", [])) + len(streets_data.get("minor_roads", []))
         is_sparse = total_roads < 120
 
-        # Width table — sparse maps get ~2x thicker lines for visual impact
+        # Width table — sparse maps get ~2.5x thicker lines for visual impact
         if is_sparse:
             vintage_widths = {
-                "motorway": 1.6, "motorway_link": 1.2,
-                "trunk": 1.4, "trunk_link": 1.0,
-                "primary": 1.2, "primary_link": 0.8,
-                "secondary": 0.9, "secondary_link": 0.7,
-                "tertiary": 0.6, "tertiary_link": 0.5,
-                "residential": 0.4, "unclassified": 0.4,
-                "living_street": 0.4, "service": 0.3, "track": 0.25,
-                "pedestrian": 0.2, "footway": 0.15, "cycleway": 0.15,
-                "path": 0.15, "steps": 0.12, "bridleway": 0.15,
+                "motorway": 2.2, "motorway_link": 1.6,
+                "trunk": 2.0, "trunk_link": 1.4,
+                "primary": 1.8, "primary_link": 1.2,
+                "secondary": 1.3, "secondary_link": 1.0,
+                "tertiary": 0.9, "tertiary_link": 0.7,
+                "residential": 0.6, "unclassified": 0.6,
+                "living_street": 0.6, "service": 0.45, "track": 0.35,
+                "pedestrian": 0.3, "footway": 0.2, "cycleway": 0.2,
+                "path": 0.2, "steps": 0.15, "bridleway": 0.2,
             }
         else:
             vintage_widths = {
-                "motorway": 1.0, "motorway_link": 0.8,
-                "trunk": 0.9, "trunk_link": 0.7,
-                "primary": 0.8, "primary_link": 0.55,
-                "secondary": 0.6, "secondary_link": 0.45,
-                "tertiary": 0.4, "tertiary_link": 0.3,
-                "residential": 0.22, "unclassified": 0.22,
-                "living_street": 0.22, "service": 0.15, "track": 0.15,
-                "pedestrian": 0.12, "footway": 0.1, "cycleway": 0.1,
-                "path": 0.1, "steps": 0.08, "bridleway": 0.1,
+                "motorway": 1.4, "motorway_link": 1.0,
+                "trunk": 1.2, "trunk_link": 0.9,
+                "primary": 1.0, "primary_link": 0.7,
+                "secondary": 0.8, "secondary_link": 0.6,
+                "tertiary": 0.55, "tertiary_link": 0.4,
+                "residential": 0.3, "unclassified": 0.3,
+                "living_street": 0.3, "service": 0.2, "track": 0.2,
+                "pedestrian": 0.15, "footway": 0.12, "cycleway": 0.12,
+                "path": 0.12, "steps": 0.1, "bridleway": 0.12,
             }
 
         # Draw all roads — minor first, major on top
