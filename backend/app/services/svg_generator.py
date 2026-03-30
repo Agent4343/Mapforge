@@ -1009,19 +1009,22 @@ def _generate_vintage_map_svg(
     latlon = center_latlon or processed.get("center_latlon", (0, 0))
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # Vintage color palette — monochrome ink on parchment
-    ink = "#1e1810"          # Dark brown-black ink
-    ink_light = "#3a2e20"    # Lighter ink for minor features
-    ink_faint = "#5a4a38"    # Faint ink for detail roads
-    parchment = "#e8dcc0"   # Base parchment color
-    parchment_edge = "#c8b890"  # Darker edge color for vignette
-    water_tint = "#b8a880"  # Visible darker tint for water areas (strong contrast)
-    water_ocean = "#c4b494"  # Ocean background fill (between water_tint and parchment)
-    coast_stroke = "#2a2010"  # Bold coastline stroke
+    # Vintage color palette — rich monochrome ink on warm parchment
+    ink = "#1a1208"          # Deep brown-black ink
+    ink_light = "#34281a"    # Medium ink for secondary features
+    ink_faint = "#4a3c2a"    # Faint ink for detail roads
+    parchment = "#e4d6b4"   # Warm parchment base
+    parchment_mid = "#d4c49e" # Mid-tone for subtle variation
+    parchment_edge = "#a89468"  # Dark edge for strong vignette
+    water_fill = "#c8b88e"  # Lake/river fill — distinct from land
+    water_ocean = "#b0a070"  # Ocean background — noticeably darker than land
+    coast_stroke = "#1a1208"  # Bold coastline stroke matches ink
+    border_color = "#2a1e10"  # Border line color
+    separator_color = "#8a7a58"  # Decorative line separator
 
-    # Layout: text at bottom (15% of height), map fills the rest
-    margin = round(board_w * 0.04, 2)
-    text_area_h = round(board_h * 0.15, 2)
+    # Layout: text at bottom (12% of height), map fills more space
+    margin = round(board_w * 0.05, 2)
+    text_area_h = round(board_h * 0.12, 2)
     map_x = margin
     map_y = margin
     map_w = round(board_w - 2 * margin, 2)
@@ -1103,34 +1106,50 @@ def _generate_vintage_map_svg(
 
     # --- Aged parchment via gradients (cairosvg-compatible, no SVG filters) ---
     lines.append("  <defs>")
-    # Edge darkening vignette — large radial gradient for aged edges
-    lines.append('    <radialGradient id="vig" cx="50%" cy="45%" r="70%">')
-    lines.append(f'      <stop offset="30%" stop-color="{parchment}" stop-opacity="0"/>')
-    lines.append(f'      <stop offset="85%" stop-color="{parchment_edge}" stop-opacity="0.5"/>')
-    lines.append(f'      <stop offset="100%" stop-color="#8a7a5a" stop-opacity="0.6"/>')
+    # Main vignette — strong edge darkening for aged look
+    lines.append('    <radialGradient id="vig" cx="50%" cy="48%" r="65%">')
+    lines.append(f'      <stop offset="20%" stop-color="{parchment}" stop-opacity="0"/>')
+    lines.append(f'      <stop offset="70%" stop-color="{parchment_mid}" stop-opacity="0.3"/>')
+    lines.append(f'      <stop offset="90%" stop-color="{parchment_edge}" stop-opacity="0.6"/>')
+    lines.append(f'      <stop offset="100%" stop-color="#6a5a38" stop-opacity="0.75"/>')
     lines.append('    </radialGradient>')
-    # Corner darkening — extra aging in corners
-    lines.append('    <radialGradient id="corner_tl" cx="0%" cy="0%" r="60%">')
-    lines.append(f'      <stop offset="0%" stop-color="#6a5a3a" stop-opacity="0.25"/>')
+    # Four corner darkening for deep aging
+    lines.append('    <radialGradient id="corner_tl" cx="0%" cy="0%" r="50%">')
+    lines.append(f'      <stop offset="0%" stop-color="#5a4a2a" stop-opacity="0.35"/>')
     lines.append(f'      <stop offset="100%" stop-color="{parchment}" stop-opacity="0"/>')
     lines.append('    </radialGradient>')
-    lines.append('    <radialGradient id="corner_br" cx="100%" cy="100%" r="60%">')
-    lines.append(f'      <stop offset="0%" stop-color="#6a5a3a" stop-opacity="0.3"/>')
+    lines.append('    <radialGradient id="corner_tr" cx="100%" cy="0%" r="50%">')
+    lines.append(f'      <stop offset="0%" stop-color="#5a4a2a" stop-opacity="0.25"/>')
     lines.append(f'      <stop offset="100%" stop-color="{parchment}" stop-opacity="0"/>')
     lines.append('    </radialGradient>')
-    # Subtle speckle pattern for paper grain
-    lines.append(f'    <pattern id="grain" width="3" height="3" patternUnits="userSpaceOnUse">')
-    lines.append(f'      <circle cx="0.8" cy="1.2" r="0.15" fill="#a09070" opacity="0.12"/>')
-    lines.append(f'      <circle cx="2.4" cy="0.4" r="0.1" fill="#907858" opacity="0.1"/>')
-    lines.append(f'      <circle cx="1.6" cy="2.6" r="0.12" fill="#b0a080" opacity="0.08"/>')
-    lines.append(f'    </pattern>')
-    # Larger stain-like spots pattern
-    lines.append(f'    <pattern id="stains" width="40" height="40" patternUnits="userSpaceOnUse">')
-    lines.append(f'      <circle cx="8" cy="12" r="5" fill="#b8a878" opacity="0.08"/>')
-    lines.append(f'      <circle cx="28" cy="6" r="3" fill="#a89868" opacity="0.06"/>')
-    lines.append(f'      <circle cx="18" cy="30" r="6" fill="#c0a870" opacity="0.07"/>')
-    lines.append(f'      <circle cx="35" cy="25" r="4" fill="#a89060" opacity="0.05"/>')
-    lines.append(f'    </pattern>')
+    lines.append('    <radialGradient id="corner_bl" cx="0%" cy="100%" r="50%">')
+    lines.append(f'      <stop offset="0%" stop-color="#5a4a2a" stop-opacity="0.28"/>')
+    lines.append(f'      <stop offset="100%" stop-color="{parchment}" stop-opacity="0"/>')
+    lines.append('    </radialGradient>')
+    lines.append('    <radialGradient id="corner_br" cx="100%" cy="100%" r="50%">')
+    lines.append(f'      <stop offset="0%" stop-color="#5a4a2a" stop-opacity="0.4"/>')
+    lines.append(f'      <stop offset="100%" stop-color="{parchment}" stop-opacity="0"/>')
+    lines.append('    </radialGradient>')
+    # Fine paper grain
+    lines.append('    <pattern id="grain" width="4" height="4" patternUnits="userSpaceOnUse">')
+    lines.append('      <circle cx="1" cy="1" r="0.18" fill="#9a8868" opacity="0.10"/>')
+    lines.append('      <circle cx="3" cy="0.5" r="0.12" fill="#8a7858" opacity="0.08"/>')
+    lines.append('      <circle cx="0.5" cy="3" r="0.14" fill="#a89878" opacity="0.09"/>')
+    lines.append('      <circle cx="2.5" cy="2.5" r="0.10" fill="#907850" opacity="0.07"/>')
+    lines.append('    </pattern>')
+    # Aged stain spots — larger, more irregular
+    lines.append('    <pattern id="stains" width="60" height="60" patternUnits="userSpaceOnUse">')
+    lines.append('      <ellipse cx="12" cy="15" rx="7" ry="5" fill="#b0a068" opacity="0.06"/>')
+    lines.append('      <ellipse cx="42" cy="8" rx="4" ry="6" fill="#a09060" opacity="0.05"/>')
+    lines.append('      <ellipse cx="25" cy="42" rx="8" ry="5" fill="#b8a870" opacity="0.07"/>')
+    lines.append('      <ellipse cx="50" cy="35" rx="5" ry="7" fill="#a89858" opacity="0.04"/>')
+    lines.append('      <circle cx="8" cy="48" r="3" fill="#c0a860" opacity="0.05"/>')
+    lines.append('    </pattern>')
+    # Water hatch pattern — fine diagonal lines for engraved look
+    lines.append('    <pattern id="water_hatch" width="3" height="3" patternUnits="userSpaceOnUse"'
+                 ' patternTransform="rotate(45)">')
+    lines.append(f'      <line x1="0" y1="0" x2="0" y2="3" stroke="{ink_faint}" stroke-width="0.15" opacity="0.25"/>')
+    lines.append('    </pattern>')
     # Clip for map content
     lines.append(
         f'    <clipPath id="map_clip">'
@@ -1140,36 +1159,57 @@ def _generate_vintage_map_svg(
     lines.append("  </defs>")
     lines.append("")
 
-    # Layer 1: Parchment background built from layered gradients
+    # Layer 1: Rich parchment background — multiple layered gradients for depth
     lines.append('  <g id="parchment_background">')
-    # Base color
     lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="{parchment}"/>')
-    # Paper grain speckle
     lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#grain)"/>')
-    # Coffee stain spots
     lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#stains)"/>')
-    # Edge vignette
     lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#vig)"/>')
-    # Corner aging
     lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#corner_tl)"/>')
+    lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#corner_tr)"/>')
+    lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#corner_bl)"/>')
     lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#corner_br)"/>')
     lines.append("  </g>")
     lines.append("")
 
-    # Layer 2: Decorative double-line border
-    border_outer = round(margin * 0.55, 2)
-    border_inner = round(margin * 0.72, 2)
+    # Layer 2: Elegant triple-line border with corner ornaments
+    b_outer = round(margin * 0.45, 2)
+    b_mid = round(margin * 0.60, 2)
+    b_inner = round(margin * 0.75, 2)
     lines.append('  <g id="decorative_border">')
+    # Outer bold line
     lines.append(
-        f'    <rect x="{border_outer}" y="{border_outer}"'
-        f' width="{round(board_w - 2 * border_outer, 2)}" height="{round(board_h - 2 * border_outer, 2)}"'
-        f' fill="none" stroke="{ink}" stroke-width="0.7"/>'
+        f'    <rect x="{b_outer}" y="{b_outer}"'
+        f' width="{round(board_w - 2 * b_outer, 2)}" height="{round(board_h - 2 * b_outer, 2)}"'
+        f' fill="none" stroke="{border_color}" stroke-width="0.9"/>'
     )
+    # Middle thin line
     lines.append(
-        f'    <rect x="{border_inner}" y="{border_inner}"'
-        f' width="{round(board_w - 2 * border_inner, 2)}" height="{round(board_h - 2 * border_inner, 2)}"'
-        f' fill="none" stroke="{ink}" stroke-width="0.3"/>'
+        f'    <rect x="{b_mid}" y="{b_mid}"'
+        f' width="{round(board_w - 2 * b_mid, 2)}" height="{round(board_h - 2 * b_mid, 2)}"'
+        f' fill="none" stroke="{border_color}" stroke-width="0.25"/>'
     )
+    # Inner bold line
+    lines.append(
+        f'    <rect x="{b_inner}" y="{b_inner}"'
+        f' width="{round(board_w - 2 * b_inner, 2)}" height="{round(board_h - 2 * b_inner, 2)}"'
+        f' fill="none" stroke="{border_color}" stroke-width="0.6"/>'
+    )
+    # Corner ornaments — small diamond at each corner where lines meet
+    corner_size = round(margin * 0.12, 2)
+    for cx, cy in [
+        (b_mid, b_mid),
+        (board_w - b_mid, b_mid),
+        (b_mid, board_h - b_mid),
+        (board_w - b_mid, board_h - b_mid),
+    ]:
+        lines.append(
+            f'    <path d="M{round(cx, 2)},{round(cy - corner_size, 2)}'
+            f' L{round(cx + corner_size, 2)},{round(cy, 2)}'
+            f' L{round(cx, 2)},{round(cy + corner_size, 2)}'
+            f' L{round(cx - corner_size, 2)},{round(cy, 2)} Z"'
+            f' fill="{border_color}" stroke="none"/>'
+        )
     lines.append("  </g>")
     lines.append("")
 
@@ -1191,11 +1231,24 @@ def _generate_vintage_map_svg(
     # All map content clipped to map area
     lines.append(f'  <g clip-path="url(#map_clip)">')
 
-    # Layer 2.5: Ocean background — fill the entire map area with water tone
-    # so that islands/coastal areas have visible water surrounding them
+    # Layer 2.5: Ocean background — darker fill so land stands out dramatically
     lines.append(f'    <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}" fill="{water_ocean}"/>')
+    # Add subtle hatch to ocean too for engraved look
+    lines.append(f'    <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}" fill="url(#water_hatch)" opacity="0.4"/>')
 
-    # Layer 3a: Land polygons — fill with parchment so land stands out from ocean
+    # Layer 3a: Land polygons with drop shadow for depth
+    # Shadow layer (offset slightly down-right)
+    shadow_offset = round(min(map_w, map_h) * 0.004, 2)
+    lines.append(f'    <g id="land_shadow" opacity="0.15">')
+    for exterior, holes in polygons:
+        if len(exterior) < 3:
+            continue
+        shadow_ext = [(round(x + shadow_offset, 2), round(y + shadow_offset, 2)) for x, y in exterior]
+        path_d = _coords_to_path(shadow_ext)
+        lines.append(f'      <path d="{path_d}" fill="#1a1208" stroke="none"/>')
+    lines.append("    </g>")
+
+    # Land fill
     lines.append('    <g id="land_mass">')
     for exterior, holes in polygons:
         if len(exterior) < 3:
@@ -1206,20 +1259,18 @@ def _generate_vintage_map_svg(
                 path_d += " " + _coords_to_path(hole)
         lines.append(
             f'      <path d="{path_d}" fill="{parchment}"'
-            f' stroke="{coast_stroke}" stroke-width="1.2"'
+            f' stroke="{coast_stroke}" stroke-width="1.0"'
             f' stroke-linejoin="round"/>'
         )
         path_count += 1
     lines.append("    </g>")
 
-    # Layer 3b: Water features — darker tinted fill for lakes, rivers, bays
-    # At large scale (many features), skip streams to avoid visual clutter
+    # Layer 3b: Water features — tinted fill + diagonal hatch for engraved look
     is_large_scale = total_features > 1000
     if water_data:
         transform = processed.get("transform")
         lines.append('    <g id="water_features">')
 
-        # Filter small water polygons at large scale
         for coords, water_type, name in water_data.get("water_polygons", []):
             if len(coords) < 3:
                 continue
@@ -1233,10 +1284,16 @@ def _generate_vintage_map_svg(
                 if poly_w < 3.0 and poly_h < 3.0:
                     continue
             path_d = _coords_to_path(board_coords)
+            # Solid fill
             lines.append(
                 f'      <path d="{path_d}"'
-                f' fill="{water_tint}" stroke="{ink_light}" stroke-width="0.6"'
+                f' fill="{water_fill}" stroke="{ink_light}" stroke-width="0.5"'
                 f' stroke-linejoin="round"/>'
+            )
+            # Hatch overlay for engraved texture
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="url(#water_hatch)" stroke="none"/>'
             )
             path_count += 1
 
@@ -1244,12 +1301,11 @@ def _generate_vintage_map_svg(
         for coords, water_type, name in water_data.get("waterways", []):
             if len(coords) < 2:
                 continue
-            # At large scale, only render rivers and coastlines — skip streams/canals
             if is_large_scale and water_type not in ("river", "coastline"):
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
             path_d = _coords_to_open_path(board_coords)
-            width = 1.0 if water_type in ("river", "coastline") else 0.5
+            width = 1.2 if water_type in ("river", "coastline") else 0.5
             lines.append(
                 f'      <path d="{path_d}"'
                 f' fill="none" stroke="{ink_light}" stroke-width="{width}"'
@@ -1356,24 +1412,52 @@ def _generate_vintage_map_svg(
     lines.append("  </g>")  # close map clip
     lines.append("")
 
-    # --- Text area below the map ---
+    # --- Decorative separator + text area below the map ---
     text_center_x = round(board_w / 2, 2)
-    title_size = round(font_size_mm * 1.5, 2)
-    subtitle_size = round(font_size_mm * 0.6, 2)
-    coord_size = round(font_size_mm * 0.45, 2)
+    title_size = round(font_size_mm * 2.0, 2)
+    subtitle_size = round(font_size_mm * 0.65, 2)
+    coord_size = round(font_size_mm * 0.5, 2)
 
     title_text = location_name.upper()
-    title_tracking = title_size * 0.25
+    title_tracking = title_size * 0.30
 
-    # Auto-scale title to fit
-    est_width = len(title_text) * (title_size * 0.75 + title_tracking)
-    avail_w = board_w * 0.85
+    # Auto-scale title to fit within 80% of board width
+    est_width = len(title_text) * (title_size * 0.65 + title_tracking)
+    avail_w = board_w * 0.80
     if est_width > avail_w and len(title_text) > 0:
         scale = avail_w / est_width
         title_size = round(title_size * scale, 2)
-        title_tracking = title_size * 0.25
+        title_tracking = title_size * 0.30
 
-    text_start_y = round(map_y + map_h + text_area_h * 0.35, 2)
+    # Decorative separator line between map and text
+    sep_y = round(map_y + map_h + text_area_h * 0.12, 2)
+    sep_half = round(board_w * 0.25, 2)
+    diamond_size = round(font_size_mm * 0.25, 2)
+
+    lines.append('  <g id="separator">')
+    # Left line
+    lines.append(
+        f'    <line x1="{round(text_center_x - sep_half, 2)}" y1="{sep_y}"'
+        f' x2="{round(text_center_x - diamond_size * 2, 2)}" y2="{sep_y}"'
+        f' stroke="{separator_color}" stroke-width="0.3"/>'
+    )
+    # Right line
+    lines.append(
+        f'    <line x1="{round(text_center_x + diamond_size * 2, 2)}" y1="{sep_y}"'
+        f' x2="{round(text_center_x + sep_half, 2)}" y2="{sep_y}"'
+        f' stroke="{separator_color}" stroke-width="0.3"/>'
+    )
+    # Center diamond ornament
+    lines.append(
+        f'    <path d="M{text_center_x},{round(sep_y - diamond_size, 2)}'
+        f' L{round(text_center_x + diamond_size, 2)},{sep_y}'
+        f' L{text_center_x},{round(sep_y + diamond_size, 2)}'
+        f' L{round(text_center_x - diamond_size, 2)},{sep_y} Z"'
+        f' fill="{separator_color}" stroke="none"/>'
+    )
+    lines.append("  </g>")
+
+    text_start_y = round(sep_y + text_area_h * 0.45, 2)
 
     lines.append('  <g id="poster_text">')
     lines.append(
@@ -1383,7 +1467,7 @@ def _generate_vintage_map_svg(
         f' letter-spacing="{round(title_tracking, 2)}"'
         f' fill="{ink}">{_escape_xml(title_text)}</text>'
     )
-    next_y = text_start_y + title_size * 1.2
+    next_y = text_start_y + title_size * 1.1
     if subtitle:
         lines.append(
             f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
@@ -1392,17 +1476,17 @@ def _generate_vintage_map_svg(
             f' letter-spacing="{round(subtitle_size * 0.2, 2)}"'
             f' fill="{ink_light}">{_escape_xml(subtitle)}</text>'
         )
-        next_y += subtitle_size * 1.8
+        next_y += subtitle_size * 1.6
     if show_coordinates and latlon:
         lat, lon = latlon
         lat_dir = "N" if lat >= 0 else "S"
         lon_dir = "W" if lon < 0 else "E"
-        coord_text = f"{abs(lat):.4f}\u00b0{lat_dir}    ~    {abs(lon):.4f}\u00b0{lon_dir}"
+        coord_text = f"{abs(lat):.4f}\u00b0{lat_dir}  \u00b7  {abs(lon):.4f}\u00b0{lon_dir}"
         lines.append(
             f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
             f' text-anchor="middle" font-family="{ff}"'
             f' font-size="{coord_size}"'
-            f' letter-spacing="{round(coord_size * 0.15, 2)}"'
+            f' letter-spacing="{round(coord_size * 0.18, 2)}"'
             f' fill="{ink_light}">{coord_text}</text>'
         )
     lines.append("  </g>")
@@ -1435,62 +1519,97 @@ def _add_vintage_compass(
     ink: str,
     ink_light: str,
 ) -> None:
-    """Add an ornate vintage-style compass rose."""
-    size = min(map_w, map_h) * 0.04
-    cx = round(map_x + map_w - size * 3, 2)
-    cy = round(map_y + map_h - size * 3, 2)
+    """Add an ornate vintage-style compass rose — large and detailed."""
+    size = min(map_w, map_h) * 0.09
+    cx = round(map_x + map_w - size * 2.2, 2)
+    cy = round(map_y + map_h - size * 2.2, 2)
+    r = lambda v: round(v, 2)
 
-    lines.append(f'    <g id="compass_rose" opacity="0.5">')
-    # Outer circle
+    lines.append(f'    <g id="compass_rose" opacity="0.80">')
+
+    # Double outer circle
     lines.append(
-        f'      <circle cx="{cx}" cy="{cy}" r="{round(size, 2)}"'
-        f' fill="none" stroke="{ink_light}" stroke-width="0.25"/>'
+        f'      <circle cx="{cx}" cy="{cy}" r="{r(size)}"'
+        f' fill="none" stroke="{ink}" stroke-width="0.4"/>'
+    )
+    lines.append(
+        f'      <circle cx="{cx}" cy="{cy}" r="{r(size * 0.92)}"'
+        f' fill="none" stroke="{ink_light}" stroke-width="0.2"/>'
     )
     # Inner circle
     lines.append(
-        f'      <circle cx="{cx}" cy="{cy}" r="{round(size * 0.15, 2)}"'
-        f' fill="none" stroke="{ink_light}" stroke-width="0.2"/>'
+        f'      <circle cx="{cx}" cy="{cy}" r="{r(size * 0.18)}"'
+        f' fill="{ink}" stroke="none"/>'
     )
-    # Cardinal points — thin lines
+    lines.append(
+        f'      <circle cx="{cx}" cy="{cy}" r="{r(size * 0.12)}"'
+        f' fill="{ink_light}" stroke="none" opacity="0.5"/>'
+    )
+
+    # Cardinal diamond points (N, S, E, W) — filled elongated diamonds
+    for angle in [0, 90, 180, 270]:
+        rad = math.radians(angle)
+        perp = math.radians(angle + 90)
+        # Tip of the point
+        tip_x = r(cx + math.sin(rad) * size * 0.85)
+        tip_y = r(cy - math.cos(rad) * size * 0.85)
+        # Base center
+        base_x = r(cx + math.sin(rad) * size * 0.18)
+        base_y = r(cy - math.cos(rad) * size * 0.18)
+        # Base width
+        w = size * 0.14
+        left_x = r(base_x + math.sin(perp) * w)
+        left_y = r(base_y - math.cos(perp) * w)
+        right_x = r(base_x - math.sin(perp) * w)
+        right_y = r(base_y + math.cos(perp) * w)
+
+        # Dark half (left side of each point)
+        lines.append(
+            f'      <path d="M{tip_x},{tip_y} L{left_x},{left_y} L{cx},{cy} Z"'
+            f' fill="{ink}" stroke="none"/>'
+        )
+        # Light half (right side)
+        lines.append(
+            f'      <path d="M{tip_x},{tip_y} L{right_x},{right_y} L{cx},{cy} Z"'
+            f' fill="{ink_light}" stroke="{ink}" stroke-width="0.15"/>'
+        )
+
+    # Intercardinal points — shorter, thinner
+    for angle in [45, 135, 225, 315]:
+        rad = math.radians(angle)
+        perp = math.radians(angle + 90)
+        tip_x = r(cx + math.sin(rad) * size * 0.55)
+        tip_y = r(cy - math.cos(rad) * size * 0.55)
+        base_x = r(cx + math.sin(rad) * size * 0.18)
+        base_y = r(cy - math.cos(rad) * size * 0.18)
+        w = size * 0.08
+        left_x = r(base_x + math.sin(perp) * w)
+        left_y = r(base_y - math.cos(perp) * w)
+        right_x = r(base_x - math.sin(perp) * w)
+        right_y = r(base_y + math.cos(perp) * w)
+        lines.append(
+            f'      <path d="M{tip_x},{tip_y} L{left_x},{left_y} L{cx},{cy} Z"'
+            f' fill="{ink_light}" stroke="none"/>'
+        )
+        lines.append(
+            f'      <path d="M{tip_x},{tip_y} L{right_x},{right_y} L{cx},{cy} Z"'
+            f' fill="none" stroke="{ink_light}" stroke-width="0.15"/>'
+        )
+
+    # Cardinal labels
+    font_sz = r(size * 0.30)
+    label_dist = size * 1.15
     for angle, label in [(0, "N"), (90, "E"), (180, "S"), (270, "W")]:
         rad = math.radians(angle)
-        x1 = round(cx + math.sin(rad) * size * 0.2, 2)
-        y1 = round(cy - math.cos(rad) * size * 0.2, 2)
-        x2 = round(cx + math.sin(rad) * size * 0.95, 2)
-        y2 = round(cy - math.cos(rad) * size * 0.95, 2)
-        lines.append(
-            f'      <line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}"'
-            f' stroke="{ink}" stroke-width="0.3"/>'
-        )
-        # Label
-        lx = round(cx + math.sin(rad) * size * 1.2, 2)
-        ly = round(cy - math.cos(rad) * size * 1.2 + 1.2, 2)
-        font_sz = round(size * 0.35, 2)
+        lx = r(cx + math.sin(rad) * label_dist)
+        ly = r(cy - math.cos(rad) * label_dist + font_sz * 0.35)
+        weight = ' font-weight="bold"' if label == "N" else ""
         lines.append(
             f'      <text x="{lx}" y="{ly}" text-anchor="middle"'
             f' font-family="Georgia, serif" font-size="{font_sz}"'
-            f' fill="{ink}">{label}</text>'
+            f'{weight} fill="{ink}">{label}</text>'
         )
-    # Intercardinal thin lines
-    for angle in [45, 135, 225, 315]:
-        rad = math.radians(angle)
-        x1 = round(cx + math.sin(rad) * size * 0.2, 2)
-        y1 = round(cy - math.cos(rad) * size * 0.2, 2)
-        x2 = round(cx + math.sin(rad) * size * 0.7, 2)
-        y2 = round(cy - math.cos(rad) * size * 0.7, 2)
-        lines.append(
-            f'      <line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}"'
-            f' stroke="{ink_light}" stroke-width="0.15"/>'
-        )
-    # North arrow (filled triangle)
-    n_top = round(cy - size * 0.9, 2)
-    n_left = round(cx - size * 0.12, 2)
-    n_right = round(cx + size * 0.12, 2)
-    n_base = round(cy - size * 0.2, 2)
-    lines.append(
-        f'      <path d="M{cx},{n_top} L{n_left},{n_base} L{n_right},{n_base} Z"'
-        f' fill="{ink}" stroke="none"/>'
-    )
+
     lines.append("    </g>")
 
 
