@@ -179,3 +179,51 @@ def test_svg_node_count():
     assert result["node_count"] > 0
     assert result["path_count"] > 0
     assert result["layer_count"] >= 3
+
+
+def _make_province_processed():
+    """Generate processed geometry for a province-scale map."""
+    geom = Polygon([
+        (-80.0, 43.0), (-79.0, 43.0), (-79.0, 44.0),
+        (-80.0, 44.0), (-80.0, 43.0),
+    ])
+    return process_geometry(
+        geom=geom, product_type=ProductType.province,
+        board_width_inches=20, board_height_inches=24,
+    )
+
+
+def test_province_print_svg_generates():
+    """Province maps in print mode should generate without errors."""
+    processed = _make_province_processed()
+    result = generate_svg(
+        processed=processed, location_name="Ontario",
+        style=CutStyle.filled, show_coordinates=True, font_size_mm=14,
+        output_mode="print", product_type="province",
+        color_theme="classic", poster_layout="classic",
+    )
+    svg = result["svg"]
+    assert "MapForge Print Poster" in svg
+    assert "ONTARIO" in svg
+    assert result["node_count"] > 0
+
+
+def test_province_print_svg_with_streets():
+    """Province maps with street data should render without errors."""
+    processed = _make_province_processed()
+    streets_data = {
+        "major_roads": [
+            ([(-79.5, 43.5), (-79.3, 43.6)], "motorway", 2.0, "Highway 401"),
+        ],
+        "minor_roads": [],
+    }
+    result = generate_svg(
+        processed=processed, location_name="Ontario",
+        style=CutStyle.filled, show_coordinates=True, font_size_mm=14,
+        streets_data=streets_data,
+        output_mode="print", product_type="province",
+        color_theme="classic", poster_layout="classic",
+    )
+    svg = result["svg"]
+    assert 'id="streets"' in svg
+    assert result["path_count"] > 0

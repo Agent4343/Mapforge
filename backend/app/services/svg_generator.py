@@ -574,6 +574,7 @@ def _generate_print_svg(
     # For provinces/lakes, use water color as the background so the ocean
     # is visible and the land shape has strong contrast. For cities, use
     # the standard map_bg since streets are the focus.
+    is_province_map = product_type == "province"
     is_coastal_map = product_type in ("province", "lake", "park")
     map_area_bg = theme["water"] if is_coastal_map else theme["map_bg"]
     lines.append('  <g id="map_area">')
@@ -1771,7 +1772,7 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
     At city scale, all roads are rendered with fine, delicate lines.
     """
     transform = processed.get("transform")
-    is_province = product_type in ("province",)
+    is_province_map = product_type in ("province",)
 
     # Theme colors
     major_color = theme.get("street_major", "#333333")
@@ -1780,7 +1781,7 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
     land_color = theme.get("land", "#e8dfd0")
 
     # Width multipliers for province vs city scale
-    if is_province:
+    if is_province_map:
         # Province: bold, clear highways visible at small scale
         casing_widths = {
             "motorway": 3.0, "motorway_link": 2.2,
@@ -1885,7 +1886,7 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
     # Layer 4: Major road fills (topmost)
     for path_d, road_class, cw in major_paths:
         fw = round(cw * fill_ratio, 2)
-        fill_color = "#ffffff" if is_province else land_color
+        fill_color = "#ffffff" if is_province_map else land_color
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="none" stroke="{fill_color}" stroke-width="{fw}"'
