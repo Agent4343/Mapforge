@@ -16,7 +16,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
-ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"  # Fast + cheap for bulk generation
+ANTHROPIC_MODEL = "claude-sonnet-4-20250514"  # Reliable model for listing generation
 
 # Cost tracking
 _session_stats = {"calls": 0, "input_tokens": 0, "output_tokens": 0}
