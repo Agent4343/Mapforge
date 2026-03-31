@@ -170,9 +170,10 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     elif is_medium_area and need_streets:
         log.info(f"Medium area ({bbox_area_deg2:.1f} deg²) — fetching major roads only")
 
-    # Provinces get major roads only (highways) unless user explicitly enabled streets.
-    # Cities always get full street grid.
-    include_minor_streets = not is_medium_area and not (is_province and not req.include_streets)
+    # Small provinces (< 30 deg²) get full street grid like cities.
+    # Medium provinces (30-80 deg²) get major roads only.
+    is_small_province = is_province and not is_medium_area and not is_very_large_area
+    include_minor_streets = not is_medium_area and (not is_province or is_small_province)
 
     async def _get_streets():
         cache_key = _bbox_cache_key("streets", bbox)

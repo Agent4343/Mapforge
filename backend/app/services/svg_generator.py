@@ -406,6 +406,7 @@ def _generate_print_svg(
             include_bleed=include_bleed,
             include_crop_marks=include_crop_marks,
             show_compass=show_compass,
+            product_type=product_type,
         )
 
     from app.services.thumbnail_generator import get_poster_theme
@@ -997,6 +998,7 @@ def _generate_vintage_map_svg(
     include_bleed: bool = False,
     include_crop_marks: bool = False,
     show_compass: bool = False,
+    product_type: str = "lake",
 ) -> dict:
     """Generate a clean modern map poster — Mapiful/Grafomap style.
 
@@ -1086,11 +1088,15 @@ def _generate_vintage_map_svg(
     border_color = "#1a1a1a"
     separator_color = "#999999"
 
-    # Water colors: emphasize water more for islands and coastal areas
+    # Water colors: emphasize water more for islands, coastal areas, and provinces
     if is_island:
         water_fill = "#dcdcdc"    # Slightly darker gray — water is a key feature
         water_ocean = "#e8e8e8"   # Visible ocean surrounding the island
         coast_stroke = "#1a1a1a"  # Strong coastline — it defines the shape
+    elif is_province_map and has_coastline:
+        water_fill = "#d8d8d8"    # Province coast: prominent lakes and rivers
+        water_ocean = "#e4e4e4"   # Clear ocean contrast against land
+        coast_stroke = "#1a1a1a"  # Bold coastline — defines the province shape
     elif is_coastal or is_water_rich:
         water_fill = "#e2e2e2"    # Medium gray for prominent water features
         water_ocean = "#ececec"   # Noticeable ocean
@@ -1100,9 +1106,13 @@ def _generate_vintage_map_svg(
         water_ocean = "#f0f0f0"   # Very subtle
         coast_stroke = "#333333"  # Standard
 
-    # Coastline width: thinner for large maps to avoid visual dominance
-    if total_features > 2000:
-        coast_width = 0.2   # Province/island: thin, refined
+    is_province_map = product_type == "province"
+
+    # Coastline width: provinces need bolder coastlines for definition at scale
+    if is_province_map:
+        coast_width = 0.6   # Province: bold coastline for definition
+    elif total_features > 2000:
+        coast_width = 0.2   # Dense city: thin, refined
     elif total_features > 500:
         coast_width = 0.35  # City: moderate
     else:
@@ -1124,7 +1134,21 @@ def _generate_vintage_map_svg(
     # Road widths: scale based on density
     # Key insight: residential streets at thin widths create the dense
     # Mapiful texture that sells. Major roads should be clearly bolder.
-    if is_rural or total_features < 200:
+    # Provinces use bolder widths since roads are spread over a large area.
+    if is_province_map:
+        # Province-scale: bold highways, visible secondary/tertiary roads
+        road_widths = {
+            "motorway": 1.8, "motorway_link": 1.3,
+            "trunk": 1.5, "trunk_link": 1.1,
+            "primary": 1.2, "primary_link": 0.9,
+            "secondary": 0.8, "secondary_link": 0.6,
+            "tertiary": 0.5, "tertiary_link": 0.4,
+            "residential": 0.3, "unclassified": 0.3,
+            "living_street": 0.3, "service": 0.2, "track": 0.15,
+            "pedestrian": 0.1, "footway": 0.08, "cycleway": 0.08,
+            "path": 0.08, "steps": 0.06, "bridleway": 0.08,
+        }
+    elif is_rural or total_features < 200:
         road_widths = {
             "motorway": 1.6, "motorway_link": 1.2,
             "trunk": 1.4, "trunk_link": 1.0,
@@ -1322,10 +1346,14 @@ def _generate_vintage_map_svg(
     lines.append("    </g>")
 
     # Water features — clean gray fill, filtering based on analysis
-    is_large_scale = total_features > 1000
+    # Provinces keep all water features (lakes are a selling point)
+    is_large_scale = total_features > 1000 and not is_province_map
     if water_data:
         transform = processed.get("transform")
         lines.append('    <g id="water_features">')
+
+        # Min size threshold: provinces show smaller lakes, cities skip tiny ones
+        min_water_size = 1.0 if is_province_map else 3.0
 
         for coords, water_type, name in water_data.get("water_polygons", []):
             if len(coords) < 3:
@@ -1334,7 +1362,7 @@ def _generate_vintage_map_svg(
             if is_large_scale:
                 xs = [p[0] for p in board_coords]
                 ys = [p[1] for p in board_coords]
-                if max(xs) - min(xs) < 3.0 and max(ys) - min(ys) < 3.0:
+                if max(xs) - min(xs) < min_water_size and max(ys) - min(ys) < min_water_size:
                     continue
             path_d = _coords_to_path(board_coords)
             lines.append(
@@ -1350,7 +1378,11 @@ def _generate_vintage_map_svg(
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
             path_d = _coords_to_open_path(board_coords)
-            width = 0.5 if water_type in ("river", "coastline") else 0.25
+            # Provinces: bolder rivers for visibility
+            if is_province_map:
+                width = 0.8 if water_type in ("river", "coastline") else 0.4
+            else:
+                width = 0.5 if water_type in ("river", "coastline") else 0.25
             lines.append(
                 f'      <path d="{path_d}"'
                 f' fill="none" stroke="{ink_faint}" stroke-width="{width}"'
