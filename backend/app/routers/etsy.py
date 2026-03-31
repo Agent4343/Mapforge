@@ -17,6 +17,7 @@ from app.models.schemas import GenerateRequest, ProductType, CutStyle, BoardSize
 from app.services.app_settings import get_etsy_credentials
 from app.services.auth import get_current_user
 from app.services.etsy_client import (
+    activate_listing,
     create_draft_listing,
     exchange_code,
     generate_auth_url,
@@ -547,13 +548,27 @@ async def customer_publish(
     except ValueError as e:
         log.warning("Etsy digital file upload/type-update failed: %s", e)
 
+    # 5. Activate the listing so it's live and purchasable immediately
+    listing_status = "draft"
+    try:
+        await activate_listing(
+            access_token=access_token,
+            shop_id=shop_id,
+            listing_id=listing_id,
+            creds=creds,
+        )
+        listing_status = "active"
+        log.info("Etsy listing %d activated successfully", listing_id)
+    except ValueError as e:
+        log.warning("Etsy listing activation failed (listing remains as draft): %s", e)
+
     listing_url = f"https://www.etsy.com/listing/{listing_id}"
-    log.info("Customer publish: Etsy listing %d for %s", listing_id, file_record.location_name)
+    log.info("Customer publish: Etsy listing %d (%s) for %s", listing_id, listing_status, file_record.location_name)
 
     return EtsyPublishResponse(
         listing_id=listing_id,
         listing_url=listing_url,
-        status="draft",
+        status=listing_status,
     )
 
 

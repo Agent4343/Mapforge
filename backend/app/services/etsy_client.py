@@ -392,6 +392,36 @@ async def create_draft_listing(
     return resp.json()
 
 
+async def activate_listing(
+    access_token: str,
+    shop_id: str,
+    listing_id: int,
+    creds: Optional[dict] = None,
+) -> dict:
+    """Activate a draft listing so it's live and purchasable on Etsy.
+
+    Must be called after the listing has at least one image uploaded.
+    """
+    headers = _auth_headers(access_token, creds)
+
+    payload = {"state": "active"}
+
+    async with httpx.AsyncClient() as client:
+        resp = await _request_with_retry(
+            client, "PUT",
+            f"{ETSY_API_BASE}/application/shops/{shop_id}/listings/{listing_id}",
+            headers=headers,
+            data=payload,
+            timeout=15.0,
+        )
+
+    if resp.status_code not in (200, 201):
+        logger.error("Etsy listing activation failed: %d %s", resp.status_code, resp.text[:300])
+        raise ValueError(f"Failed to activate Etsy listing: {resp.text[:200]}")
+
+    return resp.json()
+
+
 async def update_listing_type(
     access_token: str,
     shop_id: str,
