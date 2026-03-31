@@ -5,6 +5,8 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,6 +33,7 @@ from app.services.etsy_client import (
 from app.services.file_storage import retrieve_file
 
 router = APIRouter(prefix="/api/v1/etsy", tags=["etsy"])
+limiter = Limiter(key_func=get_remote_address)
 
 
 async def _ensure_shop_info(user: User, db: AsyncSession, creds: dict | None = None):
@@ -404,7 +407,9 @@ class CustomerPublishRequest(BaseModel):
 
 
 @router.post("/customer-publish", response_model=EtsyPublishResponse)
+@limiter.limit("3/hour")
 async def customer_publish(
+    request: Request,
     req: CustomerPublishRequest,
     db: AsyncSession = Depends(get_db),
 ):

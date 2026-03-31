@@ -54,6 +54,36 @@ export default function ExportPanel({
 
   const isPrint = true;
 
+  // Generation counter — limit free designs for non-admin users
+  const MAX_FREE_GENERATES = 5;
+  const [genCount, setGenCount] = useState(() => {
+    try { return parseInt(localStorage.getItem("mf_gen_count") || "0", 10); } catch { return 0; }
+  });
+  const [genLimitReached, setGenLimitReached] = useState(false);
+
+  function incrementGenCount() {
+    const next = genCount + 1;
+    setGenCount(next);
+    try { localStorage.setItem("mf_gen_count", String(next)); } catch {}
+    if (next >= MAX_FREE_GENERATES) setGenLimitReached(true);
+  }
+
+  function resetGenCount() {
+    setGenCount(0);
+    setGenLimitReached(false);
+    try { localStorage.setItem("mf_gen_count", "0"); } catch {}
+  }
+
+  // Wrap the generate callback to track count
+  const handleGenerateWithLimit = () => {
+    if (!isAdmin && genCount >= MAX_FREE_GENERATES) {
+      setGenLimitReached(true);
+      return;
+    }
+    incrementGenCount();
+    onGenerate();
+  };
+
   useEffect(() => {
     if (user) {
       getEtsyStatus().then(setEtsyStatus).catch(() => {});
@@ -207,6 +237,8 @@ export default function ExportPanel({
     setBuyError(null);
     try {
       const res = await customerPublish(result.file_id);
+      // Reset generation counter — they're a real customer
+      resetGenCount();
       // Redirect to Etsy listing
       window.open(res.listing_url, "_blank");
     } catch (err) {
@@ -224,18 +256,20 @@ export default function ExportPanel({
     <div className="export-section">
       <h2>Generate & Download</h2>
 
-      {/* Generate button — available to everyone for previewing */}
+      {/* Generate button — available to everyone, limited for non-admin */}
       <button
         className="btn btn-primary btn-full generate-btn"
-        onClick={onGenerate}
-        disabled={!canGenerate || generating}
+        onClick={isAdmin ? onGenerate : handleGenerateWithLimit}
+        disabled={!canGenerate || generating || (!isAdmin && genLimitReached)}
       >
         {generating ? (
           <span className="generate-btn-content">
             <span className="spinner-inline" /> Generating...
           </span>
+        ) : genLimitReached && !isAdmin ? (
+          "Design limit reached — Buy your print below"
         ) : (
-          "Generate Map"
+          `Generate Map${!isAdmin ? ` (${MAX_FREE_GENERATES - genCount} free left)` : ""}`
         )}
       </button>
 
