@@ -444,6 +444,15 @@ async def customer_publish(
     if not file_record:
         raise HTTPException(status_code=404, detail="Map not found. Please generate a map first.")
 
+    # Duplicate prevention — if this file already has an Etsy listing, return it
+    if file_record.etsy_listing_id and file_record.etsy_listing_url:
+        return EtsyPublishResponse(
+            listing_id=file_record.etsy_listing_id,
+            listing_url=file_record.etsy_listing_url,
+            status="active",
+            price=SIZE_PRICING.get(file_record.board_size, DEFAULT_PRICE),
+        )
+
     # Get a valid access token (refreshes if expired)
     try:
         access_token = await get_valid_token(admin, creds=creds)
@@ -490,7 +499,7 @@ async def customer_publish(
     # Price based on print size
     price = SIZE_PRICING.get(file_record.board_size, DEFAULT_PRICE)
 
-    # 1. Create draft listing
+    # 1. Create draft listing (quantity=1 so it auto-removes after purchase)
     try:
         listing = await create_draft_listing(
             access_token=access_token,
@@ -499,6 +508,7 @@ async def customer_publish(
             description=description,
             price=price,
             tags=tag_list,
+            quantity=1,
             creds=creds,
         )
     except ValueError as e:
@@ -589,6 +599,15 @@ async def customer_publish(
         log.warning("Etsy listing activation failed (listing remains as draft): %s", e)
 
     listing_url = f"https://www.etsy.com/listing/{listing_id}"
+
+    # Save listing info to file record (duplicate prevention + tracking)
+    file_record.etsy_listing_id = listing_id
+    file_record.etsy_listing_url = listing_url
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+
     log.info("Customer publish: Etsy listing %d (%s) for %s", listing_id, listing_status, file_record.location_name)
 
     return EtsyPublishResponse(

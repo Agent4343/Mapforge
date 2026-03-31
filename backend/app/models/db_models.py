@@ -73,6 +73,8 @@ class GeneratedFile(Base):
     province = Column(String(100), nullable=True, index=True)
     lat = Column(Float, nullable=True)
     lon = Column(Float, nullable=True)
+    etsy_listing_id = Column(Integer, nullable=True, index=True)
+    etsy_listing_url = Column(String(512), nullable=True)
     created_at = Column(DateTime(timezone=True), default=_utcnow)
 
     owner = relationship("User", back_populates="files")
