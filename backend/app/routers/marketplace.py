@@ -440,6 +440,13 @@ async def ai_describe(
     Requires ANTHROPIC_API_KEY to be configured. Falls back to empty
     values if the AI service is unavailable.
     """
+    from app.config import settings
+    if not settings.ANTHROPIC_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="ANTHROPIC_API_KEY is not configured. Add it to your environment variables.",
+        )
+
     result = await ai_generate_listing(
         location_name=location_name,
         style=style,
@@ -452,7 +459,7 @@ async def ai_describe(
     if not any(result.values()):
         raise HTTPException(
             status_code=503,
-            detail="AI description service unavailable. Check ANTHROPIC_API_KEY configuration.",
+            detail="AI description generation failed. Check Railway logs for details.",
         )
 
     return {

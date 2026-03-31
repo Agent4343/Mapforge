@@ -359,7 +359,12 @@ async def _call_claude(
             )
 
         if resp.status_code != 200:
-            logger.warning("Claude API error %d: %s", resp.status_code, resp.text[:200])
+            logger.error(
+                "Claude API error %d: %s (key=%s...)",
+                resp.status_code,
+                resp.text[:300],
+                api_key[:8] if api_key else "NONE",
+            )
             return None
 
         data = resp.json()
@@ -377,8 +382,8 @@ async def _call_claude(
         return None
 
     except httpx.TimeoutException:
-        logger.warning("Claude API timeout for description generation")
+        logger.error("Claude API timeout for description generation")
         return None
     except Exception as e:
-        logger.warning("Claude API call failed: %s", e)
+        logger.error("Claude API call failed: %s: %s", type(e).__name__, e)
         return None
