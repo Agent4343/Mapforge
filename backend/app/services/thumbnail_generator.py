@@ -74,7 +74,7 @@ COLOR_THEMES = {
             "mat": "#ffffff",
             "map_bg": "#faf6f0",
             "land": "#d8c8a8",
-            "land_stroke": "#a89060",
+            "land_stroke": "#8a7040",
             "water": "#7ab0d8",
             "water_stroke": "#3a80b8",
             "street_major": "#1a1a1a",

@@ -677,6 +677,7 @@ def _generate_print_svg(
         # Province/lake/park maps: filled polygon is the main visual.
         # With water-colored background, the land shape pops beautifully.
         # Use a bold stroke to define the coastline edge.
+        coast_w = "1.5" if is_province_map else "1.0"
         for exterior, holes in polygons:
             path_d = _coords_to_path(exterior)
             for hole in holes:
@@ -684,7 +685,7 @@ def _generate_print_svg(
             lines.append(
                 f'      <path d="{path_d}"'
                 f' fill="{theme["land"]}" stroke="{theme["land_stroke"]}"'
-                f' stroke-width="1.0" fill-rule="evenodd" stroke-linejoin="round"/>'
+                f' stroke-width="{coast_w}" fill-rule="evenodd" stroke-linejoin="round"/>'
             )
     lines.append("    </g>")
 
