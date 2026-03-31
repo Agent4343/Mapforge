@@ -124,7 +124,7 @@ async def fetch_water_features(
     # Simplified query — combine water selectors to reduce Overpass load.
     # Using a shorter timeout (30s instead of 45s) to fail faster and try
     # the next endpoint sooner.
-    query = f"""[out:json][timeout:30];(way["natural"="water"]({south},{west},{north},{east});way["natural"="coastline"]({south},{west},{north},{east});way["waterway"~"^(river|stream|canal)$"]({south},{west},{north},{east});relation["natural"="water"]({south},{west},{north},{east});way["water"~"^(lake|reservoir|pond)$"]({south},{west},{north},{east});relation["water"~"^(lake|reservoir|pond)$"]({south},{west},{north},{east}););out body;>;out skel qt;"""
+    query = f"""[out:json][timeout:20];(way["natural"="water"]({south},{west},{north},{east});way["natural"="coastline"]({south},{west},{north},{east});way["waterway"~"^(river|stream|canal)$"]({south},{west},{north},{east});relation["natural"="water"]({south},{west},{north},{east});way["water"~"^(lake|reservoir|pond)$"]({south},{west},{north},{east});relation["water"~"^(lake|reservoir|pond)$"]({south},{west},{north},{east}););out body;>;out skel qt;"""
 
     log.info(f"Fetching water features for bbox: {bbox}")
 

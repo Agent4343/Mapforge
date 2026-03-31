@@ -148,7 +148,7 @@ async def _fetch_with_fallback(query: str, timeout_per_endpoint: float = 20.0, t
 def _build_area_query(area_id: int, highway_filter: str) -> str:
     """Build an Overpass area query (for relations with known OSM ID)."""
     return (
-        f'[out:json][timeout:30];'
+        f'[out:json][timeout:20];'
         f'area({area_id})->.a;'
         f'way["highway"~"^({highway_filter})$"](area.a);'
         f'out body;>;out skel qt;'
@@ -159,7 +159,7 @@ def _build_bbox_query(bbox: tuple, highway_filter: str) -> str:
     """Build an Overpass bbox query."""
     south, west, north, east = bbox
     return (
-        f'[out:json][timeout:30];'
+        f'[out:json][timeout:20];'
         f'way["highway"~"^({highway_filter})$"]({south},{west},{north},{east});'
         f'out body;>;out skel qt;'
     )

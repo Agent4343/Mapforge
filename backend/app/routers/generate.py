@@ -256,7 +256,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
 
     async def _get_water_staggered():
         if need_streets:
-            await asyncio.sleep(0.5)  # stagger to reduce Overpass contention
+            await asyncio.sleep(1.0)  # stagger to reduce Overpass contention
         return await _get_water()
 
     tasks = []
