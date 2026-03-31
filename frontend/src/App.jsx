@@ -213,7 +213,7 @@ export default function App() {
       setShowLanding(false);
       const VALID_PRODUCT_TYPES = ["lake", "province", "city", "community", "park", "name_sign"];
       const VALID_BOARD_SIZES = ["small", "medium", "large", "xl", "max", "print_8x10", "print_11x14", "print_16x20", "print_18x24", "print_24x36"];
-      const VALID_COLOR_THEMES = ["classic", "modern_dark", "rose_gold", "midnight", "sage", "minimal"];
+      const VALID_COLOR_THEMES = ["classic", "modern_dark", "minimal", "navy_gold", "sage", "vintage_map"];
       const updates = {};
       if (params.get("product_type") && VALID_PRODUCT_TYPES.includes(params.get("product_type"))) updates.productType = params.get("product_type");
       if (params.get("board_size") && VALID_BOARD_SIZES.includes(params.get("board_size"))) updates.boardSize = params.get("board_size");
