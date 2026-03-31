@@ -638,10 +638,11 @@ def _generate_print_svg(
     is_street_map = product_type in ("city", "community", "name_sign")
     has_streets = streets_data and (streets_data.get("major_roads") or streets_data.get("minor_roads"))
 
-    # Land shadow — render BEFORE geography so it appears behind the land mass
-    # Sparse/rural areas get a deeper shadow for more visual depth
+    # Land shadow — render BEFORE geography so it appears behind the land mass.
+    # Province maps: lighter shadow — the smooth coastline is elegant on its own.
+    # Sparse/rural areas get a deeper shadow for more visual depth.
     if land_shadow and not full_bleed_map:
-        shadow_opacity = "0.18" if is_sparse_area else "0.12"
+        shadow_opacity = "0.08" if is_province_map else ("0.18" if is_sparse_area else "0.12")
         lines.append(f'    <g id="land_shadow" opacity="{shadow_opacity}">')
         shadow_scale = 0.006 if is_sparse_area else 0.004
         shadow_offset = round(min(board_w, board_h) * shadow_scale, 2)
@@ -692,7 +693,7 @@ def _generate_print_svg(
         # With water-colored background, the land shape pops beautifully.
         # Province coastlines: thin and clean. The geometry has hundreds of
         # detailed points (bays, coves) that look messy at thick widths.
-        coast_w = "0.3" if is_province_map else "0.6"
+        coast_w = "0.25" if is_province_map else "0.6"
         for exterior, holes in polygons:
             # Fill with holes (evenodd cuts out bays/inlets)
             path_d = _coords_to_path(exterior)
@@ -788,12 +789,17 @@ def _generate_print_svg(
     if layout.get("vignette", False):
         lines.append('    <g id="vignette">')
         vig_id = "vig_grad"
-        # City maps: fade to mat (white) for clean dissolve. Province: fade to map_bg.
-        vig_color = theme["mat"] if is_street_map else theme["map_bg"]
+        # City maps: fade to mat (white) for clean dissolve.
+        # Province: very subtle fade to mat — the coastline shape should be fully visible.
+        vig_color = theme["mat"] if is_street_map else theme["mat"]
         if is_street_map:
             # Strong circular fade — streets dissolve into white mat
             vig_inner = "45%"
-            vig_opacity = "1.0"  # fully opaque at edges = clean dissolve
+            vig_opacity = "1.0"
+        elif is_province_map:
+            # Province: very gentle edge fade — don't hide the coastline
+            vig_inner = "65%"
+            vig_opacity = "0.25"
         elif is_sparse_area:
             vig_inner = "50%"
             vig_opacity = "0.45"
@@ -1173,44 +1179,55 @@ def _generate_vintage_map_svg(
     if include_bleed:
         lines.append(f'  <g transform="translate({bleed}, {bleed})">')
 
-    # --- Aged parchment via gradients (cairosvg-compatible, no SVG filters) ---
+    # --- Defs: gradients, patterns, clips ---
     lines.append("  <defs>")
-    # Edge darkening vignette — large radial gradient for aged edges
-    lines.append('    <radialGradient id="vig" cx="50%" cy="45%" r="70%">')
-    lines.append(f'      <stop offset="30%" stop-color="{parchment}" stop-opacity="0"/>')
-    lines.append(f'      <stop offset="85%" stop-color="{parchment_edge}" stop-opacity="0.5"/>')
-    lines.append(f'      <stop offset="100%" stop-color="#8a7a5a" stop-opacity="0.6"/>')
-    lines.append('    </radialGradient>')
-    # Corner darkening — extra aging in corners
-    lines.append('    <radialGradient id="corner_tl" cx="0%" cy="0%" r="60%">')
-    lines.append(f'      <stop offset="0%" stop-color="#6a5a3a" stop-opacity="0.25"/>')
-    lines.append(f'      <stop offset="100%" stop-color="{parchment}" stop-opacity="0"/>')
-    lines.append('    </radialGradient>')
-    lines.append('    <radialGradient id="corner_br" cx="100%" cy="100%" r="60%">')
-    lines.append(f'      <stop offset="0%" stop-color="#6a5a3a" stop-opacity="0.3"/>')
-    lines.append(f'      <stop offset="100%" stop-color="{parchment}" stop-opacity="0"/>')
-    lines.append('    </radialGradient>')
-    # Subtle speckle pattern for paper grain
-    lines.append(f'    <pattern id="grain" width="12" height="12" patternUnits="userSpaceOnUse">')
-    lines.append(f'      <circle cx="1.5" cy="3" r="0.12" fill="#a09070" opacity="0.06"/>')
-    lines.append(f'      <circle cx="7" cy="1" r="0.08" fill="#907858" opacity="0.05"/>')
-    lines.append(f'      <circle cx="4" cy="8" r="0.1" fill="#b0a080" opacity="0.04"/>')
-    lines.append(f'      <circle cx="10" cy="5.5" r="0.09" fill="#988868" opacity="0.05"/>')
-    lines.append(f'      <circle cx="2.5" cy="10.5" r="0.07" fill="#a89878" opacity="0.04"/>')
-    lines.append(f'      <circle cx="9" cy="10" r="0.11" fill="#a09060" opacity="0.05"/>')
-    lines.append(f'    </pattern>')
-    # Larger stain-like spots — very subtle, large tile
-    lines.append(f'    <pattern id="stains" width="80" height="80" patternUnits="userSpaceOnUse">')
-    lines.append(f'      <circle cx="15" cy="22" r="8" fill="#b8a878" opacity="0.04"/>')
-    lines.append(f'      <circle cx="55" cy="10" r="5" fill="#a89868" opacity="0.03"/>')
-    lines.append(f'      <circle cx="35" cy="60" r="10" fill="#c0a870" opacity="0.035"/>')
-    lines.append(f'      <circle cx="68" cy="50" r="6" fill="#a89060" opacity="0.025"/>')
-    lines.append(f'    </pattern>')
-    # Horizontal line hatching pattern for water areas (classic cartographic style)
-    lines.append(f'    <pattern id="water_hatch" width="3" height="3" patternUnits="userSpaceOnUse"'
-                 f' patternTransform="rotate(-15)">')
-    lines.append(f'      <line x1="0" y1="1.5" x2="3" y2="1.5" stroke="#5a7a8a" stroke-width="0.15" opacity="0.2"/>')
-    lines.append(f'    </pattern>')
+
+    if is_province:
+        # Province: clean, minimal background — no textures, grain, or aging.
+        # The smooth parchment + clean coastline shape IS the art.
+        # A subtle edge vignette focuses attention on the map center.
+        lines.append('    <radialGradient id="vig" cx="50%" cy="45%" r="72%">')
+        lines.append(f'      <stop offset="50%" stop-color="{parchment}" stop-opacity="0"/>')
+        lines.append(f'      <stop offset="100%" stop-color="{parchment_edge}" stop-opacity="0.3"/>')
+        lines.append('    </radialGradient>')
+    else:
+        # City/town/village: full vintage texture for rich, aged look
+        lines.append('    <radialGradient id="vig" cx="50%" cy="45%" r="70%">')
+        lines.append(f'      <stop offset="30%" stop-color="{parchment}" stop-opacity="0"/>')
+        lines.append(f'      <stop offset="85%" stop-color="{parchment_edge}" stop-opacity="0.5"/>')
+        lines.append(f'      <stop offset="100%" stop-color="#8a7a5a" stop-opacity="0.6"/>')
+        lines.append('    </radialGradient>')
+        # Corner darkening — extra aging in corners
+        lines.append('    <radialGradient id="corner_tl" cx="0%" cy="0%" r="60%">')
+        lines.append(f'      <stop offset="0%" stop-color="#6a5a3a" stop-opacity="0.25"/>')
+        lines.append(f'      <stop offset="100%" stop-color="{parchment}" stop-opacity="0"/>')
+        lines.append('    </radialGradient>')
+        lines.append('    <radialGradient id="corner_br" cx="100%" cy="100%" r="60%">')
+        lines.append(f'      <stop offset="0%" stop-color="#6a5a3a" stop-opacity="0.3"/>')
+        lines.append(f'      <stop offset="100%" stop-color="{parchment}" stop-opacity="0"/>')
+        lines.append('    </radialGradient>')
+        # Subtle speckle pattern for paper grain
+        lines.append(f'    <pattern id="grain" width="12" height="12" patternUnits="userSpaceOnUse">')
+        lines.append(f'      <circle cx="1.5" cy="3" r="0.12" fill="#a09070" opacity="0.06"/>')
+        lines.append(f'      <circle cx="7" cy="1" r="0.08" fill="#907858" opacity="0.05"/>')
+        lines.append(f'      <circle cx="4" cy="8" r="0.1" fill="#b0a080" opacity="0.04"/>')
+        lines.append(f'      <circle cx="10" cy="5.5" r="0.09" fill="#988868" opacity="0.05"/>')
+        lines.append(f'      <circle cx="2.5" cy="10.5" r="0.07" fill="#a89878" opacity="0.04"/>')
+        lines.append(f'      <circle cx="9" cy="10" r="0.11" fill="#a09060" opacity="0.05"/>')
+        lines.append(f'    </pattern>')
+        # Larger stain-like spots
+        lines.append(f'    <pattern id="stains" width="80" height="80" patternUnits="userSpaceOnUse">')
+        lines.append(f'      <circle cx="15" cy="22" r="8" fill="#b8a878" opacity="0.04"/>')
+        lines.append(f'      <circle cx="55" cy="10" r="5" fill="#a89868" opacity="0.03"/>')
+        lines.append(f'      <circle cx="35" cy="60" r="10" fill="#c0a870" opacity="0.035"/>')
+        lines.append(f'      <circle cx="68" cy="50" r="6" fill="#a89060" opacity="0.025"/>')
+        lines.append(f'    </pattern>')
+        # Horizontal line hatching pattern for water areas
+        lines.append(f'    <pattern id="water_hatch" width="3" height="3" patternUnits="userSpaceOnUse"'
+                     f' patternTransform="rotate(-15)">')
+        lines.append(f'      <line x1="0" y1="1.5" x2="3" y2="1.5" stroke="#5a7a8a" stroke-width="0.15" opacity="0.2"/>')
+        lines.append(f'    </pattern>')
+
     # Clip for map content
     lines.append(
         f'    <clipPath id="map_clip">'
@@ -1229,36 +1246,45 @@ def _generate_vintage_map_svg(
     lines.append("  </defs>")
     lines.append("")
 
-    # Layer 1: Parchment background built from layered gradients
+    # Layer 1: Parchment background
     lines.append('  <g id="parchment_background">')
-    # Base color
     lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="{parchment}"/>')
-    # Paper grain speckle
-    lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#grain)"/>')
-    # Coffee stain spots
-    lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#stains)"/>')
-    # Edge vignette
-    lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#vig)"/>')
-    # Corner aging
-    lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#corner_tl)"/>')
-    lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#corner_br)"/>')
+    if is_province:
+        # Province: only a subtle edge vignette — no grain, stains, or corner aging
+        lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#vig)"/>')
+    else:
+        # City/town: full aged paper treatment
+        lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#grain)"/>')
+        lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#stains)"/>')
+        lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#vig)"/>')
+        lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#corner_tl)"/>')
+        lines.append(f'    <rect width="{board_w}" height="{board_h}" fill="url(#corner_br)"/>')
     lines.append("  </g>")
     lines.append("")
 
-    # Layer 2: Decorative double-line border
+    # Layer 2: Decorative border
     border_outer = round(margin * 0.55, 2)
     border_inner = round(margin * 0.72, 2)
     lines.append('  <g id="decorative_border">')
-    lines.append(
-        f'    <rect x="{border_outer}" y="{border_outer}"'
-        f' width="{round(board_w - 2 * border_outer, 2)}" height="{round(board_h - 2 * border_outer, 2)}"'
-        f' fill="none" stroke="{ink}" stroke-width="0.7"/>'
-    )
-    lines.append(
-        f'    <rect x="{border_inner}" y="{border_inner}"'
-        f' width="{round(board_w - 2 * border_inner, 2)}" height="{round(board_h - 2 * border_inner, 2)}"'
-        f' fill="none" stroke="{ink}" stroke-width="0.3"/>'
-    )
+    if is_province:
+        # Province: single clean thin border — elegant and minimal
+        lines.append(
+            f'    <rect x="{border_outer}" y="{border_outer}"'
+            f' width="{round(board_w - 2 * border_outer, 2)}" height="{round(board_h - 2 * border_outer, 2)}"'
+            f' fill="none" stroke="{ink}" stroke-width="0.4"/>'
+        )
+    else:
+        # City/town: classic double-line border for vintage feel
+        lines.append(
+            f'    <rect x="{border_outer}" y="{border_outer}"'
+            f' width="{round(board_w - 2 * border_outer, 2)}" height="{round(board_h - 2 * border_outer, 2)}"'
+            f' fill="none" stroke="{ink}" stroke-width="0.7"/>'
+        )
+        lines.append(
+            f'    <rect x="{border_inner}" y="{border_inner}"'
+            f' width="{round(board_w - 2 * border_inner, 2)}" height="{round(board_h - 2 * border_inner, 2)}"'
+            f' fill="none" stroke="{ink}" stroke-width="0.3"/>'
+        )
     lines.append("  </g>")
     lines.append("")
 
@@ -1273,11 +1299,12 @@ def _generate_vintage_map_svg(
         f'      <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"'
         f' fill="{water_tint}"/>'
     )
-    # Add line hatching over water for cartographic texture
-    lines.append(
-        f'      <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"'
-        f' fill="url(#water_hatch)"/>'
-    )
+    # Province: clean water fill only. City/town: add hatching for texture.
+    if not is_province:
+        lines.append(
+            f'      <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"'
+            f' fill="url(#water_hatch)"/>'
+        )
     lines.append("    </g>")
 
     # Layer 4: Land polygons — filled with parchment so land stands out from water
@@ -1308,26 +1335,27 @@ def _generate_vintage_map_svg(
                 f' stroke-width="{coastline_width}" stroke-linejoin="round"/>'
             )
             path_count += 1
-        # Re-apply paper grain and stain textures on land only (clipped to land shapes)
         lines.append("    </g>")
-        # Overlay grain on the land areas for consistent texture
-        lines.append('    <g id="land_texture">')
-        for exterior, holes in polygons:
-            if len(exterior) < 3:
-                continue
-            path_d = _coords_to_path(exterior)
-            for hole in holes:
-                if len(hole) >= 3:
-                    path_d += " " + _coords_to_path(hole)
-            lines.append(
-                f'      <path d="{path_d}"'
-                f' fill="url(#grain)" fill-rule="evenodd" stroke="none"/>'
-            )
-            lines.append(
-                f'      <path d="{path_d}"'
-                f' fill="url(#stains)" fill-rule="evenodd" stroke="none"/>'
-            )
-        lines.append("    </g>")
+        # Province: no land texture (clean, smooth look).
+        # City/town: overlay grain + stains on land for consistent aged texture.
+        if not is_province:
+            lines.append('    <g id="land_texture">')
+            for exterior, holes in polygons:
+                if len(exterior) < 3:
+                    continue
+                path_d = _coords_to_path(exterior)
+                for hole in holes:
+                    if len(hole) >= 3:
+                        path_d += " " + _coords_to_path(hole)
+                lines.append(
+                    f'      <path d="{path_d}"'
+                    f' fill="url(#grain)" fill-rule="evenodd" stroke="none"/>'
+                )
+                lines.append(
+                    f'      <path d="{path_d}"'
+                    f' fill="url(#stains)" fill-rule="evenodd" stroke="none"/>'
+                )
+            lines.append("    </g>")
 
     # Layer 5: Inland water features — lakes, rivers on top of land
     # For dense maps (provinces/islands), only show LARGE water polygons,
@@ -1437,9 +1465,9 @@ def _generate_vintage_map_svg(
             allowed_roads = {"motorway", "motorway_link", "trunk", "trunk_link",
                              "primary", "primary_link"}
             vintage_widths = {
-                "motorway": 0.8, "motorway_link": 0.6,
-                "trunk": 0.7, "trunk_link": 0.5,
-                "primary": 0.6, "primary_link": 0.45,
+                "motorway": 0.5, "motorway_link": 0.35,
+                "trunk": 0.45, "trunk_link": 0.3,
+                "primary": 0.35, "primary_link": 0.25,
             }
             skip_minor_roads = True
             # Flag: no casing for province roads — just single ink lines
@@ -2035,15 +2063,20 @@ def _render_print_water(lines: list[str], water_data: dict, processed: dict, the
                 continue
 
         path_d = _coords_to_path(board_coords)
-        # Use gradient for larger water bodies (>6 points suggests a significant feature)
         fill = "url(#water_grad)" if gradient and len(coords) > 6 else theme["water"]
-        # Province water: no stroke for cleaner look; city water: subtle stroke
-        stroke_w = "0.3" if is_province else "0.5"
-        lines.append(
-            f'      <path d="{path_d}"'
-            f' fill="{fill}" stroke="{theme["water_stroke"]}"'
-            f' stroke-width="{stroke_w}" stroke-linejoin="round"/>'
-        )
+        if is_province:
+            # Province: fill only, no stroke — strokes create visual clutter
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="{fill}" stroke="none"/>'
+            )
+        else:
+            # City/town: subtle stroke for definition
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="{fill}" stroke="{theme["water_stroke"]}"'
+                f' stroke-width="0.5" stroke-linejoin="round"/>'
+            )
 
     # Skip waterway lines (rivers/streams) for provinces — they create visual noise
     if not is_province:
@@ -2063,15 +2096,11 @@ def _render_print_water(lines: list[str], water_data: dict, processed: dict, the
 
 
 def _render_print_streets(lines: list[str], streets_data: dict, processed: dict, theme: dict, product_type: str = "city"):
-    """Render streets with professional cased road styling.
+    """Render streets with professional styling.
 
-    Professional map prints use "cased roads" — each road is drawn twice:
-    1. A wider outer stroke (the "casing") in a dark color
-    2. A narrower inner stroke (the "fill") in a lighter color
-    This creates the classic road map look with clear visual hierarchy.
-
-    At province scale, roads are thicker and only major roads are shown.
-    At city scale, all roads are rendered with fine, delicate lines.
+    City maps use "cased roads" — each road drawn twice (dark casing + light fill).
+    Province maps use single thin lines — the coastline shape is the art,
+    roads are subtle structural context only.
     """
     transform = processed.get("transform")
     is_province_map = product_type in ("province",)
@@ -2079,25 +2108,18 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
     # Theme colors
     major_color = theme.get("street_major", "#333333")
     minor_color = theme.get("street_minor", "#666666")
-    # Road fill (inner color) — must contrast with the dark casing.
-    # For cities: use map_bg (white/cream) so roads have crisp white centers.
-    # For provinces: use white for maximum contrast on the land mass.
-    # Using "land" color (tan) would make roads blend into the background.
     map_bg_color = theme.get("map_bg", "#ffffff")
     land_color = theme.get("land", "#e8dfd0")
 
-    # Width multipliers for province vs city scale
     if is_province_map:
-        # Province: thin, clean highway lines. The coastline shape is the art —
-        # roads are subtle structural context. No thick casing at this scale.
+        # Province: thin single lines. No casing — roads are subtle context.
         casing_widths = {
-            "motorway": 1.0, "motorway_link": 0.7,
-            "trunk": 0.9, "trunk_link": 0.6,
-            "primary": 0.7, "primary_link": 0.5,
-            "secondary": 0.5, "secondary_link": 0.4,
-            "tertiary": 0.35, "tertiary_link": 0.3,
-            "residential": 0.25, "unclassified": 0.25,
-            "living_street": 0.2, "service": 0.15, "track": 0.12,
+            "motorway": 0.5, "motorway_link": 0.35,
+            "trunk": 0.45, "trunk_link": 0.3,
+            "primary": 0.35, "primary_link": 0.25,
+            "secondary": 0.25, "secondary_link": 0.2,
+            "tertiary": 0.18, "tertiary_link": 0.15,
+            "residential": 0.12, "unclassified": 0.12,
         }
         fill_ratio = 0.55
     elif product_type in ("community", "park"):
@@ -2192,7 +2214,6 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
 
     if is_dark_theme:
         # Dark theme: single bright lines, no casing needed.
-        # Minor roads first (bottom layer, thin and subtle)
         for path_d, road_class, cw in minor_paths:
             sw = round(cw * 0.5, 2)
             lines.append(
@@ -2200,7 +2221,6 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
                 f' fill="none" stroke="{minor_color}" stroke-width="{sw}"'
                 f' stroke-linecap="round" stroke-linejoin="round"/>'
             )
-        # Major roads on top (bold and prominent)
         for path_d, road_class, cw in major_paths:
             sw = round(cw * 0.6, 2)
             lines.append(
@@ -2208,12 +2228,20 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
                 f' fill="none" stroke="{major_color}" stroke-width="{sw}"'
                 f' stroke-linecap="round" stroke-linejoin="round"/>'
             )
+    elif is_province_map:
+        # Province: single thin lines — clean and subtle.
+        # The coastline shape is the art, roads just add structure.
+        for path_d, road_class, cw in major_paths:
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="none" stroke="{major_color}" stroke-width="{cw}"'
+                f' stroke-linecap="round" stroke-linejoin="round"/>'
+            )
     else:
-        # Light theme: 4-layer cased roads for the premium cartographic look.
-        # Dark casing (outer) + white/cream fill (inner) = crisp road edges.
-        road_fill = "#ffffff" if is_province_map else map_bg_color
+        # City/town: 4-layer cased roads for premium cartographic look.
+        road_fill = map_bg_color
 
-        # Layer 1: Minor road casings (bottom — dark outer strokes)
+        # Layer 1: Minor road casings
         for path_d, road_class, cw in minor_paths:
             lines.append(
                 f'      <path d="{path_d}"'
@@ -2221,7 +2249,7 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
                 f' stroke-linecap="round" stroke-linejoin="round"/>'
             )
 
-        # Layer 2: Minor road fills (white/cream inner strokes)
+        # Layer 2: Minor road fills
         for path_d, road_class, cw in minor_paths:
             fw = round(cw * fill_ratio, 2)
             lines.append(
@@ -2230,7 +2258,7 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
                 f' stroke-linecap="round" stroke-linejoin="round"/>'
             )
 
-        # Layer 3: Major road casings (on top of minor roads)
+        # Layer 3: Major road casings
         for path_d, road_class, cw in major_paths:
             lines.append(
                 f'      <path d="{path_d}"'
@@ -2238,7 +2266,7 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
                 f' stroke-linecap="round" stroke-linejoin="round"/>'
             )
 
-        # Layer 4: Major road fills (topmost — white/cream centers)
+        # Layer 4: Major road fills
         for path_d, road_class, cw in major_paths:
             fw = round(cw * fill_ratio, 2)
             lines.append(

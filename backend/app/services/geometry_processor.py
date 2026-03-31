@@ -17,9 +17,12 @@ from app.models.schemas import ProductType, BOARD_DIMENSIONS_INCHES
 # WGS84 → Web Mercator
 _transformer = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
 
-# Douglas-Peucker tolerances (meters) per product type
+# Douglas-Peucker tolerances (meters) per product type.
+# Province tolerance is high (500m) to produce smooth, elegant coastlines
+# suitable for wall art. Detailed bays/inlets look jagged at poster scale —
+# smoothing them produces the clean shapes seen in premium map prints.
 SIMPLIFICATION_TOLERANCES = {
-    ProductType.province: 200.0,
+    ProductType.province: 500.0,
     ProductType.lake: 50.0,
     ProductType.city: 75.0,
     ProductType.community: 30.0,
