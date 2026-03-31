@@ -19,7 +19,7 @@ _transformer = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
 
 # Douglas-Peucker tolerances (meters) per product type
 SIMPLIFICATION_TOLERANCES = {
-    ProductType.province: 800.0,
+    ProductType.province: 200.0,
     ProductType.lake: 50.0,
     ProductType.city: 75.0,
     ProductType.community: 30.0,
@@ -169,11 +169,11 @@ def _get_tolerance(geom_m: Polygon | MultiPolygon, product_type: ProductType, si
     if extent < 5000:       # < 5km
         return base * 0.3
     elif extent < 50000:    # < 50km
-        return base * 0.7
+        return base * 0.5
     elif extent < 500000:   # < 500km
         return base
-    else:                   # > 500km (provinces)
-        return base * 1.5
+    else:                   # > 500km (large provinces)
+        return base * 1.2
 
 
 def _scale_to_board(
