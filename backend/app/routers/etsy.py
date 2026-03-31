@@ -328,24 +328,35 @@ async def etsy_publish(
             except ValueError as e:
                 log.warning("Etsy thumbnail upload failed: %s", e)
 
-    # 4. Upload instruction file as the digital download, then set type to "download".
-    #    The instruction file tells buyers to check Etsy messages for their
-    #    unique design link (sent automatically by the webhook handler).
+    # 4. Upload the print-ready PNG as the digital download file.
     #    Per Etsy docs: create draft -> upload file -> PATCH type=download.
     try:
-        from app.services.etsy_client import generate_instruction_file
-        instruction_bytes = generate_instruction_file(
-            shop_name=user.etsy_shop_name or "MapForgeDesign",
-            frontend_url=settings.FRONTEND_URL or "https://mapforge-production.up.railway.app",
-        )
-        await upload_listing_file(
-            access_token=access_token,
-            shop_id=shop_id,
-            listing_id=listing_id,
-            file_bytes=instruction_bytes,
-            filename="MapForge_Your_Custom_Map_Instructions.txt",
-            creds=creds,
-        )
+        # Use the high-res print PNG as the deliverable
+        print_key = file_record.svg_storage_key.replace("svg/", "print/").replace(".svg", "_print.png")
+        print_bytes = await retrieve_file(print_key)
+        if print_bytes:
+            safe_name = file_record.location_name.replace(' ', '_').replace("'", "")
+            await upload_listing_file(
+                access_token=access_token,
+                shop_id=shop_id,
+                listing_id=listing_id,
+                file_bytes=print_bytes,
+                filename=f"MapForge_{safe_name}_Print.png",
+                creds=creds,
+            )
+        else:
+            log.warning("Print PNG not found at %s — falling back to etsy image", print_key)
+            # Fall back to the etsy listing image if print not available
+            if etsy_img:
+                safe_name = file_record.location_name.replace(' ', '_').replace("'", "")
+                await upload_listing_file(
+                    access_token=access_token,
+                    shop_id=shop_id,
+                    listing_id=listing_id,
+                    file_bytes=etsy_img,
+                    filename=f"MapForge_{safe_name}.png",
+                    creds=creds,
+                )
         # Now mark the listing as a digital download
         await update_listing_type(
             access_token=access_token,
