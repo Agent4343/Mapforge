@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { createListing, aiDescribe, getEtsyStatus, connectEtsy, disconnectEtsy, publishToEtsy, getShowcaseCities, showcasePublish } from "../services/api.js";
+import { createListing, aiDescribe, getEtsyStatus, connectEtsy, disconnectEtsy, publishToEtsy, customerPublish, getShowcaseCities, showcasePublish } from "../services/api.js";
 
 export default function ExportPanel({
   result,
@@ -35,6 +35,10 @@ export default function ExportPanel({
   const [etsyStatus, setEtsyStatus] = useState({ connected: false });
   const [etsyPublishing, setEtsyPublishing] = useState(false);
   const [etsyResult, setEtsyResult] = useState(null);
+
+  // Customer buy flow
+  const [buyLoading, setBuyLoading] = useState(false);
+  const [buyError, setBuyError] = useState(null);
 
   // Showcase state
   const [showcaseCities, setShowcaseCities] = useState([]);
@@ -191,6 +195,21 @@ export default function ExportPanel({
       setListError(err.message);
     } finally {
       setEtsyPublishing(false);
+    }
+  }
+
+  async function handleCustomerBuy() {
+    if (!result || !result.file_id) return;
+    setBuyLoading(true);
+    setBuyError(null);
+    try {
+      const res = await customerPublish(result.file_id);
+      // Redirect to Etsy listing
+      window.open(res.listing_url, "_blank");
+    } catch (err) {
+      setBuyError(err.message);
+    } finally {
+      setBuyLoading(false);
     }
   }
 
@@ -364,21 +383,27 @@ export default function ExportPanel({
       )}
 
       {/* Non-admin visitors: show "Buy on Etsy" CTA after they generate a preview */}
-      {result && !isAdmin && etsyShopUrl && (
+      {result && !isAdmin && result.file_id && (
         <div className="etsy-cta-section">
           <div className="etsy-cta-card">
             <h3>Love your design?</h3>
-            <p>Get your print-ready files — high-resolution PNG, SVG source, and mockup image.</p>
-            <a
-              href={etsyShopUrl}
-              target="_blank"
-              rel="noopener noreferrer"
+            <p>Get this map as a high-resolution print — ready to frame and hang on your wall.</p>
+            <button
               className="btn btn-etsy btn-full etsy-buy-btn"
+              onClick={handleCustomerBuy}
+              disabled={buyLoading}
             >
-              Buy on Etsy — Get Your Files
-            </a>
+              {buyLoading ? (
+                <span className="generate-btn-content">
+                  <span className="spinner-inline" /> Creating your listing...
+                </span>
+              ) : (
+                "Buy This Print on Etsy — $9.99"
+              )}
+            </button>
+            {buyError && <div className="error-message" style={{ marginTop: "8px" }}>{buyError}</div>}
             <p className="etsy-cta-note">
-              After purchase, you'll receive a unique link to download your custom print-ready files.
+              Your custom map will be listed on Etsy. After purchase, you'll get the print-ready PNG file instantly.
             </p>
           </div>
         </div>

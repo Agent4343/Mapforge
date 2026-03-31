@@ -308,8 +308,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         land_shadow=req.land_shadow,
     )
 
-    # Store files + generate derivatives (only for authenticated users)
-    # Visitors just get the SVG preview — no file storage needed
+    # Store files + generate derivatives for all users (guests included for Etsy flow)
     board_w, board_h = processed["board_mm"]
     svg_key = None
     dxf_key = None
@@ -318,76 +317,75 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     print_png_key = None
     etsy_key = None
 
-    if user:
-        svg_key = f"svg/{req.osm_type}_{req.osm_id}_{req.style.value}_{int(board_w)}x{int(board_h)}.svg"
-        try:
-            await store_file(svg_key, result["svg"].encode("utf-8"))
-        except Exception as e:
-            log.error(f"Failed to store SVG: {e}")
-            raise HTTPException(status_code=500, detail="Failed to save generated file. Please try again.")
+    svg_key = f"svg/{req.osm_type}_{req.osm_id}_{req.style.value}_{int(board_w)}x{int(board_h)}.svg"
+    try:
+        await store_file(svg_key, result["svg"].encode("utf-8"))
+    except Exception as e:
+        log.error(f"Failed to store SVG: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save generated file. Please try again.")
 
-        # Generate DXF vector alongside SVG
+    # Generate DXF vector alongside SVG
+    try:
+        dxf_bytes = generate_dxf(
+            processed=processed,
+            location_name=location_name,
+            show_coordinates=req.show_coordinates,
+            font_size_mm=req.font_size_mm,
+            center_latlon=processed.get("center_latlon"),
+            streets_data=streets_data,
+            markers=board_markers,
+        )
+        dxf_key = svg_key.replace("svg/", "dxf/").replace(".svg", ".dxf")
+        await store_file(dxf_key, dxf_bytes)
+    except Exception as e:
+        log.warning(f"DXF generation failed (non-fatal): {e}")
+
+    # Generate STL 3D mesh when contours are available (bathymetric/topo)
+    if contour_data:
         try:
-            dxf_bytes = generate_dxf(
+            stl_bytes = generate_stl(
                 processed=processed,
-                location_name=location_name,
-                show_coordinates=req.show_coordinates,
-                font_size_mm=req.font_size_mm,
-                center_latlon=processed.get("center_latlon"),
-                streets_data=streets_data,
-                markers=board_markers,
+                contour_data=contour_data,
             )
-            dxf_key = svg_key.replace("svg/", "dxf/").replace(".svg", ".dxf")
-            await store_file(dxf_key, dxf_bytes)
+            stl_key = svg_key.replace("svg/", "stl/").replace(".svg", ".stl")
+            await store_file(stl_key, stl_bytes)
+            log.info(f"STL generated: {len(stl_bytes)} bytes")
         except Exception as e:
-            log.warning(f"DXF generation failed (non-fatal): {e}")
+            log.warning(f"STL generation failed (non-fatal): {e}")
 
-        # Generate STL 3D mesh when contours are available (bathymetric/topo)
-        if contour_data:
-            try:
-                stl_bytes = generate_stl(
-                    processed=processed,
-                    contour_data=contour_data,
-                )
-                stl_key = svg_key.replace("svg/", "stl/").replace(".svg", ".stl")
-                await store_file(stl_key, stl_bytes)
-                log.info(f"STL generated: {len(stl_bytes)} bytes")
-            except Exception as e:
-                log.warning(f"STL generation failed (non-fatal): {e}")
+    # Generate PNG thumbnail for Etsy product mockups
+    try:
+        png_bytes = generate_thumbnail(
+            result["svg"],
+            background_color=None,  # Print SVG already has mat + background
+        )
+        thumbnail_key = svg_key.replace("svg/", "thumbnails/").replace(".svg", ".png")
+        await store_file(thumbnail_key, png_bytes, content_type="image/png")
+    except Exception as e:
+        log.warning(f"Thumbnail generation failed (non-fatal): {e}")
 
-        # Generate PNG thumbnail for Etsy product mockups
-        try:
-            png_bytes = generate_thumbnail(
-                result["svg"],
-                background_color=None,  # Print SVG already has mat + background
-            )
-            thumbnail_key = svg_key.replace("svg/", "thumbnails/").replace(".svg", ".png")
-            await store_file(thumbnail_key, png_bytes, content_type="image/png")
-        except Exception as e:
-            log.warning(f"Thumbnail generation failed (non-fatal): {e}")
+    # Generate high-res print PNG from poster SVG (themed, with proper layout)
+    try:
+        print_bytes = generate_print_image(
+            result["svg"],
+            color_theme=req.color_theme,
+            skip_remap=True,
+            board_size=req.board_size.value,
+            dpi=req.print_dpi,
+        )
+        print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
+        await store_file(print_png_key, print_bytes, content_type="image/png")
+    except Exception as e:
+        log.error(f"Print PNG generation failed: {type(e).__name__}: {e}")
+        print_png_key = None
 
-        # Generate high-res print PNG from poster SVG (themed, with proper layout)
-        try:
-            print_bytes = generate_print_image(
-                result["svg"],
-                color_theme=req.color_theme,
-                skip_remap=True,
-                board_size=req.board_size.value,
-                dpi=req.print_dpi,
-            )
-            print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
-            await store_file(print_png_key, print_bytes, content_type="image/png")
-        except Exception as e:
-            log.error(f"Print PNG generation failed: {type(e).__name__}: {e}")
-            print_png_key = None
-
-        # Generate Etsy listing image (4:3 ratio for Etsy grid)
-        try:
-            etsy_bytes = generate_etsy_listing_image(result["svg"])
-            etsy_key = svg_key.replace("svg/", "etsy/").replace(".svg", "_etsy.png")
-            await store_file(etsy_key, etsy_bytes, content_type="image/png")
-        except Exception as e:
-            log.warning(f"Etsy listing image generation failed (non-fatal): {e}")
+    # Generate Etsy listing image (4:3 ratio for Etsy grid)
+    try:
+        etsy_bytes = generate_etsy_listing_image(result["svg"])
+        etsy_key = svg_key.replace("svg/", "etsy/").replace(".svg", "_etsy.png")
+        await store_file(etsy_key, etsy_bytes, content_type="image/png")
+    except Exception as e:
+        log.warning(f"Etsy listing image generation failed (non-fatal): {e}")
 
     # Calculate print pixel dimensions for the response
     print_pixels = None
@@ -399,54 +397,49 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     # Parse province from location name for filtering
     province = _extract_province(location_name)
 
-    # Save to database (only for authenticated users — visitors just get a preview)
+    # Save to database for all users (guests get owner_id=None)
     center = processed.get("center_latlon", (None, None))
-    file_id = None
-
+    file_record = GeneratedFile(
+        owner_id=user.id if user else None,
+        osm_id=req.osm_id,
+        osm_type=req.osm_type,
+        product_type=req.product_type.value,
+        location_name=location_name,
+        display_text=req.text,
+        board_size=req.board_size.value,
+        board_width_mm=board_w,
+        board_height_mm=board_h,
+        style=req.style.value,
+        show_coordinates=req.show_coordinates,
+        font_size_mm=req.font_size_mm,
+        node_count=result["node_count"],
+        path_count=result["path_count"],
+        layer_count=result["layer_count"],
+        svg_storage_key=svg_key,
+        dxf_storage_key=dxf_key,
+        thumbnail_key=thumbnail_key,
+        print_png_key=print_png_key,
+        province=province,
+        lat=center[0],
+        lon=center[1],
+    )
+    db.add(file_record)
+    # For authenticated users, count against monthly generation limit
     if user:
-        file_record = GeneratedFile(
-            owner_id=user.id,
-            osm_id=req.osm_id,
-            osm_type=req.osm_type,
-            product_type=req.product_type.value,
-            location_name=location_name,
-            display_text=req.text,
-            board_size=req.board_size.value,
-            board_width_mm=board_w,
-            board_height_mm=board_h,
-            style=req.style.value,
-            show_coordinates=req.show_coordinates,
-            font_size_mm=req.font_size_mm,
-            node_count=result["node_count"],
-            path_count=result["path_count"],
-            layer_count=result["layer_count"],
-            svg_storage_key=svg_key,
-            dxf_storage_key=dxf_key,
-            thumbnail_key=thumbnail_key,
-            print_png_key=print_png_key,
-            province=province,
-            lat=center[0],
-            lon=center[1],
-        )
-        db.add(file_record)
-        # For Maker tier, only count non-province generations against the monthly limit
-        # (provinces are unlimited for Maker). Free and Pro count all generations.
         is_province_gen = req.product_type.value == "province"
         if user.tier == "maker" and is_province_gen:
             pass  # Provinces don't count against Maker's 20/month limit
         else:
             user.generation_count_this_month += 1
-        try:
-            await db.commit()
-            await db.refresh(file_record)
-            file_id = file_record.id
-        except Exception as e:
-            await db.rollback()
-            log.error(f"Database error saving generated file: {e}")
-            raise HTTPException(status_code=500, detail="Failed to save to library. Please try again.")
-        log.info(f"Generated file {file_id}: {location_name} ({result['node_count']} nodes)")
-    else:
-        log.info(f"Preview generated (visitor): {location_name} ({result['node_count']} nodes)")
+    try:
+        await db.commit()
+        await db.refresh(file_record)
+        file_id = file_record.id
+    except Exception as e:
+        await db.rollback()
+        log.error(f"Database error saving generated file: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save generated file. Please try again.")
+    log.info(f"Generated file {file_id}: {location_name} ({result['node_count']} nodes)")
 
     return GenerateResponse(
         svg=result["svg"],
@@ -588,44 +581,43 @@ async def generate_pin(
     print_png_key = None
     etsy_key = None
 
-    if user:
-        svg_key = f"svg/pin_{req.lat:.4f}_{req.lon:.4f}_{req.style.value}_{int(board_w)}x{int(board_h)}.svg"
-        try:
-            await store_file(svg_key, result["svg"].encode("utf-8"))
-        except Exception as e:
-            log.error(f"Failed to store pin SVG: {e}")
-            raise HTTPException(status_code=500, detail="Failed to save generated file. Please try again.")
+    svg_key = f"svg/pin_{req.lat:.4f}_{req.lon:.4f}_{req.style.value}_{int(board_w)}x{int(board_h)}.svg"
+    try:
+        await store_file(svg_key, result["svg"].encode("utf-8"))
+    except Exception as e:
+        log.error(f"Failed to store pin SVG: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save generated file. Please try again.")
 
-        # Generate thumbnail
-        try:
-            png_bytes = generate_thumbnail(result["svg"], background_color=None)
-            thumbnail_key = svg_key.replace("svg/", "thumbnails/").replace(".svg", ".png")
-            await store_file(thumbnail_key, png_bytes, content_type="image/png")
-        except Exception as e:
-            log.warning(f"Thumbnail generation failed (non-fatal): {e}")
+    # Generate thumbnail
+    try:
+        png_bytes = generate_thumbnail(result["svg"], background_color=None)
+        thumbnail_key = svg_key.replace("svg/", "thumbnails/").replace(".svg", ".png")
+        await store_file(thumbnail_key, png_bytes, content_type="image/png")
+    except Exception as e:
+        log.warning(f"Thumbnail generation failed (non-fatal): {e}")
 
-        # Generate high-res print PNG from the themed print SVG
-        try:
-            print_bytes = generate_print_image(
-                result["svg"],
-                color_theme=req.color_theme,
-                skip_remap=True,
-                board_size=req.board_size.value,
-                dpi=req.print_dpi,
-            )
-            print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
-            await store_file(print_png_key, print_bytes, content_type="image/png")
-        except Exception as e:
-            log.error(f"Print PNG generation failed: {type(e).__name__}: {e}")
-            print_png_key = None
+    # Generate high-res print PNG from the themed print SVG
+    try:
+        print_bytes = generate_print_image(
+            result["svg"],
+            color_theme=req.color_theme,
+            skip_remap=True,
+            board_size=req.board_size.value,
+            dpi=req.print_dpi,
+        )
+        print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
+        await store_file(print_png_key, print_bytes, content_type="image/png")
+    except Exception as e:
+        log.error(f"Print PNG generation failed: {type(e).__name__}: {e}")
+        print_png_key = None
 
-        # Generate Etsy listing image for pin maps
-        try:
-            etsy_bytes = generate_etsy_listing_image(result["svg"])
-            etsy_key = svg_key.replace("svg/", "etsy/").replace(".svg", "_etsy.png")
-            await store_file(etsy_key, etsy_bytes, content_type="image/png")
-        except Exception as e:
-            log.warning(f"Etsy listing image generation failed (non-fatal): {e}")
+    # Generate Etsy listing image for pin maps
+    try:
+        etsy_bytes = generate_etsy_listing_image(result["svg"])
+        etsy_key = svg_key.replace("svg/", "etsy/").replace(".svg", "_etsy.png")
+        await store_file(etsy_key, etsy_bytes, content_type="image/png")
+    except Exception as e:
+        log.warning(f"Etsy listing image generation failed (non-fatal): {e}")
 
     # Calculate print pixel dimensions for the response
     pin_print_pixels = None
@@ -634,45 +626,42 @@ async def generate_pin(
         scale = req.print_dpi / 300
         pin_print_pixels = (int(base_w * scale), int(base_h * scale))
 
-    # Save to database
-    file_id = None
-
+    # Save to database for all users (guests get owner_id=None)
+    file_record = GeneratedFile(
+        owner_id=user.id if user else None,
+        osm_id=0,
+        osm_type="pin",
+        product_type="name_sign",
+        location_name=location_name,
+        display_text=req.label,
+        board_size=req.board_size.value,
+        board_width_mm=board_w,
+        board_height_mm=board_h,
+        style=req.style.value,
+        show_coordinates=req.show_coordinates,
+        font_size_mm=req.font_size_mm,
+        node_count=result["node_count"],
+        path_count=result["path_count"],
+        layer_count=result["layer_count"],
+        svg_storage_key=svg_key,
+        dxf_storage_key=None,
+        thumbnail_key=thumbnail_key,
+        print_png_key=print_png_key,
+        lat=req.lat,
+        lon=req.lon,
+    )
+    db.add(file_record)
     if user:
-        file_record = GeneratedFile(
-            owner_id=user.id,
-            osm_id=0,
-            osm_type="pin",
-            product_type="name_sign",
-            location_name=location_name,
-            display_text=req.label,
-            board_size=req.board_size.value,
-            board_width_mm=board_w,
-            board_height_mm=board_h,
-            style=req.style.value,
-            show_coordinates=req.show_coordinates,
-            font_size_mm=req.font_size_mm,
-            node_count=result["node_count"],
-            path_count=result["path_count"],
-            layer_count=result["layer_count"],
-            svg_storage_key=svg_key,
-            dxf_storage_key=None,
-            thumbnail_key=thumbnail_key,
-            print_png_key=print_png_key,
-            lat=req.lat,
-            lon=req.lon,
-        )
-        db.add(file_record)
         user.generation_count_this_month += 1
-        try:
-            await db.commit()
-            await db.refresh(file_record)
-            file_id = file_record.id
-        except Exception as e:
-            await db.rollback()
-            log.error(f"Database error saving pin file: {e}")
-            raise HTTPException(status_code=500, detail="Failed to save to library. Please try again.")
-    else:
-        log.info(f"Preview generated (visitor): pin at {req.lat},{req.lon}")
+    try:
+        await db.commit()
+        await db.refresh(file_record)
+        file_id = file_record.id
+    except Exception as e:
+        await db.rollback()
+        log.error(f"Database error saving pin file: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save generated file. Please try again.")
+    log.info(f"Generated pin file {file_id}: {location_name} ({result['node_count']} nodes)")
 
     return GenerateResponse(
         svg=result["svg"],

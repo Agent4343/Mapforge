@@ -378,6 +378,185 @@ async def etsy_publish(
     )
 
 
+# --- Customer-facing "Buy on Etsy" flow ---
+
+class CustomerPublishRequest(BaseModel):
+    file_id: str
+    price: float = Field(default=9.99, ge=0.20, le=99.99)
+
+
+@router.post("/customer-publish", response_model=EtsyPublishResponse)
+async def customer_publish(
+    req: CustomerPublishRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Customer-facing endpoint: publish a map to the platform Etsy shop.
+
+    No authentication required. Uses the admin/platform account's Etsy
+    credentials. Auto-generates AI title, description, and tags.
+    Returns the Etsy listing URL so the customer can purchase.
+    """
+    creds = await get_etsy_credentials(db)
+    if not is_configured(creds):
+        raise HTTPException(status_code=503, detail="Etsy integration is not configured.")
+
+    # Find the platform admin with Etsy connected
+    admin_result = await db.execute(
+        select(User)
+        .where(User.tier == "admin")
+        .where(User.etsy_access_token.isnot(None))
+        .limit(1)
+    )
+    admin = admin_result.scalar_one_or_none()
+    if not admin:
+        raise HTTPException(status_code=503, detail="No Etsy shop is connected. Please contact the shop owner.")
+
+    await _ensure_shop_info(admin, db, creds)
+
+    # Get the generated file
+    file_result = await db.execute(
+        select(GeneratedFile).where(GeneratedFile.id == req.file_id)
+    )
+    file_record = file_result.scalar_one_or_none()
+    if not file_record:
+        raise HTTPException(status_code=404, detail="Map not found. Please generate a map first.")
+
+    # Get a valid access token (refreshes if expired)
+    try:
+        access_token = await get_valid_token(admin, creds=creds)
+        await db.commit()
+    except ValueError as e:
+        raise HTTPException(status_code=502, detail=f"Etsy connection error: {e}")
+
+    shop_id = admin.etsy_shop_id
+
+    # Auto-generate AI listing copy
+    is_city = file_record.product_type == "city"
+    title = f"{file_record.location_name} Map Print — Custom Wall Art — Digital Download"
+    description = (
+        f"Beautiful custom map print of {file_record.location_name}. "
+        "High-resolution digital download, perfect for wall art, home decor, and gifts. "
+        "Print at home or at your favorite print shop."
+    )
+    tags = f"{file_record.location_name} map, map print, wall art, custom map, digital download, city map, map poster, home decor"
+
+    try:
+        from app.services.ai_description_generator import generate_full_listing as ai_generate_listing
+        ai_result = await ai_generate_listing(
+            location_name=file_record.location_name,
+            style=file_record.style,
+            country="",
+            is_city=is_city,
+            province=file_record.province or "",
+            has_streets=is_city,
+            node_count=file_record.node_count,
+        )
+        if ai_result.get("title"):
+            title = ai_result["title"]
+        if ai_result.get("description"):
+            description = ai_result["description"]
+        if ai_result.get("tags"):
+            tags = ai_result["tags"]
+    except Exception as e:
+        log.warning("AI description failed for customer publish %s: %s", file_record.location_name, e)
+
+    # Parse tags
+    tag_list = [t.strip()[:20] for t in tags.split(",") if t.strip()][:13]
+
+    # 1. Create draft listing
+    try:
+        listing = await create_draft_listing(
+            access_token=access_token,
+            shop_id=shop_id,
+            title=title,
+            description=description,
+            price=req.price,
+            tags=tag_list,
+            creds=creds,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=502, detail=f"Etsy API error: {e}")
+
+    listing_id = listing["listing_id"]
+
+    # 2. Upload Etsy listing image
+    etsy_key = file_record.svg_storage_key.replace("svg/", "etsy/").replace(".svg", "_etsy.png")
+    etsy_img = await retrieve_file(etsy_key)
+    if etsy_img:
+        try:
+            await upload_listing_image(
+                access_token=access_token,
+                shop_id=shop_id,
+                listing_id=listing_id,
+                image_bytes=etsy_img,
+                filename=f"{file_record.location_name.replace(' ', '_')}_listing.png",
+                creds=creds,
+            )
+        except ValueError as e:
+            log.warning("Etsy listing image upload failed: %s", e)
+
+    # 3. Upload thumbnail as second image
+    if file_record.thumbnail_key:
+        thumb_bytes = await retrieve_file(file_record.thumbnail_key)
+        if thumb_bytes:
+            try:
+                await upload_listing_image(
+                    access_token=access_token,
+                    shop_id=shop_id,
+                    listing_id=listing_id,
+                    image_bytes=thumb_bytes,
+                    filename=f"{file_record.location_name.replace(' ', '_')}_mockup.png",
+                    rank=2,
+                    creds=creds,
+                )
+            except ValueError as e:
+                log.warning("Etsy thumbnail upload failed: %s", e)
+
+    # 4. Upload the print-ready PNG as the digital download file
+    try:
+        print_key = file_record.svg_storage_key.replace("svg/", "print/").replace(".svg", "_print.png")
+        print_bytes = await retrieve_file(print_key)
+        if print_bytes:
+            safe_name = file_record.location_name.replace(' ', '_').replace("'", "")
+            await upload_listing_file(
+                access_token=access_token,
+                shop_id=shop_id,
+                listing_id=listing_id,
+                file_bytes=print_bytes,
+                filename=f"MapForge_{safe_name}_Print.png",
+                creds=creds,
+            )
+        elif etsy_img:
+            safe_name = file_record.location_name.replace(' ', '_').replace("'", "")
+            await upload_listing_file(
+                access_token=access_token,
+                shop_id=shop_id,
+                listing_id=listing_id,
+                file_bytes=etsy_img,
+                filename=f"MapForge_{safe_name}.png",
+                creds=creds,
+            )
+        # Mark listing as digital download
+        await update_listing_type(
+            access_token=access_token,
+            shop_id=shop_id,
+            listing_id=listing_id,
+            listing_type="download",
+            creds=creds,
+        )
+    except ValueError as e:
+        log.warning("Etsy digital file upload/type-update failed: %s", e)
+
+    listing_url = f"https://www.etsy.com/listing/{listing_id}"
+    log.info("Customer publish: Etsy listing %d for %s", listing_id, file_record.location_name)
+
+    return EtsyPublishResponse(
+        listing_id=listing_id,
+        listing_url=listing_url,
+        status="draft",
+    )
+
+
 # --- Showcase Preset Cities ---
 
 SHOWCASE_CITIES = [

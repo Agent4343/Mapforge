@@ -461,6 +461,20 @@ async function publishToEtsy(fileId, title, description, price, tags) {
   return resp.json();
 }
 
+async function customerPublish(fileId, price = 9.99) {
+  const resp = await fetchWithTimeout(`${API_BASE}/etsy/customer-publish`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file_id: fileId, price }),
+    timeout: 90000,
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Failed to create Etsy listing"));
+  }
+  return resp.json();
+}
+
 async function getShowcaseCities() {
   const resp = await fetchWithTimeout(`${API_BASE}/etsy/showcase-cities`, {
     headers: { Authorization: `Bearer ${authToken}` },
@@ -612,7 +626,7 @@ export {
   getMyPurchases, updateListing, removeListing,
   getSellerDashboard, submitReview, getReviews,
   aiDescribe,
-  getEtsyStatus, connectEtsy, disconnectEtsy, publishToEtsy,
+  getEtsyStatus, connectEtsy, disconnectEtsy, publishToEtsy, customerPublish,
   getShowcaseCities, showcasePublish,
   getEtsyDebug, getAdminStats, getEtsySettings, saveEtsySettings, clearEtsySettings,
   redeemCredit, generateForCredit, getCreditStatus, downloadCreditFile,
