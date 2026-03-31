@@ -145,10 +145,10 @@ async def _fetch_with_fallback(query: str, timeout_per_endpoint: float = 20.0, t
     return None
 
 
-def _build_area_query(area_id: int, highway_filter: str) -> str:
+def _build_area_query(area_id: int, highway_filter: str, timeout: int = 20) -> str:
     """Build an Overpass area query (for relations with known OSM ID)."""
     return (
-        f'[out:json][timeout:20];'
+        f'[out:json][timeout:{timeout}];'
         f'area({area_id})->.a;'
         f'way["highway"~"^({highway_filter})$"](area.a);'
         f'out body;>;out skel qt;'
@@ -191,10 +191,13 @@ async def fetch_streets(
     use_area = osm_id and osm_type == "relation"
     if use_area:
         area_id = osm_id + 3600000000
-        build_q = lambda filt: _build_area_query(area_id, filt)
+        # Major-only queries (provinces) get a longer Overpass timeout since
+        # area queries for large relations are inherently slower
+        query_timeout = 25 if not include_minor else 20
+        build_q = lambda filt, t=query_timeout: _build_area_query(area_id, filt, timeout=t)
         log.info(f"Street fetch: area query for relation {osm_id}")
     else:
-        build_q = lambda filt: _build_bbox_query(bbox, filt)
+        build_q = lambda filt, t=20: _build_bbox_query(bbox, filt)
         log.info(f"Street fetch: bbox query for {bbox}")
 
     data = None
@@ -211,7 +214,8 @@ async def fetch_streets(
                 log.warning(f"All-roads fetch failed ({elapsed:.0f}s) — trying major only")
                 data = await _fetch_with_fallback(build_q(major_filter), timeout_per_endpoint=10.0, total_budget=min(remaining, 15.0))
     else:
-        data = await _fetch_with_fallback(build_q(major_filter), timeout_per_endpoint=15.0, total_budget=20.0)
+        # Major roads only (province scale) — give more time per endpoint
+        data = await _fetch_with_fallback(build_q(major_filter), timeout_per_endpoint=20.0, total_budget=30.0)
 
     elapsed = time.monotonic() - start
     if data is None:

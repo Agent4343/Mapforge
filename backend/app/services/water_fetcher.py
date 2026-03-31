@@ -109,11 +109,18 @@ async def _fetch_overpass_with_retry(query: str) -> dict | None:
 
 async def fetch_water_features(
     bbox: tuple[float, float, float, float],
+    osm_id: int | None = None,
+    osm_type: str | None = None,
+    large_area: bool = False,
 ) -> dict:
     """Fetch water features within bounding box.
 
     Args:
         bbox: (south, west, north, east) in WGS84
+        osm_id: Optional OSM ID for area-scoped queries (faster for relations)
+        osm_type: "relation" or "way"
+        large_area: If True, use a simplified query for province-scale areas
+                    (skip streams/canals, only fetch lakes and coastlines)
 
     Returns:
         dict with 'water_polygons' (closed areas) and 'waterways' (rivers/streams)
@@ -121,12 +128,43 @@ async def fetch_water_features(
     """
     south, west, north, east = bbox
 
-    # Simplified query — combine water selectors to reduce Overpass load.
-    # Using a shorter timeout (30s instead of 45s) to fail faster and try
-    # the next endpoint sooner.
-    query = f"""[out:json][timeout:20];(way["natural"="water"]({south},{west},{north},{east});way["natural"="coastline"]({south},{west},{north},{east});way["waterway"~"^(river|stream|canal)$"]({south},{west},{north},{east});relation["natural"="water"]({south},{west},{north},{east});way["water"~"^(lake|reservoir|pond)$"]({south},{west},{north},{east});relation["water"~"^(lake|reservoir|pond)$"]({south},{west},{north},{east}););out body;>;out skel qt;"""
+    # For province-scale areas, use an area-scoped query if we have a relation ID.
+    # This is MUCH faster than a bbox query for large areas because Overpass
+    # can use the pre-computed area index instead of scanning the entire bbox.
+    use_area = osm_id and osm_type == "relation"
 
-    log.info(f"Fetching water features for bbox: {bbox}")
+    if large_area and use_area:
+        # Province-scale: scoped to area, only large water bodies + coastlines.
+        # Skip streams, canals, and small ponds — they clutter province maps
+        # and the query is too heavy for Overpass at this scale.
+        area_id = osm_id + 3600000000
+        query = (
+            f'[out:json][timeout:25];'
+            f'area({area_id})->.a;'
+            f'('
+            f'way["natural"="coastline"](area.a);'
+            f'relation["natural"="water"](area.a);'
+            f'way["water"~"^(lake|reservoir)$"](area.a);'
+            f'relation["water"~"^(lake|reservoir)$"](area.a);'
+            f');out body;>;out skel qt;'
+        )
+        log.info(f"Fetching water features for province relation {osm_id} (area-scoped, large bodies only)")
+    elif large_area:
+        # Large area bbox query — simplified to reduce Overpass load
+        query = (
+            f'[out:json][timeout:25];'
+            f'('
+            f'way["natural"="coastline"]({south},{west},{north},{east});'
+            f'relation["natural"="water"]({south},{west},{north},{east});'
+            f'way["water"~"^(lake|reservoir)$"]({south},{west},{north},{east});'
+            f'relation["water"~"^(lake|reservoir)$"]({south},{west},{north},{east});'
+            f');out body;>;out skel qt;'
+        )
+        log.info(f"Fetching water features for large bbox (simplified): {bbox}")
+    else:
+        # City/small area: full query with all water features
+        query = f"""[out:json][timeout:20];(way["natural"="water"]({south},{west},{north},{east});way["natural"="coastline"]({south},{west},{north},{east});way["waterway"~"^(river|stream|canal)$"]({south},{west},{north},{east});relation["natural"="water"]({south},{west},{north},{east});way["water"~"^(lake|reservoir|pond)$"]({south},{west},{north},{east});relation["water"~"^(lake|reservoir|pond)$"]({south},{west},{north},{east}););out body;>;out skel qt;"""
+        log.info(f"Fetching water features for bbox: {bbox}")
 
     data = await _fetch_overpass_with_retry(query)
     if data is None:

@@ -229,7 +229,12 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         if cache_key in _overpass_cache:
             log.info("Using cached water data")
             return _overpass_cache[cache_key]
-        result = await fetch_water_features(bbox=bbox)
+        result = await fetch_water_features(
+            bbox=bbox,
+            osm_id=req.osm_id,
+            osm_type=req.osm_type,
+            large_area=(is_province or is_medium_area),
+        )
         has_data = result and (result.get("water_polygons") or result.get("waterways"))
         if has_data:
             _cache_overpass(cache_key, result)
@@ -245,48 +250,81 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             return generate_depth_bands(contours, num_bands=req.num_depth_bands)
         return None
 
-    # Fetch streets, water, and contours concurrently to minimise total wall time.
-    # Streets and water are staggered by 0.5s to reduce Overpass load —
-    # hitting the same server with two heavy queries simultaneously often
-    # causes both to fail with 429/timeout.
+    # Overpass fetch strategy: all three data sources (contours, streets, water)
+    # use the same Overpass API servers. Running them concurrently causes 429
+    # rate limits, especially for province-scale queries.
+    #
+    # For provinces/large areas: run sequentially (contours → streets → water)
+    # with delays between each to avoid rate limiting.
+    # For cities/small areas: run concurrently with a small stagger (fast enough
+    # that Overpass can handle it).
     contour_data = None
 
-    async def _get_streets_staggered():
-        return await _get_streets()
+    if is_province or is_medium_area:
+        # SEQUENTIAL fetch for large areas — Overpass can't handle concurrent
+        # province-scale queries without rate limiting both.
+        if req.include_contours:
+            try:
+                contour_data = await _get_contours()
+            except Exception as e:
+                log.warning(f"Contours fetch failed (non-fatal): {e}")
+                warnings.append("Contour data unavailable — map generated without contours.")
+            if contour_data is not None:
+                await asyncio.sleep(2.0)  # let Overpass recover
 
-    async def _get_water_staggered():
         if need_streets:
-            await asyncio.sleep(1.0)  # stagger to reduce Overpass contention
-        return await _get_water()
+            try:
+                streets_data = await _get_streets()
+            except Exception as e:
+                log.warning(f"Streets fetch failed (non-fatal): {e}")
+                warnings.append("Streets data unavailable — map generated without streets.")
+                streets_data = None
+            if streets_data is not None:
+                await asyncio.sleep(3.0)  # longer delay before water — streets query is heavy
 
-    tasks = []
-    if need_streets:
-        tasks.append(("streets", _get_streets_staggered()))
-    if need_water:
-        tasks.append(("water", _get_water_staggered()))
-    if req.include_contours:
-        tasks.append(("contours", _get_contours()))
+        if need_water:
+            try:
+                water_data = await _get_water()
+            except Exception as e:
+                log.warning(f"Water fetch failed (non-fatal): {e}")
+                warnings.append("Water data unavailable — map generated without water.")
+                water_data = None
+    else:
+        # CONCURRENT fetch for small areas — stagger streets and water
+        async def _get_streets_staggered():
+            return await _get_streets()
 
-    if tasks:
-        results = await asyncio.gather(
-            *(t[1] for t in tasks), return_exceptions=True
-        )
-        for (label, _), result in zip(tasks, results):
-            if isinstance(result, Exception):
-                log.warning(f"{label.title()} fetch failed (non-fatal): {result}")
-                warnings.append(f"{label.title()} data unavailable — map generated without {label}.")
-            elif result is None:
-                log.warning(f"{label.title()} fetch returned empty results — not caching")
-                if label != "contours":
-                    # Contour data is optional; empty results are normal for many areas.
-                    # Only warn users when streets/water are unavailable.
-                    warnings.append(f"{label.title()} data unavailable — the Overpass API may be busy. Try regenerating in a minute.")
-            elif label == "streets":
-                streets_data = result
-            elif label == "water":
-                water_data = result
-            elif label == "contours":
-                contour_data = result
+        async def _get_water_staggered():
+            if need_streets:
+                await asyncio.sleep(1.0)  # stagger to reduce Overpass contention
+            return await _get_water()
+
+        tasks = []
+        if need_streets:
+            tasks.append(("streets", _get_streets_staggered()))
+        if need_water:
+            tasks.append(("water", _get_water_staggered()))
+        if req.include_contours:
+            tasks.append(("contours", _get_contours()))
+
+        if tasks:
+            results = await asyncio.gather(
+                *(t[1] for t in tasks), return_exceptions=True
+            )
+            for (label, _), result in zip(tasks, results):
+                if isinstance(result, Exception):
+                    log.warning(f"{label.title()} fetch failed (non-fatal): {result}")
+                    warnings.append(f"{label.title()} data unavailable — map generated without {label}.")
+                elif result is None:
+                    log.warning(f"{label.title()} fetch returned empty results — not caching")
+                    if label != "contours":
+                        warnings.append(f"{label.title()} data unavailable — the Overpass API may be busy. Try regenerating in a minute.")
+                elif label == "streets":
+                    streets_data = result
+                elif label == "water":
+                    water_data = result
+                elif label == "contours":
+                    contour_data = result
 
     # Transform custom markers from lat/lon to board mm coordinates
     board_markers = None
