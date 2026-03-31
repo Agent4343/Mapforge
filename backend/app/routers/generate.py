@@ -263,32 +263,52 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     if is_province or is_medium_area:
         # SEQUENTIAL fetch for large areas — Overpass can't handle concurrent
         # province-scale queries without rate limiting both.
-        if req.include_contours:
+        #
+        # Total budget: keep under 60s so the whole endpoint finishes in <90s.
+        # Provinces don't need contours (useless at that scale), so skip them.
+        # Streets and water each get ~25s max before we give up and proceed.
+        import time as _time
+        _seq_start = _time.monotonic()
+        _seq_budget = 55.0  # seconds for all Overpass fetches combined
+
+        # Skip contours for provinces — they clutter at province scale
+        if req.include_contours and not is_province:
             try:
                 contour_data = await _get_contours()
             except Exception as e:
                 log.warning(f"Contours fetch failed (non-fatal): {e}")
                 warnings.append("Contour data unavailable — map generated without contours.")
             if contour_data is not None:
-                await asyncio.sleep(2.0)  # let Overpass recover
+                await asyncio.sleep(1.5)
 
         if need_streets:
-            try:
-                streets_data = await _get_streets()
-            except Exception as e:
-                log.warning(f"Streets fetch failed (non-fatal): {e}")
-                warnings.append("Streets data unavailable — map generated without streets.")
-                streets_data = None
-            if streets_data is not None:
-                await asyncio.sleep(3.0)  # longer delay before water — streets query is heavy
+            _remaining = _seq_budget - (_time.monotonic() - _seq_start)
+            if _remaining > 8:
+                try:
+                    streets_data = await _get_streets()
+                except Exception as e:
+                    log.warning(f"Streets fetch failed (non-fatal): {e}")
+                    warnings.append("Streets data unavailable — map generated without streets.")
+                    streets_data = None
+                if streets_data is not None:
+                    await asyncio.sleep(2.0)
+            else:
+                log.warning(f"Skipping street fetch — only {_remaining:.0f}s left in budget")
 
         if need_water:
-            try:
-                water_data = await _get_water()
-            except Exception as e:
-                log.warning(f"Water fetch failed (non-fatal): {e}")
-                warnings.append("Water data unavailable — map generated without water.")
-                water_data = None
+            _remaining = _seq_budget - (_time.monotonic() - _seq_start)
+            if _remaining > 8:
+                try:
+                    water_data = await _get_water()
+                except Exception as e:
+                    log.warning(f"Water fetch failed (non-fatal): {e}")
+                    warnings.append("Water data unavailable — map generated without water.")
+                    water_data = None
+            else:
+                log.warning(f"Skipping water fetch — only {_remaining:.0f}s left in budget")
+
+        _elapsed = _time.monotonic() - _seq_start
+        log.info(f"Sequential Overpass fetch completed in {_elapsed:.1f}s")
     else:
         # CONCURRENT fetch for small areas — stagger streets and water
         async def _get_streets_staggered():

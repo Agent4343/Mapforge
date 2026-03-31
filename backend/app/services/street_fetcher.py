@@ -133,10 +133,10 @@ async def _fetch_with_fallback(query: str, timeout_per_endpoint: float = 20.0, t
             if result is not None:
                 return result
 
-    # Second chance: wait and retry the primary endpoint
-    log.warning("All Overpass endpoints failed for streets — waiting 3s for second chance")
-    await asyncio.sleep(3.0)
-    async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
+    # Quick second chance — don't burn too much time on retries
+    log.warning("All Overpass endpoints failed for streets — quick second chance")
+    await asyncio.sleep(1.0)
+    async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
         result = await _try_endpoint(client, OVERPASS_ENDPOINTS[0], query)
         if result is not None:
             log.info("Second-chance street fetch succeeded")
@@ -214,8 +214,10 @@ async def fetch_streets(
                 log.warning(f"All-roads fetch failed ({elapsed:.0f}s) — trying major only")
                 data = await _fetch_with_fallback(build_q(major_filter), timeout_per_endpoint=10.0, total_budget=min(remaining, 15.0))
     else:
-        # Major roads only (province scale) — give more time per endpoint
-        data = await _fetch_with_fallback(build_q(major_filter), timeout_per_endpoint=20.0, total_budget=30.0)
+        # Major roads only (province scale) — use a tighter budget to fail fast.
+        # Province maps look fine without streets (coastline is the visual).
+        # Better to skip streets than hang for 90s on retries.
+        data = await _fetch_with_fallback(build_q(major_filter), timeout_per_endpoint=15.0, total_budget=22.0)
 
     elapsed = time.monotonic() - start
     if data is None:

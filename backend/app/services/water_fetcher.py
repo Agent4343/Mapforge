@@ -93,11 +93,11 @@ async def _fetch_overpass_with_retry(query: str) -> dict | None:
             if result is not None:
                 return result
 
-    # Second chance: wait 3 seconds and try the primary endpoint one more time.
-    # Often Overpass is just momentarily busy and recovers quickly.
-    log.warning("All Overpass endpoints failed for water — waiting 3s for second chance")
-    await asyncio.sleep(3.0)
-    async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
+    # Quick second chance: 1s wait + short timeout. Don't burn too much time
+    # on retries — province maps look fine without water (coastline is built in).
+    log.warning("All Overpass endpoints failed for water — quick second chance")
+    await asyncio.sleep(1.0)
+    async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
         result = await _try_endpoint(client, OVERPASS_ENDPOINTS[0], query)
         if result is not None:
             log.info("Second-chance water fetch succeeded")
