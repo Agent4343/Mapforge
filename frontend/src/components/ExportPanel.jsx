@@ -266,19 +266,10 @@ export default function ExportPanel({
               <select value={showcaseTheme} onChange={(e) => setShowcaseTheme(e.target.value)}>
                 <option value="classic">Classic</option>
                 <option value="modern_dark">Modern Dark</option>
-                <option value="midnight">Midnight</option>
-                <option value="rose_gold">Rose Gold</option>
-                <option value="sage">Sage</option>
-                <option value="minimal">Minimal</option>
-                <option value="ocean_depths">Ocean Depths</option>
-                <option value="sunset_warm">Sunset Warm</option>
-                <option value="nordic_frost">Nordic Frost</option>
-                <option value="desert_sand">Desert Sand</option>
-                <option value="forest_green">Forest Green</option>
-                <option value="lavender_mist">Lavender Mist</option>
-                <option value="charcoal_gold">Charcoal Gold</option>
-                <option value="coastal_blue">Coastal Blue</option>
-                <option value="vintage_sepia">Vintage Sepia</option>
+                <option value="minimal">Minimal B&W</option>
+                <option value="navy_gold">Navy & Gold</option>
+                <option value="sage">Sage Green</option>
+                <option value="vintage_map">Vintage Map</option>
               </select>
             </div>
             <div className="control-group">
