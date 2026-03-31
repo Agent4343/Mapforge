@@ -382,21 +382,21 @@ async def etsy_publish(
 
 # --- Customer-facing "Buy on Etsy" flow ---
 
-# Size-based pricing: larger prints cost more
+# Size-based pricing — competitive with Etsy custom map digital downloads
 SIZE_PRICING = {
-    "print_8x10": 7.99,
-    "print_11x14": 9.99,
-    "print_16x20": 14.99,
-    "print_18x24": 19.99,
-    "print_24x36": 29.99,
-    # Legacy/CNC board sizes default to medium price
-    "small": 7.99,
-    "medium": 9.99,
-    "large": 14.99,
-    "xl": 19.99,
-    "max": 29.99,
+    "print_8x10": 4.99,
+    "print_11x14": 6.99,
+    "print_16x20": 9.99,
+    "print_18x24": 12.99,
+    "print_24x36": 17.99,
+    # Legacy board sizes mapped to nearest print equivalent
+    "small": 4.99,
+    "medium": 6.99,
+    "large": 9.99,
+    "xl": 12.99,
+    "max": 17.99,
 }
-DEFAULT_PRICE = 9.99
+DEFAULT_PRICE = 6.99
 
 
 class CustomerPublishRequest(BaseModel):
