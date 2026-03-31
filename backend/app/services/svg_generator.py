@@ -1016,13 +1016,13 @@ def _generate_vintage_map_svg(
     latlon = center_latlon or processed.get("center_latlon", (0, 0))
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # Vintage color palette — monochrome ink on parchment
+    # Vintage color palette — warm ink on parchment with muted blue water
     ink = "#1e1810"          # Dark brown-black ink
     ink_light = "#3a2e20"    # Lighter ink for minor features
     ink_faint = "#5a4a38"    # Faint ink for detail roads
     parchment = "#e8dcc0"   # Base parchment color
     parchment_edge = "#c8b890"  # Darker edge color for vignette
-    water_tint = "#c8b898"  # Noticeably darker tint for water/ocean areas
+    water_tint = "#b8c8d0"  # Muted steel-blue for water — distinct from parchment
     coastline_color = "#4a3a28"  # Subtle brown for coastline outline
 
     # Determine map scale from GEOGRAPHIC EXTENT — this is the only reliable way
@@ -1166,7 +1166,7 @@ def _generate_vintage_map_svg(
     # Horizontal line hatching pattern for water areas (classic cartographic style)
     lines.append(f'    <pattern id="water_hatch" width="3" height="3" patternUnits="userSpaceOnUse"'
                  f' patternTransform="rotate(-15)">')
-    lines.append(f'      <line x1="0" y1="1.5" x2="3" y2="1.5" stroke="{coastline_color}" stroke-width="0.15" opacity="0.25"/>')
+    lines.append(f'      <line x1="0" y1="1.5" x2="3" y2="1.5" stroke="#5a7a8a" stroke-width="0.15" opacity="0.2"/>')
     lines.append(f'    </pattern>')
     # Clip for map content
     lines.append(
@@ -1369,6 +1369,7 @@ def _generate_vintage_map_svg(
 
         # Road classes by filtering tier
         detail_classes = {"footway", "cycleway", "path", "steps", "bridleway"}
+        clutter_classes = {"service", "track", "living_street"}
 
         # Scale-based filtering using geographic extent:
         if map_scale == "province":
@@ -1446,22 +1447,36 @@ def _generate_vintage_map_svg(
                 )
                 path_count += 1
 
-        # Draw major roads on top
+        # Draw major roads on top — cased style (dark casing + parchment fill)
+        # First pass: outer casing strokes
+        major_road_paths = []
         for coords, road_class, _width, name in streets_data.get("major_roads", []):
             if len(coords) < 2:
                 continue
-            # Filter by allowed road classes if set
             if allowed_roads and road_class not in allowed_roads:
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
             path_d = _coords_to_open_path(board_coords)
-            w = vintage_widths.get(road_class, 0.5)
+            cw = vintage_widths.get(road_class, 0.5)
+            major_road_paths.append((path_d, road_class, cw))
+
+        # Layer A: outer casing (dark ink border)
+        for path_d, road_class, cw in major_road_paths:
             lines.append(
                 f'      <path d="{path_d}"'
-                f' fill="none" stroke="{ink}" stroke-width="{w}"'
+                f' fill="none" stroke="{ink}" stroke-width="{cw}"'
                 f' stroke-linecap="round" stroke-linejoin="round"/>'
             )
             path_count += 1
+
+        # Layer B: inner fill (parchment center) — makes roads look clean and bold
+        for path_d, road_class, cw in major_road_paths:
+            fw = round(cw * 0.5, 2)
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="none" stroke="{parchment}" stroke-width="{fw}"'
+                f' stroke-linecap="round" stroke-linejoin="round"/>'
+            )
 
         lines.append("    </g>")
 
