@@ -676,16 +676,24 @@ def _generate_print_svg(
     else:
         # Province/lake/park maps: filled polygon is the main visual.
         # With water-colored background, the land shape pops beautifully.
-        # Use a bold stroke to define the coastline edge.
         coast_w = "1.5" if is_province_map else "1.0"
         for exterior, holes in polygons:
+            # Fill with holes (evenodd cuts out bays/inlets)
             path_d = _coords_to_path(exterior)
             for hole in holes:
                 path_d += " " + _coords_to_path(hole)
             lines.append(
                 f'      <path d="{path_d}"'
-                f' fill="{theme["land"]}" stroke="{theme["land_stroke"]}"'
-                f' stroke-width="{coast_w}" fill-rule="evenodd" stroke-linejoin="round"/>'
+                f' fill="{theme["land"]}" stroke="none"'
+                f' fill-rule="evenodd"/>'
+            )
+            # Stroke ONLY the exterior coastline — no strokes on bay/inlet holes
+            # This prevents dozens of internal bay edges from creating visual clutter
+            ext_path = _coords_to_path(exterior)
+            lines.append(
+                f'      <path d="{ext_path}"'
+                f' fill="none" stroke="{theme["land_stroke"]}"'
+                f' stroke-width="{coast_w}" stroke-linejoin="round"/>'
             )
     lines.append("    </g>")
 
@@ -1245,16 +1253,22 @@ def _generate_vintage_map_svg(
         for exterior, holes in polygons:
             if len(exterior) < 3:
                 continue
-            # Build path: exterior + holes (using SVG winding rule)
+            # Fill with holes (evenodd cuts out bays/inlets)
             path_d = _coords_to_path(exterior)
             for hole in holes:
                 if len(hole) >= 3:
                     path_d += " " + _coords_to_path(hole)
             lines.append(
                 f'      <path d="{path_d}"'
-                f' fill="{parchment}" stroke="{coastline_color}"'
-                f' stroke-width="{coastline_width}" stroke-linejoin="round"'
+                f' fill="{parchment}" stroke="none"'
                 f' fill-rule="evenodd"/>'
+            )
+            # Stroke ONLY exterior coastline — skip bay/inlet hole strokes
+            ext_path = _coords_to_path(exterior)
+            lines.append(
+                f'      <path d="{ext_path}"'
+                f' fill="none" stroke="{coastline_color}"'
+                f' stroke-width="{coastline_width}" stroke-linejoin="round"/>'
             )
             path_count += 1
         # Re-apply paper grain and stain textures on land only (clipped to land shapes)
