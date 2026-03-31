@@ -461,11 +461,17 @@ async function publishToEtsy(fileId, title, description, price, tags) {
   return resp.json();
 }
 
-async function customerPublish(fileId, price = 9.99) {
+async function getPrintPricing() {
+  const resp = await fetchWithTimeout(`${API_BASE}/etsy/print-pricing`);
+  if (!resp.ok) return {};
+  return resp.json();
+}
+
+async function customerPublish(fileId) {
   const resp = await fetchWithTimeout(`${API_BASE}/etsy/customer-publish`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ file_id: fileId, price }),
+    body: JSON.stringify({ file_id: fileId }),
     timeout: 90000,
   });
   if (!resp.ok) {
@@ -626,7 +632,7 @@ export {
   getMyPurchases, updateListing, removeListing,
   getSellerDashboard, submitReview, getReviews,
   aiDescribe,
-  getEtsyStatus, connectEtsy, disconnectEtsy, publishToEtsy, customerPublish,
+  getEtsyStatus, connectEtsy, disconnectEtsy, publishToEtsy, customerPublish, getPrintPricing,
   getShowcaseCities, showcasePublish,
   getEtsyDebug, getAdminStats, getEtsySettings, saveEtsySettings, clearEtsySettings,
   redeemCredit, generateForCredit, getCreditStatus, downloadCreditFile,

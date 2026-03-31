@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { createListing, aiDescribe, getEtsyStatus, connectEtsy, disconnectEtsy, publishToEtsy, customerPublish, getShowcaseCities, showcasePublish } from "../services/api.js";
+import { createListing, aiDescribe, getEtsyStatus, connectEtsy, disconnectEtsy, publishToEtsy, customerPublish, getPrintPricing, getShowcaseCities, showcasePublish } from "../services/api.js";
 
 export default function ExportPanel({
   result,
@@ -17,6 +17,7 @@ export default function ExportPanel({
   generating,
   user,
   printDPI,
+  boardSize,
   etsyShopUrl,
 }) {
   const [showListForm, setShowListForm] = useState(false);
@@ -39,6 +40,7 @@ export default function ExportPanel({
   // Customer buy flow
   const [buyLoading, setBuyLoading] = useState(false);
   const [buyError, setBuyError] = useState(null);
+  const [printPricing, setPrintPricing] = useState({});
 
   // Showcase state
   const [showcaseCities, setShowcaseCities] = useState([]);
@@ -56,6 +58,7 @@ export default function ExportPanel({
     if (user) {
       getEtsyStatus().then(setEtsyStatus).catch(() => {});
     }
+    getPrintPricing().then(setPrintPricing).catch(() => {});
   }, [user]);
 
   // Check for ?etsy_connected=1 in URL (OAuth callback redirect)
@@ -398,7 +401,7 @@ export default function ExportPanel({
                   <span className="spinner-inline" /> Creating your listing...
                 </span>
               ) : (
-                "Buy This Print on Etsy — $9.99"
+                `Buy This Print on Etsy — $${(printPricing[boardSize] || 9.99).toFixed(2)}`
               )}
             </button>
             {buyError && <div className="error-message" style={{ marginTop: "8px" }}>{buyError}</div>}

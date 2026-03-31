@@ -113,6 +113,7 @@ class EtsyPublishResponse(BaseModel):
     listing_id: int
     listing_url: str
     status: str = "draft"
+    price: float | None = None
 
 
 class EtsyStatusResponse(BaseModel):
@@ -381,9 +382,25 @@ async def etsy_publish(
 
 # --- Customer-facing "Buy on Etsy" flow ---
 
+# Size-based pricing: larger prints cost more
+SIZE_PRICING = {
+    "print_8x10": 7.99,
+    "print_11x14": 9.99,
+    "print_16x20": 14.99,
+    "print_18x24": 19.99,
+    "print_24x36": 29.99,
+    # Legacy/CNC board sizes default to medium price
+    "small": 7.99,
+    "medium": 9.99,
+    "large": 14.99,
+    "xl": 19.99,
+    "max": 29.99,
+}
+DEFAULT_PRICE = 9.99
+
+
 class CustomerPublishRequest(BaseModel):
     file_id: str
-    price: float = Field(default=9.99, ge=0.20, le=99.99)
 
 
 @router.post("/customer-publish", response_model=EtsyPublishResponse)
@@ -464,6 +481,9 @@ async def customer_publish(
     # Parse tags
     tag_list = [t.strip()[:20] for t in tags.split(",") if t.strip()][:13]
 
+    # Price based on print size
+    price = SIZE_PRICING.get(file_record.board_size, DEFAULT_PRICE)
+
     # 1. Create draft listing
     try:
         listing = await create_draft_listing(
@@ -471,7 +491,7 @@ async def customer_publish(
             shop_id=shop_id,
             title=title,
             description=description,
-            price=req.price,
+            price=price,
             tags=tag_list,
             creds=creds,
         )
@@ -569,7 +589,14 @@ async def customer_publish(
         listing_id=listing_id,
         listing_url=listing_url,
         status=listing_status,
+        price=price,
     )
+
+
+@router.get("/print-pricing")
+async def get_print_pricing():
+    """Public endpoint: returns price for each print size."""
+    return SIZE_PRICING
 
 
 # --- Showcase Preset Cities ---

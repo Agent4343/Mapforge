@@ -776,6 +776,7 @@ export default function App() {
             generating={generating}
             user={user}
             printDPI={config.printDPI}
+            boardSize={config.boardSize}
             etsyShopUrl={etsyShopUrl}
           />
         </div>
