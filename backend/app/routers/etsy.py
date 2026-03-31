@@ -448,38 +448,39 @@ async def customer_publish(
 
     shop_id = admin.etsy_shop_id
 
-    # Auto-generate AI listing copy
-    is_city = file_record.product_type == "city"
-    title = f"{file_record.location_name} Map Print — Custom Wall Art — Digital Download"
+    # Simple template listing — no AI needed for personal custom maps
+    location = file_record.location_name
+    size_label = file_record.board_size.replace("print_", "").replace("x", '" x ') + '"' if file_record.board_size.startswith("print_") else ""
+
+    title = f"{location} Custom Map Print — Personalized Wall Art — Digital Download"[:140]
+
     description = (
-        f"Beautiful custom map print of {file_record.location_name}. "
-        "High-resolution digital download, perfect for wall art, home decor, and gifts. "
-        "Print at home or at your favorite print shop."
+        f"Custom map print of {location}, designed by the customer using MapForge.\n\n"
+        f"This is a high-resolution PNG digital download, ready to print at home "
+        f"or at any print shop. Perfect for framing as wall art, giving as a gift, "
+        f"or decorating your space with a place that means something to you.\n\n"
+        f"WHAT YOU GET:\n"
+        f"- High-resolution print-ready PNG file{f' ({size_label})' if size_label else ''}\n"
+        f"- 300 DPI — sharp and detailed at full size\n"
+        f"- Instant digital download after purchase\n\n"
+        f"This is a digital file — no physical product will be shipped.\n\n"
+        f"Designed with MapForge — custom map art for any location in the world."
     )
-    tags = f"{file_record.location_name} map, map print, wall art, custom map, digital download, city map, map poster, home decor"
 
-    try:
-        from app.services.ai_description_generator import generate_full_listing as ai_generate_listing
-        ai_result = await ai_generate_listing(
-            location_name=file_record.location_name,
-            style=file_record.style,
-            country="",
-            is_city=is_city,
-            province=file_record.province or "",
-            has_streets=is_city,
-            node_count=file_record.node_count,
-        )
-        if ai_result.get("title"):
-            title = ai_result["title"]
-        if ai_result.get("description"):
-            description = ai_result["description"]
-        if ai_result.get("tags"):
-            tags = ai_result["tags"]
-    except Exception as e:
-        log.warning("AI description failed for customer publish %s: %s", file_record.location_name, e)
-
-    # Parse tags
-    tag_list = [t.strip()[:20] for t in tags.split(",") if t.strip()][:13]
+    # Split location name for tags (e.g. "Halifax, Nova Scotia" → "Halifax", "Nova Scotia")
+    location_parts = [p.strip()[:20] for p in location.split(",") if p.strip()]
+    tag_list = [
+        *[p + " map" for p in location_parts[:2]],
+        "custom map print",
+        "map wall art",
+        "personalized map",
+        "digital download",
+        "city map poster",
+        "map print gift",
+        "custom wall art",
+        "home decor",
+        "map art",
+    ][:13]
 
     # Price based on print size
     price = SIZE_PRICING.get(file_record.board_size, DEFAULT_PRICE)
