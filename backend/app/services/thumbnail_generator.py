@@ -8,7 +8,7 @@ Converts SVG output to PNG images in multiple modes:
 - Watermarked: Preview with tiled watermark overlay
 
 Uses cairosvg for SVG-to-PNG rasterization with color remapping
-to transform CNC toolpath colors into rich, natural print colors.
+to transform source colors into rich, natural print colors.
 """
 
 import math
@@ -42,8 +42,8 @@ PRINT_SIZE_PIXELS = {
     "print_24x36": (7200, 10800),
 }
 
-# CNC toolpath colors → Professional print colors
-# Maps the dark CNC-optimized colors to rich natural tones for wall art
+# Source SVG colors → Professional print colors
+# Maps the SVG source colors to rich natural tones for wall art
 PRINT_COLOR_MAP = {
     # Land / geography fill
     "#2a2a2a": "#4a7c59",  # dark gray → forest green
@@ -594,7 +594,7 @@ def generate_print_image(
     When skip_remap=True, the SVG is assumed to already have themed colors
     (e.g., from the print-mode SVG generator) and is rasterized directly.
 
-    When skip_remap=False (legacy), CNC toolpath colors are remapped to
+    When skip_remap=False (legacy), source SVG colors are remapped to
     print-friendly colors.
 
     Args:
@@ -632,7 +632,7 @@ def generate_print_image(
 
 
 def _remap_colors(svg_string: str, color_map: dict[str, str]) -> str:
-    """Replace CNC toolpath colors with print-friendly colors."""
+    """Replace source SVG colors with print-friendly colors."""
     result = svg_string
     for old_color, new_color in color_map.items():
         # Replace in fill="..." and stroke="..." attributes (case-insensitive hex)

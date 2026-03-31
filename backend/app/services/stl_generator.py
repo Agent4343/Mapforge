@@ -256,7 +256,7 @@ def _write_binary_stl(triangles: list[tuple]) -> bytes:
     buf = io.BytesIO()
 
     # Header (80 bytes)
-    header = b"MapForge CNC - Bathymetric 3D Map" + b"\0" * (80 - 33)
+    header = b"MapForge - Bathymetric 3D Map" + b"\0" * (80 - 29)
     buf.write(header)
 
     # Triangle count

@@ -1,4 +1,4 @@
-"""MapForge CNC — FastAPI Application Entry Point."""
+"""MapForge — FastAPI Application Entry Point."""
 
 import os
 from contextlib import asynccontextmanager
@@ -23,7 +23,7 @@ STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
-    log.info("MapForge CNC starting up...")
+    log.info("MapForge starting up...")
     log.info(f"DATABASE_URL dialect: {settings.DATABASE_URL.split('://')[0]}")
     log.info(f"PORT: {os.environ.get('PORT', 'not set (defaulting to 8000)')}")
     try:
@@ -44,15 +44,15 @@ async def lifespan(app: FastAPI):
         log.info("Popular locations pre-fetch started in background")
 
     yield
-    log.info("MapForge CNC shutting down...")
+    log.info("MapForge shutting down...")
 
 
 # Rate limiter
 limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(
-    title="MapForge CNC",
-    description="Geographic SVG Generator for CNC Routing — Canada, US, and Global",
+    title="MapForge",
+    description="Custom Map Art & Print Generator — Canada, US, and Global",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -149,8 +149,8 @@ else:
     @app.get("/")
     async def root():
         return {
-            "app": "MapForge CNC",
+            "app": "MapForge",
             "version": "1.0.0",
-            "description": "Canadian Geographic SVG Generator for CNC Routing",
+            "description": "Custom Map Art & Print Generator",
             "docs": "/docs",
         }

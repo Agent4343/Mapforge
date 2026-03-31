@@ -47,7 +47,7 @@ def test_svg_has_metadata_comments():
         style=CutStyle.outline, show_coordinates=True, font_size_mm=14,
     )
     svg = result["svg"]
-    assert "MapForge CNC v1.0" in svg
+    assert "MapForge v1.0" in svg
     assert "Location: Test Lake" in svg
     assert "OpenStreetMap contributors" in svg
     assert "Natural Resources Canada" in svg

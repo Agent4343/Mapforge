@@ -326,7 +326,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             log.error(f"Failed to store SVG: {e}")
             raise HTTPException(status_code=500, detail="Failed to save generated file. Please try again.")
 
-        # Generate DXF (CNC-ready vector) alongside SVG
+        # Generate DXF vector alongside SVG
         try:
             dxf_bytes = generate_dxf(
                 processed=processed,
@@ -1126,7 +1126,7 @@ async def download_etsy_package(
         if svg_bytes:
             zf.writestr(f"{seo_name}.svg", svg_bytes)
 
-        # 2. DXF source (CNC-ready)
+        # 2. DXF source
         if file_record.dxf_storage_key:
             dxf_bytes = await retrieve_file(file_record.dxf_storage_key)
             if dxf_bytes:
@@ -1180,16 +1180,16 @@ async def download_etsy_package(
         listing_lines = [
             f"=== MapForge Etsy Listing — {location} ===",
             "",
-            f"TITLE: {ai.get('title') or location + ' Map SVG — CNC Laser Cut File — Digital Download'}",
+            f"TITLE: {ai.get('title') or location + ' Map Print — Custom Wall Art — Digital Download'}",
             "",
-            f"TAGS: {ai.get('tags') or 'map svg, cnc file, laser cut, wall art, digital download'}",
+            f"TAGS: {ai.get('tags') or 'map print, custom map, city map, wall art, digital download'}",
             "",
             "DESCRIPTION:",
-            ai.get("description") or f"Beautiful CNC-ready map of {location}. Digital download includes SVG source file. Compatible with VCarve Pro, Fusion 360, Carbide Create, and LightBurn.",
+            ai.get("description") or f"Beautiful custom map print of {location}. High-resolution digital download, perfect for wall art and home decor.",
             "",
             "---",
             "Files included in this package:",
-            f"  - {seo_name}.svg (CNC-ready vector source)",
+            f"  - {seo_name}.svg (vector source)",
             f"  - {seo_name}.dxf (VCarve Pro / CAM import)",
             f"  - {seo_name}-print.png (high-res print)",
             f"  - {seo_name}-etsy-listing-2700x2025.png (listing image)",

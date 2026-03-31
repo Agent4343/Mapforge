@@ -1,4 +1,4 @@
-"""DXF export engine for CNC-ready output.
+"""DXF export engine.
 
 Generates DXF files from the same processed geometry used for SVG generation.
 DXF files import directly into VCarve Pro, AutoCAD, and other CAM software.

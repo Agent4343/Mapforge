@@ -18,7 +18,7 @@ OVERPASS_ENDPOINTS = [
 ]
 
 REQUEST_HEADERS = {
-    "User-Agent": "MapForgeCNC/1.0 (https://mapforge-production.up.railway.app; mapforge map generator)",
+    "User-Agent": "MapForge/1.0 (https://mapforge-production.up.railway.app; mapforge map generator)",
 }
 
 

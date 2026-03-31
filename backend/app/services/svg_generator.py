@@ -216,8 +216,8 @@ def _generate_cnc_svg(
         f' viewBox="0 0 {board_w} {board_h}">'
     )
 
-    # CNC metadata comments
-    lines.append("  <!-- MapForge CNC v1.0 -->")
+    # Metadata comments
+    lines.append("  <!-- MapForge v1.0 -->")
     lines.append(f"  <!-- Location: {_escape_xml(location_name)} -->")
     lines.append(f"  <!-- Board: {board_w}mm x {board_h}mm -->")
     lines.append(f"  <!-- Nodes: {node_count} | Paths: {path_count} | Layers: {layer_count} -->")

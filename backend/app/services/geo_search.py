@@ -12,7 +12,7 @@ from app.models.schemas import SearchResult
 from app.services.cache import cache_get, cache_set, make_search_key
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
-NOMINATIM_HEADERS = {"User-Agent": "MapForgeCNC/1.0 (mapforge-cnc-app)"}
+NOMINATIM_HEADERS = {"User-Agent": "MapForge/1.0 (mapforge-app)"}
 
 # Nominatim usage policy: max 1 request per second.
 # Use a lock + timestamp to enforce this across concurrent requests.

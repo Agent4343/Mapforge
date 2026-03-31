@@ -42,44 +42,44 @@ def get_session_stats() -> dict:
 
 
 def _build_system_prompt() -> str:
-    return """You are a copywriter for MapForge, an Etsy shop selling digital CNC map files (SVG/DXF).
+    return """You are a copywriter for MapForge, an Etsy shop selling beautiful custom map art prints as digital downloads.
 
 Rules:
 - Write compelling, unique Etsy product descriptions that drive purchases
 - Each description must be genuinely different — vary sentence structure, opening hooks, selling points
 - Use natural language a real shopper would search for (SEO keywords woven in naturally)
 - Include the location's personality, vibe, or notable traits — make the buyer feel connected
-- Mention the file formats (SVG, DXF, PNG) and that it's a digital download
+- Mention it's a high-resolution PNG digital download, ready to print at home or at a print shop
 - Keep descriptions between 800-1200 characters
 - Do NOT use emojis, excessive punctuation, or ALL CAPS
 - Do NOT include headers/sections like "WHAT YOU GET" — write flowing prose
 - End with a subtle call to action
-- Mention CNC router compatibility (VCarve Pro, Fusion 360, Carbide Create, LightBurn)
-- Note it works on wood, acrylic, plywood, MDF
+- Suggest uses: wall art, framed prints, housewarming gifts, hometown pride
+- Mention print quality: high-resolution, clean lines, professional design
 - This is a DIGITAL FILE — no physical product shipped"""
 
 
 def _build_title_prompt() -> str:
-    return """You are a copywriter for MapForge, an Etsy shop selling digital CNC map files.
+    return """You are a copywriter for MapForge, an Etsy shop selling beautiful custom map art prints.
 
 Generate an Etsy product title. Rules:
 - Maximum 140 characters (strict limit)
 - Front-load the most searchable keywords
-- Include: location name, "Map", "SVG", "DXF", file purpose
-- Include cut style name if provided
+- Include: location name, "Map Print", "Wall Art", "Digital Download"
+- Include style name if provided
 - Separate keyword clusters with em dashes (—)
 - Do NOT use emojis or excessive punctuation
 - Return ONLY the title text, nothing else"""
 
 
 def _build_tags_prompt() -> str:
-    return """You are an Etsy SEO specialist for MapForge CNC map files.
+    return """You are an Etsy SEO specialist for MapForge custom map art prints.
 
 Generate exactly 13 Etsy tags. Rules:
 - Each tag max 20 characters
-- Include location name, map type, file format, use cases
-- Mix broad terms ("CNC file", "wall art") with specific ("Ontario map")
-- Think about what a CNC hobbyist would search for
+- Include location name, map type, and use cases
+- Mix broad terms ("map print", "wall art") with specific ("Ontario map")
+- Think about what someone decorating their home or buying a gift would search for
 - Return ONLY a comma-separated list, nothing else"""
 
 
@@ -123,7 +123,7 @@ async def generate_description(
     if has_contours:
         features.append("elevation contours")
 
-    user_msg = f"""Write a unique Etsy product description for this CNC map file:
+    user_msg = f"""Write a unique Etsy product description for this custom map print:
 
 Location: {location_name}
 Type: {location_type}
@@ -168,7 +168,7 @@ Location: {location_name}
 Type: {location_type}
 {f'Province: {province}' if province and is_city else ''}
 Cut style: {style_labels.get(style, style)}
-Product: CNC-ready digital map file (SVG/DXF)"""
+Product: Custom map art print (high-res PNG digital download)"""
 
     result = await _call_claude(
         system=_build_title_prompt(),
@@ -203,7 +203,7 @@ Location: {location_name}
 Type: {location_type}
 Country: {country}
 Cut style: {style}
-Product: CNC digital map file (SVG/DXF) for wood carving, laser cutting"""
+Product: Custom map art print (high-res PNG digital download)"""
 
     result = await _call_claude(
         system=_build_tags_prompt(),
@@ -258,7 +258,7 @@ async def generate_full_listing(
     if has_contours:
         features.append("elevation contours")
 
-    user_msg = f"""Generate an Etsy listing for this CNC map file. Return EXACTLY this format:
+    user_msg = f"""Generate an Etsy listing for this custom map print. Return EXACTLY this format:
 
 TITLE: [your title here, max 140 chars]
 TAGS: [13 comma-separated tags, each max 20 chars]
@@ -271,18 +271,17 @@ Product details:
 {f'- Nickname: {nickname}' if nickname else ''}
 {f'- Capital: {capital}' if capital else ''}
 {f'- Province: {province}' if province and is_city else ''}
-- Cut style: {style_labels.get(style, style)}
-- Board size: {board_size}
-{f'- Complexity: {node_count:,} nodes' if node_count else ''}
+- Style: {style_labels.get(style, style)}
+{f'- Complexity: {node_count:,} geographic features' if node_count else ''}
 {f'- Features: {", ".join(features)}' if features else ''}
-- Formats: SVG, DXF, PNG (digital download only)
-- Compatible with: VCarve Pro, Fusion 360, Carbide Create, LightBurn, Easel"""
+- Format: High-resolution PNG (digital download only)
+- Use: Wall art, framed prints, home decor, gifts"""
 
-    system = """You are a copywriter for MapForge, an Etsy shop selling digital CNC map files (SVG/DXF).
+    system = """You are a copywriter for MapForge, an Etsy shop selling beautiful custom map art prints as digital downloads.
 
 Write compelling, unique listings that drive purchases. Each listing must be genuinely different.
 Use natural SEO keywords woven into flowing prose. Make the buyer feel connected to the location.
-Mention file formats, CNC compatibility, and that it's a digital download.
+Mention it's a high-res digital download print, perfect for wall art and gifting.
 Do NOT use emojis, ALL CAPS, or excessive punctuation.
 Do NOT use section headers in the description — write flowing prose.
 Return the EXACT format requested: TITLE, TAGS, then DESCRIPTION."""

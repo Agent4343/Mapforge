@@ -144,20 +144,20 @@ def generate_title(name: str, style: str) -> str:
 
     if is_city:
         province = meta.get("province", "Canada")
-        title = f"{name} City Street Map SVG DXF — CNC Wood Carving — {style_label} — {province} Wall Art"
+        title = f"{name} City Street Map Print — {style_label} — {province} Wall Art — Digital Download"
     elif country == "Canada":
-        title = f"{name} Map SVG DXF — CNC Wood Carving File — {style_label} Style — Canadian Province Wall Art"
+        title = f"{name} Map Print — {style_label} Style — Canadian Province Wall Art — Digital Download"
     else:
-        title = f"{name} State Map SVG DXF — CNC Wood Carving File — {style_label} Style — Wall Art Decor"
+        title = f"{name} State Map Print — {style_label} Style — Wall Art Decor — Digital Download"
 
     # Etsy title limit is 140 characters
     if len(title) > 140:
         if is_city:
-            title = f"{name} Street Map SVG DXF — CNC Carving — {style_label} — City Art"
+            title = f"{name} Street Map Print — {style_label} — City Wall Art"
         elif country == "Canada":
-            title = f"{name} Map SVG DXF — CNC Carving File — {style_label} — Canadian Province Art"
+            title = f"{name} Map Print — {style_label} — Canadian Province Art"
         else:
-            title = f"{name} Map SVG DXF — CNC Carving File — {style_label} — State Wall Art"
+            title = f"{name} Map Print — {style_label} — State Wall Art"
 
     return title[:140]
 
@@ -180,40 +180,36 @@ STREET MAP LAYERS:
 - water_features — Rivers, lakes, and coastlines (pocket: 1/8" ball nose)
 """
         perfect_for = f"""PERFECT FOR:
-- CNC router projects (wood signs, wall art, cutting boards)
-- Laser cutting and engraving
-- City pride gifts and home decor for {name} locals
+- Wall art and home decor
+- City pride gifts for {name} locals
 - Housewarming gifts for someone moving to {name}
 - Real estate closing gifts
 - Wedding venue maps
-- {name}, {province} hometown pride"""
+- {name}, {province} hometown pride
+- Framed prints and poster displays"""
     else:
         product_label = f"{'Canadian province' if country == 'Canada' else 'US state'} map of {name}"
         streets_section = ""
         perfect_for = f"""PERFECT FOR:
-- CNC router projects (wood signs, wall art, cutting boards)
-- Laser cutting and engraving
-- 3D carving with depth layers
+- Wall art and home decor
+- Framed prints and poster displays
 - {name} pride gifts and home decor
 - Housewarming, birthday, and holiday gifts"""
 
     desc = f"""{name} — {nickname}
 
-A clean, CNC-ready {product_label} designed to be {style_desc} into wood, acrylic, or other materials.
+A beautifully designed {product_label} — perfect as wall art, a framed print, or a personalized gift.
 
 WHAT YOU GET:
-- SVG file optimized for CNC routers (VCarve Pro, Fusion 360, Easel, Carbide Create)
-- DXF file for CAD/CAM software (AutoCAD, VCarve, Aspire)
-- PNG mockup image for preview
-- Organized layers for easy toolpath setup
+- High-resolution PNG print file (print-ready quality)
+- Clean, professional map design
 - Geographic coordinates displayed on design
-- Millimeter-precision paths (2 decimal places)
+- Instant digital download
 
 DESIGN DETAILS:
 - Product type: {product_label}
-- Cut style: {STYLE_NAMES.get(style, style.title())} ({style_desc})
-- Board size: 20" x 24" (Large) — resizable in your CAM software
-- All paths closed and CNC-optimized (M/L/Z commands only, no curves)
+- Style: {STYLE_NAMES.get(style, style.title())}
+- Print-ready resolution for large format printing
 
 LAYER STRUCTURE (for VCarve / toolpath mapping):
 - board_outline — Optional profile cut (1/4" downcut endmill)
@@ -223,10 +219,10 @@ LAYER STRUCTURE (for VCarve / toolpath mapping):
 {streets_section}
 {perfect_for}
 
-RECOMMENDED MATERIALS:
-- Hardwood (walnut, maple, cherry, oak) for CNC carving
-- Baltic birch plywood for laser cutting
-- Acrylic or MDF for clean engraving
+PRINTING TIPS:
+- Print at home or use a professional print service
+- Looks great on matte or lustre photo paper
+- Standard frame sizes available at most stores
 
 NOTES:
 - This is a DIGITAL FILE — no physical product will be shipped
@@ -246,14 +242,14 @@ def generate_tags(name: str, style: str) -> str:
     # Base tags (always included)
     tags = [
         f"{name} map",
-        "CNC file",
-        "SVG DXF",
-        "wood carving",
+        "map print",
+        "custom map",
         "wall art",
         f"{name} art",
-        "CNC router",
-        "laser cut file",
+        "city map poster",
+        "map poster",
         "digital download",
+        "home decor",
     ]
 
     if is_city:

@@ -16,8 +16,8 @@ OVERPASS_ENDPOINTS = [
 ]
 OVERPASS_URL = OVERPASS_ENDPOINTS[0]  # backward compat
 NOMINATIM_LOOKUP_URL = "https://nominatim.openstreetmap.org/lookup"
-NOMINATIM_HEADERS = {"User-Agent": "MapForgeCNC/1.0 (https://mapforge-production.up.railway.app; mapforge map generator)"}
-OVERPASS_HEADERS = {"User-Agent": "MapForgeCNC/1.0 (https://mapforge-production.up.railway.app; mapforge map generator)"}
+NOMINATIM_HEADERS = {"User-Agent": "MapForge/1.0 (https://mapforge-production.up.railway.app; mapforge map generator)"}
+OVERPASS_HEADERS = {"User-Agent": "MapForge/1.0 (https://mapforge-production.up.railway.app; mapforge map generator)"}
 
 OSM_TYPE_MAP = {"node": "N", "way": "W", "relation": "R"}
 

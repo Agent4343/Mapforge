@@ -254,7 +254,7 @@ export default function MarketplaceView({ user, onBack }) {
             </div>
             <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", color: "var(--text-secondary)", cursor: "pointer" }}>
               <input type="checkbox" checked={reviewCnc} onChange={(e) => setReviewCnc(e.target.checked)} />
-              CNC compatible (worked on my machine)
+              Print quality verified
             </label>
             {reviewError && <div className="error-message">{reviewError}</div>}
             <div className="export-buttons" style={{ marginTop: "12px" }}>
@@ -281,7 +281,7 @@ export default function MarketplaceView({ user, onBack }) {
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
                       <span style={{ fontWeight: 600, fontSize: "13px" }}>{r.buyer_username}</span>
                       <span style={{ color: "var(--crimson)", fontFamily: "var(--font-mono)", fontSize: "12px" }}>
-                        {"*".repeat(r.rating)}{r.cnc_compatible ? " CNC OK" : ""}
+                        {"*".repeat(r.rating)}{r.cnc_compatible ? " Verified" : ""}
                       </span>
                     </div>
                     {r.comment && <p style={{ fontSize: "12px", color: "var(--text-secondary)", margin: 0 }}>{r.comment}</p>}

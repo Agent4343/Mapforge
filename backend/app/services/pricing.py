@@ -109,7 +109,7 @@ def calculate_price(
         addons.append({"label": "Ornate corner border", "cents": ADDON_FEES["border_ornate"]})
 
     if include_dxf:
-        addons.append({"label": "DXF file (CNC)", "cents": FORMAT_FEES["dxf"]})
+        addons.append({"label": "DXF file", "cents": FORMAT_FEES["dxf"]})
 
     if include_stl:
         addons.append({"label": "3D STL file", "cents": FORMAT_FEES["stl"]})

@@ -464,7 +464,7 @@ export default function App() {
     if (!result) return;
     try {
       const blob = await downloadDXF(result.file_id);
-      _triggerDownload(blob, config.text + "_cnc", "dxf");
+      _triggerDownload(blob, config.text + "_vector", "dxf");
     } catch (err) {
       setError(err.message);
     }
