@@ -23,7 +23,10 @@ _session_stats = {"calls": 0, "input_tokens": 0, "output_tokens": 0}
 
 
 def get_api_key() -> Optional[str]:
-    return os.getenv("ANTHROPIC_API_KEY")
+    key = os.getenv("ANTHROPIC_API_KEY")
+    if key:
+        key = key.strip()  # Remove trailing newlines/spaces from env vars
+    return key if key else None
 
 
 def get_session_stats() -> dict:
