@@ -692,7 +692,7 @@ def _generate_print_svg(
         # With water-colored background, the land shape pops beautifully.
         # Province coastlines: thin and clean. The geometry has hundreds of
         # detailed points (bays, coves) that look messy at thick widths.
-        coast_w = "0.5" if is_province_map else "0.8"
+        coast_w = "0.3" if is_province_map else "0.6"
         for exterior, holes in polygons:
             # Fill with holes (evenodd cuts out bays/inlets)
             path_d = _coords_to_path(exterior)
@@ -1063,7 +1063,10 @@ def _generate_vintage_map_svg(
     parchment = "#e8dcc0"   # Base parchment color
     parchment_edge = "#c8b890"  # Darker edge color for vignette
     water_tint = "#b8c8d0"  # Muted steel-blue for water — distinct from parchment
-    coastline_color = "#4a3a28"  # Subtle brown for coastline outline
+    coastline_color = "#7a6a50"  # Lighter brown for coastline — subtle, not dominant
+    # Roads use a distinct reddish-brown so they're clearly different from coastline
+    road_color = "#5a3020"   # Warm dark red-brown for highway lines
+    road_color_light = "#7a5040"  # Lighter version for secondary roads
 
     # Determine map scale from GEOGRAPHIC EXTENT — this is the only reliable way
     # to know if we're rendering a province vs a village vs a city.
@@ -1281,7 +1284,7 @@ def _generate_vintage_map_svg(
     # Province coastlines need to be THIN — the coastline geometry has hundreds
     # of detailed points (every bay, cove, inlet) that at thick widths create
     # visual noise. A thin, clean coastline lets the land shape speak.
-    coastline_width = "0.5" if map_scale == "province" else "0.35" if map_scale == "city" else "0.25"
+    coastline_width = "0.3" if map_scale == "province" else "0.3" if map_scale == "city" else "0.25"
     if polygons:
         lines.append('    <g id="land_polygons">')
         for exterior, holes in polygons:
@@ -1366,11 +1369,18 @@ def _generate_vintage_map_svg(
             else:
                 is_large = True
             path_d = _coords_to_path(board_coords)
-            # Only large water bodies get outline stroke — small ones just fill
-            if is_large:
+            # Province: fill only, no outlines — strokes create visual clutter
+            # at province scale with dozens of lake/bay polygons.
+            # City/town: large water gets subtle outline for definition.
+            if map_scale == "province":
                 lines.append(
                     f'      <path d="{path_d}"'
-                    f' fill="{water_tint}" stroke="{coastline_color}" stroke-width="0.25"'
+                    f' fill="{water_tint}" stroke="none"/>'
+                )
+            elif is_large:
+                lines.append(
+                    f'      <path d="{path_d}"'
+                    f' fill="{water_tint}" stroke="{coastline_color}" stroke-width="0.2"'
                     f' stroke-linejoin="round"/>'
                 )
                 lines.append(
@@ -1378,7 +1388,6 @@ def _generate_vintage_map_svg(
                     f' fill="url(#water_hatch)" stroke="none"/>'
                 )
             else:
-                # Medium water bodies: fill only, no outline or hatching
                 lines.append(
                     f'      <path d="{path_d}"'
                     f' fill="{water_tint}" stroke="none"/>'
@@ -1494,7 +1503,7 @@ def _generate_vintage_map_svg(
                 board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
                 path_d = _coords_to_open_path(board_coords)
                 w = vintage_widths.get(road_class, 0.15)
-                color = ink_faint if road_class in detail_classes else ink_light
+                color = ink_faint if road_class in detail_classes else road_color_light
                 lines.append(
                     f'      <path d="{path_d}"'
                     f' fill="none" stroke="{color}" stroke-width="{w}"'
@@ -1516,12 +1525,13 @@ def _generate_vintage_map_svg(
             major_road_paths.append((path_d, road_class, cw))
 
         if use_single_line_roads:
-            # Province scale: single clean ink lines, no casing.
-            # Roads are subtle structural lines — coastline is the art.
+            # Province scale: single clean lines in a distinct road color.
+            # Must be visually different from coastline so roads don't blend
+            # into the geography. Uses reddish-brown vs coastline's gray-brown.
             for path_d, road_class, cw in major_road_paths:
                 lines.append(
                     f'      <path d="{path_d}"'
-                    f' fill="none" stroke="{ink_light}" stroke-width="{cw}"'
+                    f' fill="none" stroke="{road_color}" stroke-width="{cw}"'
                     f' stroke-linecap="round" stroke-linejoin="round"/>'
                 )
                 path_count += 1
