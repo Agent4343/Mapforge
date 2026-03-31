@@ -1238,7 +1238,7 @@ def _generate_vintage_map_svg(
     lines.append("    </g>")
 
     # Layer 4: Land polygons — filled with parchment so land stands out from water
-    coastline_width = "0.8" if map_scale == "province" else "0.5" if map_scale == "city" else "0.35"
+    coastline_width = "1.2" if map_scale == "province" else "0.5" if map_scale == "city" else "0.35"
     if polygons:
         lines.append('    <g id="land_polygons">')
         for exterior, holes in polygons:
@@ -1373,14 +1373,13 @@ def _generate_vintage_map_svg(
 
         # Scale-based filtering using geographic extent:
         if map_scale == "province":
-            # Province (>0.5°): ONLY major highways, skip everything else
+            # Province (>0.5°): ONLY major highways, skip secondary/links for clean look
             allowed_roads = {"motorway", "motorway_link", "trunk", "trunk_link",
-                             "primary", "primary_link", "secondary", "secondary_link"}
+                             "primary", "primary_link"}
             vintage_widths = {
-                "motorway": 1.8, "motorway_link": 1.2,
-                "trunk": 1.6, "trunk_link": 1.0,
-                "primary": 1.3, "primary_link": 0.9,
-                "secondary": 0.9, "secondary_link": 0.6,
+                "motorway": 3.0, "motorway_link": 2.0,
+                "trunk": 2.6, "trunk_link": 1.6,
+                "primary": 2.0, "primary_link": 1.4,
             }
             skip_minor_roads = True
         elif map_scale == "city":
@@ -1469,12 +1468,13 @@ def _generate_vintage_map_svg(
             )
             path_count += 1
 
-        # Layer B: inner fill (parchment center) — makes roads look clean and bold
+        # Layer B: inner fill (cream center) — makes roads look clean and bold
+        road_fill = "#f0e8d0"  # Slightly lighter than parchment for contrast
         for path_d, road_class, cw in major_road_paths:
-            fw = round(cw * 0.5, 2)
+            fw = round(cw * 0.55, 2)
             lines.append(
                 f'      <path d="{path_d}"'
-                f' fill="none" stroke="{parchment}" stroke-width="{fw}"'
+                f' fill="none" stroke="{road_fill}" stroke-width="{fw}"'
                 f' stroke-linecap="round" stroke-linejoin="round"/>'
             )
 
@@ -2051,21 +2051,29 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
     major_paths = []
     minor_paths = []
 
+    # For provinces, only show major highways — skip minor/residential for clean look
+    province_allowed = {"motorway", "motorway_link", "trunk", "trunk_link",
+                        "primary", "primary_link", "secondary", "secondary_link"}
+
     for coords, road_class, _width, name in streets_data.get("major_roads", []):
         if len(coords) < 2:
+            continue
+        if is_province_map and road_class not in province_allowed:
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
         cw = casing_widths.get(road_class, 0.5)
         major_paths.append((path_d, road_class, cw))
 
-    for coords, road_class, _width, name in streets_data.get("minor_roads", []):
-        if len(coords) < 2:
-            continue
-        board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
-        path_d = _coords_to_open_path(board_coords)
-        cw = casing_widths.get(road_class, 0.2)
-        minor_paths.append((path_d, road_class, cw))
+    # Skip minor roads entirely for provinces — they create visual noise
+    if not is_province_map:
+        for coords, road_class, _width, name in streets_data.get("minor_roads", []):
+            if len(coords) < 2:
+                continue
+            board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
+            path_d = _coords_to_open_path(board_coords)
+            cw = casing_widths.get(road_class, 0.2)
+            minor_paths.append((path_d, road_class, cw))
 
     # Layer 1: Minor road casings (bottom)
     for path_d, road_class, cw in minor_paths:
