@@ -659,19 +659,33 @@ def _generate_print_svg(
 
     lines.append('    <g id="geography_fill">')
     if is_street_map:
-        # Street maps: fill the boundary polygon with land color to create
-        # visible contrast between the city area and the white mat border.
-        # Streets and water are layered on top.
-        # Sparse areas get a bolder boundary stroke for more definition.
-        geo_stroke_w = "1.2" if is_sparse_area else "0.8"
+        # Street/city maps: the streets ARE the visual — the boundary polygon
+        # should be subtle or invisible. Premium city maps (Mapiful, Grafomap)
+        # show streets on a clean background with no visible admin boundary.
+        #
+        # Dense cities: fill with map_bg (invisible against background) so
+        # only streets define the visual shape. Very faint boundary stroke.
+        # Sparse areas: use a subtle land fill for some visual grounding.
+        if is_sparse_area:
+            geo_fill = theme["land"]
+            geo_stroke = theme["land_stroke"]
+            geo_stroke_w = "1.0"
+            geo_opacity = ""
+        else:
+            # Dense city: boundary invisible — streets are the art
+            geo_fill = theme["map_bg"]
+            geo_stroke = theme.get("land_stroke", "#c0c0c0")
+            geo_stroke_w = "0.4"
+            geo_opacity = ' opacity="0.3"'
         for exterior, holes in polygons:
             path_d = _coords_to_path(exterior)
             for hole in holes:
                 path_d += " " + _coords_to_path(hole)
             lines.append(
                 f'      <path d="{path_d}"'
-                f' fill="{theme["land"]}" stroke="{theme["land_stroke"]}"'
-                f' stroke-width="{geo_stroke_w}" fill-rule="evenodd" stroke-linejoin="round"/>'
+                f' fill="{geo_fill}" stroke="{geo_stroke}"'
+                f' stroke-width="{geo_stroke_w}"{geo_opacity}'
+                f' fill-rule="evenodd" stroke-linejoin="round"/>'
             )
     else:
         # Province/lake/park maps: filled polygon is the main visual.
@@ -762,19 +776,34 @@ def _generate_print_svg(
         layer_count += 1
         path_count += len(markers)
 
-    # Vignette edge fade — only if layout enables it
-    # Sparse/rural areas get a stronger vignette to draw focus inward
+    # Vignette edge fade — creates a smooth circular fade at the edges,
+    # drawing focus inward. This is the key visual technique that makes
+    # premium city map prints look polished (Mapiful, Grafomap all use this).
+    #
+    # For city/street maps: fade to the mat color (white) with a strong
+    # gradient so the street grid dissolves cleanly into the border.
+    # For province/lake maps: lighter vignette to avoid hiding the coastline.
     if layout.get("vignette", False):
         lines.append('    <g id="vignette">')
         vig_id = "vig_grad"
-        vig_inner = "50%" if is_sparse_area else "60%"
-        vig_opacity = "0.45" if is_sparse_area else "0.3"
+        # City maps: fade to mat (white) for clean dissolve. Province: fade to map_bg.
+        vig_color = theme["mat"] if is_street_map else theme["map_bg"]
+        if is_street_map:
+            # Strong circular fade — streets dissolve into white mat
+            vig_inner = "45%"
+            vig_opacity = "1.0"  # fully opaque at edges = clean dissolve
+        elif is_sparse_area:
+            vig_inner = "50%"
+            vig_opacity = "0.45"
+        else:
+            vig_inner = "60%"
+            vig_opacity = "0.3"
         lines.append("      <defs>")
         lines.append(
             f'        <radialGradient id="{vig_id}" cx="50%" cy="50%" r="70%">'
         )
-        lines.append(f'          <stop offset="{vig_inner}" stop-color="{theme["map_bg"]}" stop-opacity="0"/>')
-        lines.append(f'          <stop offset="100%" stop-color="{theme["map_bg"]}" stop-opacity="{vig_opacity}"/>')
+        lines.append(f'          <stop offset="{vig_inner}" stop-color="{vig_color}" stop-opacity="0"/>')
+        lines.append(f'          <stop offset="100%" stop-color="{vig_color}" stop-opacity="{vig_opacity}"/>')
         lines.append(f"        </radialGradient>")
         lines.append("      </defs>")
         lines.append(
@@ -2016,7 +2045,11 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
     # Theme colors
     major_color = theme.get("street_major", "#333333")
     minor_color = theme.get("street_minor", "#666666")
-    # Road fill (inner color) — lighter than the casing for contrast
+    # Road fill (inner color) — must contrast with the dark casing.
+    # For cities: use map_bg (white/cream) so roads have crisp white centers.
+    # For provinces: use white for maximum contrast on the land mass.
+    # Using "land" color (tan) would make roads blend into the background.
+    map_bg_color = theme.get("map_bg", "#ffffff")
     land_color = theme.get("land", "#e8dfd0")
 
     # Width multipliers for province vs city scale
@@ -2045,31 +2078,35 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
         }
         fill_ratio = 0.5
     else:
-        # City: bold, dense street grid that creates strong visual texture
-        # Auto-detect sparse cities: if few roads, boost widths like community
+        # City: the street grid IS the art. Premium maps have a strong visual
+        # hierarchy — motorways are bold and prominent, residential streets form
+        # a fine textured background. The ratio between thickest and thinnest
+        # should be at least 5:1 for a professional look.
         total_roads = len(streets_data.get("major_roads", [])) + len(streets_data.get("minor_roads", []))
         is_sparse_city = total_roads < 80
 
         if is_sparse_city:
-            # Sparse city (like a small town): use thicker roads
+            # Sparse city (small town): thicker roads to fill the space
             casing_widths = {
-                "motorway": 1.8, "motorway_link": 1.4,
-                "trunk": 1.6, "trunk_link": 1.2,
-                "primary": 1.4, "primary_link": 1.0,
+                "motorway": 2.0, "motorway_link": 1.5,
+                "trunk": 1.8, "trunk_link": 1.3,
+                "primary": 1.5, "primary_link": 1.1,
                 "secondary": 1.0, "secondary_link": 0.8,
                 "tertiary": 0.7, "tertiary_link": 0.5,
-                "residential": 0.45, "unclassified": 0.45,
-                "living_street": 0.45, "service": 0.35, "track": 0.3,
+                "residential": 0.4, "unclassified": 0.4,
+                "living_street": 0.35, "service": 0.25, "track": 0.2,
             }
         else:
+            # Dense city: dramatic hierarchy — bold highways, fine residential
+            # Motorway:residential ratio = 1.6:0.25 = 6.4:1
             casing_widths = {
-                "motorway": 1.4, "motorway_link": 1.1,
-                "trunk": 1.2, "trunk_link": 0.9,
-                "primary": 1.0, "primary_link": 0.75,
-                "secondary": 0.7, "secondary_link": 0.55,
-                "tertiary": 0.5, "tertiary_link": 0.35,
-                "residential": 0.3, "unclassified": 0.3,
-                "living_street": 0.3, "service": 0.2, "track": 0.18,
+                "motorway": 1.6, "motorway_link": 1.2,
+                "trunk": 1.4, "trunk_link": 1.0,
+                "primary": 1.1, "primary_link": 0.8,
+                "secondary": 0.7, "secondary_link": 0.5,
+                "tertiary": 0.45, "tertiary_link": 0.35,
+                "residential": 0.25, "unclassified": 0.25,
+                "living_street": 0.2, "service": 0.15, "track": 0.12,
             }
         fill_ratio = 0.5
 
@@ -2105,40 +2142,75 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
             cw = casing_widths.get(road_class, 0.2)
             minor_paths.append((path_d, road_class, cw))
 
-    # Layer 1: Minor road casings (bottom)
-    for path_d, road_class, cw in minor_paths:
-        lines.append(
-            f'      <path d="{path_d}"'
-            f' fill="none" stroke="{minor_color}" stroke-width="{cw}"'
-            f' stroke-linecap="round" stroke-linejoin="round"/>'
-        )
+    # Detect dark themes: if map_bg is dark, streets are light-on-dark.
+    # Dark themes render single bright lines (no casing) — the dark background
+    # provides the contrast, like city lights at night.
+    # Light themes use classic cased roads: dark casing + white/cream center.
+    def _is_dark_color(hex_color: str) -> bool:
+        h = hex_color.lstrip("#")
+        if len(h) != 6:
+            return False
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        return (0.299 * r + 0.587 * g + 0.114 * b) / 255 < 0.3
 
-    # Layer 2: Minor road fills
-    for path_d, road_class, cw in minor_paths:
-        fw = round(cw * fill_ratio, 2)
-        lines.append(
-            f'      <path d="{path_d}"'
-            f' fill="none" stroke="{land_color}" stroke-width="{fw}"'
-            f' stroke-linecap="round" stroke-linejoin="round"/>'
-        )
+    is_dark_theme = _is_dark_color(map_bg_color)
 
-    # Layer 3: Major road casings (on top of minor roads)
-    for path_d, road_class, cw in major_paths:
-        lines.append(
-            f'      <path d="{path_d}"'
-            f' fill="none" stroke="{major_color}" stroke-width="{cw}"'
-            f' stroke-linecap="round" stroke-linejoin="round"/>'
-        )
+    if is_dark_theme:
+        # Dark theme: single bright lines, no casing needed.
+        # Minor roads first (bottom layer, thin and subtle)
+        for path_d, road_class, cw in minor_paths:
+            sw = round(cw * 0.5, 2)
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="none" stroke="{minor_color}" stroke-width="{sw}"'
+                f' stroke-linecap="round" stroke-linejoin="round"/>'
+            )
+        # Major roads on top (bold and prominent)
+        for path_d, road_class, cw in major_paths:
+            sw = round(cw * 0.6, 2)
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="none" stroke="{major_color}" stroke-width="{sw}"'
+                f' stroke-linecap="round" stroke-linejoin="round"/>'
+            )
+    else:
+        # Light theme: 4-layer cased roads for the premium cartographic look.
+        # Dark casing (outer) + white/cream fill (inner) = crisp road edges.
+        road_fill = "#ffffff" if is_province_map else map_bg_color
 
-    # Layer 4: Major road fills (topmost)
-    for path_d, road_class, cw in major_paths:
-        fw = round(cw * fill_ratio, 2)
-        fill_color = "#ffffff" if is_province_map else land_color
-        lines.append(
-            f'      <path d="{path_d}"'
-            f' fill="none" stroke="{fill_color}" stroke-width="{fw}"'
-            f' stroke-linecap="round" stroke-linejoin="round"/>'
-        )
+        # Layer 1: Minor road casings (bottom — dark outer strokes)
+        for path_d, road_class, cw in minor_paths:
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="none" stroke="{minor_color}" stroke-width="{cw}"'
+                f' stroke-linecap="round" stroke-linejoin="round"/>'
+            )
+
+        # Layer 2: Minor road fills (white/cream inner strokes)
+        for path_d, road_class, cw in minor_paths:
+            fw = round(cw * fill_ratio, 2)
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="none" stroke="{road_fill}" stroke-width="{fw}"'
+                f' stroke-linecap="round" stroke-linejoin="round"/>'
+            )
+
+        # Layer 3: Major road casings (on top of minor roads)
+        for path_d, road_class, cw in major_paths:
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="none" stroke="{major_color}" stroke-width="{cw}"'
+                f' stroke-linecap="round" stroke-linejoin="round"/>'
+            )
+
+        # Layer 4: Major road fills (topmost — white/cream centers)
+        for path_d, road_class, cw in major_paths:
+            fw = round(cw * fill_ratio, 2)
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="none" stroke="{road_fill}" stroke-width="{fw}"'
+                f' stroke-linecap="round" stroke-linejoin="round"/>'
+            )
 
     lines.append("    </g>")
 
