@@ -690,7 +690,9 @@ def _generate_print_svg(
     else:
         # Province/lake/park maps: filled polygon is the main visual.
         # With water-colored background, the land shape pops beautifully.
-        coast_w = "1.5" if is_province_map else "1.0"
+        # Province coastlines: thin and clean. The geometry has hundreds of
+        # detailed points (bays, coves) that look messy at thick widths.
+        coast_w = "0.5" if is_province_map else "0.8"
         for exterior, holes in polygons:
             # Fill with holes (evenodd cuts out bays/inlets)
             path_d = _coords_to_path(exterior)
@@ -1276,7 +1278,10 @@ def _generate_vintage_map_svg(
     lines.append("    </g>")
 
     # Layer 4: Land polygons — filled with parchment so land stands out from water
-    coastline_width = "1.2" if map_scale == "province" else "0.5" if map_scale == "city" else "0.35"
+    # Province coastlines need to be THIN — the coastline geometry has hundreds
+    # of detailed points (every bay, cove, inlet) that at thick widths create
+    # visual noise. A thin, clean coastline lets the land shape speak.
+    coastline_width = "0.5" if map_scale == "province" else "0.35" if map_scale == "city" else "0.25"
     if polygons:
         lines.append('    <g id="land_polygons">')
         for exterior, holes in polygons:
@@ -1417,16 +1422,21 @@ def _generate_vintage_map_svg(
 
         # Scale-based filtering using geographic extent:
         if map_scale == "province":
-            # Province (>0.5°): ONLY major highways, skip secondary/links for clean look
+            # Province (>0.5°): ONLY major highways, thin single lines.
+            # No casing at this scale — roads are subtle context, not the focus.
+            # The coastline shape IS the art. Roads just add structure.
             allowed_roads = {"motorway", "motorway_link", "trunk", "trunk_link",
                              "primary", "primary_link"}
             vintage_widths = {
-                "motorway": 3.0, "motorway_link": 2.0,
-                "trunk": 2.6, "trunk_link": 1.6,
-                "primary": 2.0, "primary_link": 1.4,
+                "motorway": 0.8, "motorway_link": 0.6,
+                "trunk": 0.7, "trunk_link": 0.5,
+                "primary": 0.6, "primary_link": 0.45,
             }
             skip_minor_roads = True
+            # Flag: no casing for province roads — just single ink lines
+            use_single_line_roads = True
         elif map_scale == "city":
+            use_single_line_roads = False
             # City (0.05°-0.5°): major + tertiary, skip detail roads
             allowed_roads = None
             vintage_widths = {
@@ -1440,6 +1450,7 @@ def _generate_vintage_map_svg(
             }
             skip_minor_roads = False
         elif map_scale == "town":
+            use_single_line_roads = False
             # Town (0.01°-0.05°): all roads visible, good widths
             allowed_roads = None
             vintage_widths = {
@@ -1455,6 +1466,7 @@ def _generate_vintage_map_svg(
             }
             skip_minor_roads = False
         else:
+            use_single_line_roads = False
             # Village (<0.01°): everything visible with thick widths
             allowed_roads = None
             vintage_widths = {
@@ -1503,24 +1515,36 @@ def _generate_vintage_map_svg(
             cw = vintage_widths.get(road_class, 0.5)
             major_road_paths.append((path_d, road_class, cw))
 
-        # Layer A: outer casing (dark ink border)
-        for path_d, road_class, cw in major_road_paths:
-            lines.append(
-                f'      <path d="{path_d}"'
-                f' fill="none" stroke="{ink}" stroke-width="{cw}"'
-                f' stroke-linecap="round" stroke-linejoin="round"/>'
-            )
-            path_count += 1
+        if use_single_line_roads:
+            # Province scale: single clean ink lines, no casing.
+            # Roads are subtle structural lines — coastline is the art.
+            for path_d, road_class, cw in major_road_paths:
+                lines.append(
+                    f'      <path d="{path_d}"'
+                    f' fill="none" stroke="{ink_light}" stroke-width="{cw}"'
+                    f' stroke-linecap="round" stroke-linejoin="round"/>'
+                )
+                path_count += 1
+        else:
+            # City/town/village: cased roads (dark ink border + cream fill)
+            # Layer A: outer casing (dark ink border)
+            for path_d, road_class, cw in major_road_paths:
+                lines.append(
+                    f'      <path d="{path_d}"'
+                    f' fill="none" stroke="{ink}" stroke-width="{cw}"'
+                    f' stroke-linecap="round" stroke-linejoin="round"/>'
+                )
+                path_count += 1
 
-        # Layer B: inner fill (cream center) — makes roads look clean and bold
-        road_fill = "#f0e8d0"  # Slightly lighter than parchment for contrast
-        for path_d, road_class, cw in major_road_paths:
-            fw = round(cw * 0.55, 2)
-            lines.append(
-                f'      <path d="{path_d}"'
-                f' fill="none" stroke="{road_fill}" stroke-width="{fw}"'
-                f' stroke-linecap="round" stroke-linejoin="round"/>'
-            )
+            # Layer B: inner fill (cream center) — makes roads look clean and bold
+            road_fill = "#f0e8d0"  # Slightly lighter than parchment for contrast
+            for path_d, road_class, cw in major_road_paths:
+                fw = round(cw * 0.55, 2)
+                lines.append(
+                    f'      <path d="{path_d}"'
+                    f' fill="none" stroke="{road_fill}" stroke-width="{fw}"'
+                    f' stroke-linecap="round" stroke-linejoin="round"/>'
+                )
 
         lines.append("    </g>")
 
@@ -2054,17 +2078,18 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
 
     # Width multipliers for province vs city scale
     if is_province_map:
-        # Province: bold, clear highways visible at small scale
+        # Province: thin, clean highway lines. The coastline shape is the art —
+        # roads are subtle structural context. No thick casing at this scale.
         casing_widths = {
-            "motorway": 3.0, "motorway_link": 2.2,
-            "trunk": 2.6, "trunk_link": 1.8,
-            "primary": 2.0, "primary_link": 1.5,
-            "secondary": 1.5, "secondary_link": 1.1,
-            "tertiary": 1.0, "tertiary_link": 0.8,
-            "residential": 0.5, "unclassified": 0.5,
-            "living_street": 0.5, "service": 0.4, "track": 0.35,
+            "motorway": 1.0, "motorway_link": 0.7,
+            "trunk": 0.9, "trunk_link": 0.6,
+            "primary": 0.7, "primary_link": 0.5,
+            "secondary": 0.5, "secondary_link": 0.4,
+            "tertiary": 0.35, "tertiary_link": 0.3,
+            "residential": 0.25, "unclassified": 0.25,
+            "living_street": 0.2, "service": 0.15, "track": 0.12,
         }
-        fill_ratio = 0.55  # inner fill is 55% of casing width
+        fill_ratio = 0.55
     elif product_type in ("community", "park"):
         # Community/rural: thicker roads to fill sparse areas
         casing_widths = {
