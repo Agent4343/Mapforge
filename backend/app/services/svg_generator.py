@@ -714,7 +714,7 @@ def _generate_print_svg(
 
     # Water features — filled with water color (optional gradient)
     if water_data:
-        _render_print_water(lines, water_data, processed, theme, gradient=gradient_water)
+        _render_print_water(lines, water_data, processed, theme, gradient=gradient_water, product_type=product_type)
 
     # Contour bands
     if contour_data:
@@ -1919,13 +1919,15 @@ def _render_geography(lines: list[str], polygons: list, style: CutStyle):
         lines.append("  </g>")
 
 
-def _render_print_water(lines: list[str], water_data: dict, processed: dict, theme: dict, gradient: bool = True):
+def _render_print_water(lines: list[str], water_data: dict, processed: dict, theme: dict, gradient: bool = True, product_type: str = "city"):
     """Render water features with themed poster colors.
 
     When gradient=True, larger water bodies get a radial gradient fill
-    for a subtle depth perception effect.
+    for a subtle depth perception effect. Province maps filter out small
+    water features to keep the map clean and professional.
     """
     transform = processed.get("transform")
+    is_province = product_type == "province"
 
     lines.append('    <g id="water_features">')
 
@@ -1946,26 +1948,39 @@ def _render_print_water(lines: list[str], water_data: dict, processed: dict, the
         if len(coords) < 3:
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
+
+        # For provinces, filter out small water bodies — only show significant lakes
+        if is_province:
+            xs = [p[0] for p in board_coords]
+            ys = [p[1] for p in board_coords]
+            poly_area = (max(xs) - min(xs)) * (max(ys) - min(ys))
+            if poly_area < 20.0:  # Skip features smaller than ~4.5mm x 4.5mm
+                continue
+
         path_d = _coords_to_path(board_coords)
         # Use gradient for larger water bodies (>6 points suggests a significant feature)
         fill = "url(#water_grad)" if gradient and len(coords) > 6 else theme["water"]
+        # Province water: no stroke for cleaner look; city water: subtle stroke
+        stroke_w = "0.3" if is_province else "0.5"
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="{fill}" stroke="{theme["water_stroke"]}"'
-            f' stroke-width="0.5" stroke-linejoin="round"/>'
+            f' stroke-width="{stroke_w}" stroke-linejoin="round"/>'
         )
 
-    for coords, water_type, name in water_data.get("waterways", []):
-        if len(coords) < 2:
-            continue
-        board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
-        path_d = _coords_to_open_path(board_coords)
-        width = 1.0 if water_type in ("river", "coastline") else 0.4
-        lines.append(
-            f'      <path d="{path_d}"'
-            f' fill="none" stroke="{theme["water_stroke"]}" stroke-width="{width}"'
-            f' stroke-linecap="round" stroke-linejoin="round"/>'
-        )
+    # Skip waterway lines (rivers/streams) for provinces — they create visual noise
+    if not is_province:
+        for coords, water_type, name in water_data.get("waterways", []):
+            if len(coords) < 2:
+                continue
+            board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
+            path_d = _coords_to_open_path(board_coords)
+            width = 1.0 if water_type in ("river", "coastline") else 0.4
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="none" stroke="{theme["water_stroke"]}" stroke-width="{width}"'
+                f' stroke-linecap="round" stroke-linejoin="round"/>'
+            )
 
     lines.append("    </g>")
 
