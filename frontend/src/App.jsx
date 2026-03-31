@@ -451,7 +451,8 @@ export default function App() {
     if (!result) return;
     try {
       const blob = await downloadPrintPNG(result.file_id);
-      _triggerDownload(blob, config.text + "_print_300dpi", "png");
+      const dpiLabel = config.printDPI || 300;
+      _triggerDownload(blob, config.text + `_print_${dpiLabel}dpi`, "png");
     } catch (err) {
       setError(err.message);
     }
