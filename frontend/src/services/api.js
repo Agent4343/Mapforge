@@ -53,7 +53,9 @@ async function fetchWithTimeout(url, options = {}) {
     if (err.name === "AbortError") {
       throw new Error("Request timed out. Please check your connection and try again.");
     }
-    throw new Error("Network error. Please check your internet connection and try again.");
+    const endpoint = typeof url === "string" ? String(url).split("?")[0] : "API request";
+    const reason = err?.message ? ` (${err.message})` : "";
+    throw new Error(`Network error while calling ${endpoint}${reason}. Please check your connection and API server.`);
   } finally {
     clearTimeout(timeout);
   }

@@ -158,6 +158,7 @@ export default function ExportPanel({
 
   async function handleConnectEtsy() {
     try {
+      setListError(null);
       const { auth_url } = await connectEtsy();
       window.location.href = auth_url;
     } catch (err) {
