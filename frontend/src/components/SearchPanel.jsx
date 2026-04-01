@@ -119,6 +119,11 @@ export default function SearchPanel({ onSelect, selectedResult, country }) {
                     {r.match_confidence} confidence
                   </span>
                 )}
+                {r.fallback_available && (
+                  <span className="result-quality-pill result-fallback-available">
+                    fallback ready
+                  </span>
+                )}
               </div>
             </div>
           ))}

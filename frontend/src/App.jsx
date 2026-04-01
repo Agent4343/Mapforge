@@ -478,7 +478,11 @@ export default function App() {
     setError(null);
 
     // Check geometry quality and search confidence before generation.
-    if (!item.has_geometry) {
+    if (!item.has_geometry && item.fallback_available) {
+      setQualityWarning(
+        "This location has no exact boundary, but MapForge can use fallback area mode. For highest accuracy, prefer a Best Match with medium/high geometry."
+      );
+    } else if (!item.has_geometry) {
       setQualityWarning("This location may not have polygon data. Generation might fail or produce incomplete results.");
     } else if (item.geometry_quality === "low") {
       setQualityWarning(
@@ -595,6 +599,11 @@ export default function App() {
       const allWarnings = [...(data.warnings || [])];
       if (data.node_count < 20) {
         allWarnings.push("Low detail: This location has very few data points. The map may appear rough or oversimplified.");
+      }
+      if (data.needs_location_repick) {
+        allWarnings.push(
+          "Recommendation: re-pick another search result (prefer Best Match + medium/high geometry) before final purchase."
+        );
       }
       setQualityWarning(allWarnings.length > 0 ? allWarnings.join(" ") : null);
     } catch (err) {

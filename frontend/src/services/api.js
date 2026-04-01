@@ -165,7 +165,10 @@ async function searchLocations(query, country = "ca") {
   const resp = await fetchWithTimeout(
     `${API_BASE}/search?q=${encodeURIComponent(query)}&country=${encodeURIComponent(country)}&limit=10`
   );
-  if (!resp.ok) throw new Error(`Search failed: ${resp.statusText}`);
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Search failed"));
+  }
   return resp.json();
 }
 

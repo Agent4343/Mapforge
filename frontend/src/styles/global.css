@@ -240,6 +240,11 @@ body {
   border-color: rgba(192, 57, 43, 0.45);
 }
 
+.result-fallback-available {
+  color: #d6c8ff;
+  border-color: rgba(155, 89, 182, 0.5);
+}
+
 .result-type-badge {
   display: inline-block;
   background: var(--crimson);
