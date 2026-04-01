@@ -698,13 +698,20 @@ def _generate_print_svg(
             path_d = _coords_to_path(exterior)
             for hole in holes:
                 path_d += " " + _coords_to_path(hole)
-            lines.append(
-                f'      <path d="{path_d}"'
-                f' fill="{theme["land"]}" stroke="none"'
-                f' fill-rule="evenodd"/>'
-            )
-            # Province: NO coastline stroke — land/water contrast defines the edge.
-            # Any visible outline looks cheap at province scale.
+            if is_province_map:
+                # Province: stroke matches water color to kill the white
+                # anti-aliasing fringe at the land/water boundary.
+                lines.append(
+                    f'      <path d="{path_d}"'
+                    f' fill="{theme["land"]}" stroke="{theme["water"]}" stroke-width="0.3"'
+                    f' fill-rule="evenodd" stroke-linejoin="round"/>'
+                )
+            else:
+                lines.append(
+                    f'      <path d="{path_d}"'
+                    f' fill="{theme["land"]}" stroke="none"'
+                    f' fill-rule="evenodd"/>'
+                )
             # City/park/lake: subtle stroke for definition at smaller scale.
             if not is_province_map:
                 ext_path = _coords_to_path(exterior)
@@ -1326,12 +1333,22 @@ def _generate_vintage_map_svg(
             for hole in holes:
                 if len(hole) >= 3:
                     path_d += " " + _coords_to_path(hole)
-            lines.append(
-                f'      <path d="{path_d}"'
-                f' fill="{parchment}" stroke="none"'
-                f' fill-rule="evenodd"/>'
-            )
-            # Province: no stroke at all — land/water contrast is enough.
+            if is_province:
+                # Province: stroke matches water color to eliminate the white
+                # anti-aliasing fringe at the land/water boundary. The stroke
+                # bleeds INTO the land (half inside, half outside the fill edge),
+                # so using water color makes the edge seamless against the water.
+                lines.append(
+                    f'      <path d="{path_d}"'
+                    f' fill="{parchment}" stroke="{water_tint}" stroke-width="0.3"'
+                    f' fill-rule="evenodd" stroke-linejoin="round"/>'
+                )
+            else:
+                lines.append(
+                    f'      <path d="{path_d}"'
+                    f' fill="{parchment}" stroke="none"'
+                    f' fill-rule="evenodd"/>'
+                )
             # City/town: subtle exterior coastline stroke for definition.
             if not is_province:
                 ext_path = _coords_to_path(exterior)
