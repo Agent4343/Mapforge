@@ -16,6 +16,7 @@ OVERPASS_ENDPOINTS = [
     "https://overpass.kumi.systems/api/interpreter",
     "https://overpass.openstreetmap.fr/api/interpreter",
     "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
 ]
 
 REQUEST_HEADERS = {
@@ -57,9 +58,9 @@ async def _fetch_overpass_with_retry(query: str) -> dict | None:
     """Try Overpass endpoints sequentially with a total time budget."""
     import time
     start = time.monotonic()
-    budget = 20.0  # keep tight to fit within Railway's request timeout
+    budget = 40.0  # generous budget — Railway proxy allows ~300s
 
-    async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=25.0, follow_redirects=True) as client:
         for endpoint in OVERPASS_ENDPOINTS:
             elapsed = time.monotonic() - start
             if elapsed >= budget:
@@ -67,7 +68,7 @@ async def _fetch_overpass_with_retry(query: str) -> dict | None:
             remaining = budget - elapsed
             if remaining < 5:
                 break
-            client.timeout = httpx.Timeout(min(15.0, remaining))
+            client.timeout = httpx.Timeout(min(25.0, remaining))
             result = await _try_endpoint(client, endpoint, query)
             if result is not None:
                 return result

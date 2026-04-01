@@ -208,27 +208,31 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             return result
         return None
 
-    tasks = []
+    # Fetch streets and water SEQUENTIALLY to avoid hammering the same
+    # Overpass endpoints concurrently (which causes both to timeout).
+    # A small delay between requests lets the server recover.
     if need_streets:
-        tasks.append(("streets", _get_streets()))
-    if need_water:
-        tasks.append(("water", _get_water()))
+        try:
+            streets_data = await _get_streets()
+            if streets_data is None:
+                log.warning("Streets fetch returned empty results — not caching")
+                warnings.append("Streets data unavailable — the Overpass API may be busy. Try regenerating in a minute.")
+        except Exception as e:
+            log.warning(f"Streets fetch failed (non-fatal): {e}")
+            warnings.append("Streets data unavailable — map generated without streets.")
 
-    if tasks:
-        results = await asyncio.gather(
-            *(t[1] for t in tasks), return_exceptions=True
-        )
-        for (label, _), result in zip(tasks, results):
-            if isinstance(result, Exception):
-                log.warning(f"{label.title()} fetch failed (non-fatal): {result}")
-                warnings.append(f"{label.title()} data unavailable — map generated without {label}.")
-            elif result is None:
-                log.warning(f"{label.title()} fetch returned empty results — not caching")
-                warnings.append(f"{label.title()} data unavailable — the Overpass API may be busy. Try regenerating in a minute.")
-            elif label == "streets":
-                streets_data = result
-            elif label == "water":
-                water_data = result
+    if need_water:
+        # Brief pause between Overpass requests to avoid rate limiting
+        if need_streets:
+            await asyncio.sleep(1.5)
+        try:
+            water_data = await _get_water()
+            if water_data is None:
+                log.warning("Water fetch returned empty results — not caching")
+                warnings.append("Water data unavailable — the Overpass API may be busy. Try regenerating in a minute.")
+        except Exception as e:
+            log.warning(f"Water fetch failed (non-fatal): {e}")
+            warnings.append("Water data unavailable — map generated without water.")
 
     # Fetch contours for premium products
     contour_data = None

@@ -18,6 +18,7 @@ OVERPASS_ENDPOINTS = [
     "https://overpass.kumi.systems/api/interpreter",
     "https://overpass.openstreetmap.fr/api/interpreter",
     "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
 ]
 
 # Required by OSM Acceptable Use Policy
@@ -42,9 +43,9 @@ ROAD_CLASSES = {
 }
 
 # Maximum total time budget for the entire street fetch (seconds).
-# Must be tight enough that streets + water + SVG + PNG all fit
-# within Railway's ~60s proxy timeout.
-STREET_FETCH_BUDGET = 25
+# With sequential fetching (streets then water), each gets a generous budget.
+# Railway proxy timeout is ~300s so we have plenty of room.
+STREET_FETCH_BUDGET = 45
 
 
 async def _try_endpoint(client: httpx.AsyncClient, endpoint: str, query: str) -> dict | None:
@@ -173,8 +174,8 @@ async def fetch_streets(
     data = None
 
     if include_minor:
-        # Try all roads with ~25s budget
-        data = await _fetch_with_fallback(build_q(all_filter), timeout_per_endpoint=15.0, total_budget=20.0)
+        # Try all roads with generous budget
+        data = await _fetch_with_fallback(build_q(all_filter), timeout_per_endpoint=25.0, total_budget=35.0)
 
         # Fall back to major roads if all roads failed
         if data is None:
@@ -182,9 +183,9 @@ async def fetch_streets(
             remaining = STREET_FETCH_BUDGET - elapsed
             if remaining > 5:
                 log.warning(f"All-roads fetch failed ({elapsed:.0f}s) — trying major only")
-                data = await _fetch_with_fallback(build_q(major_filter), timeout_per_endpoint=10.0, total_budget=min(remaining, 15.0))
+                data = await _fetch_with_fallback(build_q(major_filter), timeout_per_endpoint=15.0, total_budget=min(remaining, 20.0))
     else:
-        data = await _fetch_with_fallback(build_q(major_filter), timeout_per_endpoint=15.0, total_budget=20.0)
+        data = await _fetch_with_fallback(build_q(major_filter), timeout_per_endpoint=25.0, total_budget=35.0)
 
     elapsed = time.monotonic() - start
     if data is None:

@@ -14,6 +14,8 @@ OVERPASS_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
     "https://overpass.openstreetmap.fr/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
 ]
 OVERPASS_URL = OVERPASS_ENDPOINTS[0]  # backward compat
 NOMINATIM_LOOKUP_URL = "https://nominatim.openstreetmap.org/lookup"
