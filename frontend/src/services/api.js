@@ -102,11 +102,17 @@ async function getProfile() {
 }
 
 async function requestPasswordReset(email) {
-  const resp = await fetchWithTimeout(`${API_BASE}/auth/request-reset`, {
+  let resp = await fetchWithTimeout(`${API_BASE}/auth/request-reset`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email }),
   });
+  if (resp.status === 404 || resp.status === 405 || resp.status === 422) {
+    // Backward compatibility for older backend deployments.
+    resp = await fetchWithTimeout(`${API_BASE}/auth/request-reset?email=${encodeURIComponent(email)}`, {
+      method: "POST",
+    });
+  }
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
     throw new Error(extractErrorMessage(err.detail, "Reset request failed"));
@@ -115,11 +121,18 @@ async function requestPasswordReset(email) {
 }
 
 async function resetPassword(token, newPassword) {
-  const resp = await fetchWithTimeout(`${API_BASE}/auth/reset-password`, {
+  let resp = await fetchWithTimeout(`${API_BASE}/auth/reset-password`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ token, new_password: newPassword }),
   });
+  if (resp.status === 404 || resp.status === 405 || resp.status === 422) {
+    // Backward compatibility for older backend deployments.
+    resp = await fetchWithTimeout(
+      `${API_BASE}/auth/reset-password?token=${encodeURIComponent(token)}&new_password=${encodeURIComponent(newPassword)}`,
+      { method: "POST" }
+    );
+  }
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
     throw new Error(extractErrorMessage(err.detail, "Reset failed"));
