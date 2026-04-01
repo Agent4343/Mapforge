@@ -54,21 +54,37 @@ async def fetch_geometry(osm_id: int, osm_type: str = "relation") -> MultiPolygo
 
 
 async def _fetch_via_nominatim(osm_id: int, osm_type: str) -> MultiPolygon | Polygon | None:
-    """Try to get geometry directly from Nominatim lookup with polygon output."""
+    """Try to get geometry directly from Nominatim lookup with polygon output.
+
+    Uses polygon_threshold=0.0 to get the FULL unsimplified geometry.
+    Our geometry_processor handles all simplification with adaptive tolerances,
+    so we need the raw shape to avoid double-simplification artifacts (blocky
+    coastlines from simplifying an already-simplified polygon).
+    """
     type_prefix = OSM_TYPE_MAP.get(osm_type, "R")
     params = {
         "osm_ids": f"{type_prefix}{osm_id}",
         "format": "json",
         "polygon_geojson": 1,
+        "polygon_threshold": 0.0,  # Full detail — we simplify ourselves
     }
 
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(NOMINATIM_LOOKUP_URL, params=params, headers=NOMINATIM_HEADERS)
-            resp.raise_for_status()
-            data = resp.json()
-    except (httpx.HTTPError, httpx.ProxyError) as e:
-        log.warning(f"Nominatim request failed for {osm_type}/{osm_id}: {e}")
+    import asyncio
+
+    data = None
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                resp = await client.get(NOMINATIM_LOOKUP_URL, params=params, headers=NOMINATIM_HEADERS)
+                resp.raise_for_status()
+                data = resp.json()
+                break
+        except (httpx.HTTPError, httpx.ProxyError) as e:
+            log.warning(f"Nominatim attempt {attempt + 1}/3 failed for {osm_type}/{osm_id}: {e}")
+            if attempt < 2:
+                await asyncio.sleep(2 ** attempt)  # 1s, 2s backoff
+
+    if data is None:
         return None
 
     if not data:
@@ -87,10 +103,27 @@ async def _fetch_via_nominatim(osm_id: int, osm_type: str) -> MultiPolygon | Pol
 
 
 async def _fetch_via_overpass(osm_id: int, osm_type: str) -> MultiPolygon | Polygon | None:
-    """Fetch geometry from Overpass API for complex relations."""
+    """Fetch geometry from Overpass API for complex relations.
+
+    Uses two strategies:
+    1. First tries `out geom` which returns complete geometry coordinates
+       directly — no manual way merging needed, more reliable.
+    2. Falls back to `out body; >; out skel qt;` which requires manual
+       reconstruction from raw nodes/ways (original method).
+    """
     element_type = osm_type if osm_type in ("node", "way", "relation") else "relation"
 
-    query = f"""
+    # Strategy 1: Use `out geom` for direct geometry output (Overpass ≥0.7.55)
+    # This returns coordinates directly on ways, avoiding the fragile
+    # node-lookup + way-merging reconstruction.
+    query_geom = f"""
+    [out:json][timeout:30];
+    {element_type}({osm_id});
+    out geom;
+    """
+
+    # Strategy 2: Classic fallback — fetch raw data and reconstruct
+    query_classic = f"""
     [out:json][timeout:25];
     {element_type}({osm_id});
     out body;
@@ -99,19 +132,43 @@ async def _fetch_via_overpass(osm_id: int, osm_type: str) -> MultiPolygon | Poly
     """
 
     data = None
-    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+    used_geom_query = False
+    async with httpx.AsyncClient(timeout=35.0, follow_redirects=True) as client:
+        # Try `out geom` first on each endpoint
         for endpoint in OVERPASS_ENDPOINTS:
             try:
-                resp = await client.post(endpoint, data={"data": query}, headers=OVERPASS_HEADERS)
+                resp = await client.post(endpoint, data={"data": query_geom}, headers=OVERPASS_HEADERS)
                 if resp.status_code == 200:
                     data = resp.json()
                     if data.get("elements"):
+                        used_geom_query = True
+                        log.info(f"Overpass `out geom` succeeded from {endpoint} for {osm_type}/{osm_id}")
                         break
                     data = None
+                elif resp.status_code == 429:
+                    log.warning(f"Overpass 429 from {endpoint}, trying next")
+                    import asyncio
+                    await asyncio.sleep(2)
                 else:
                     log.warning(f"Overpass HTTP {resp.status_code} from {endpoint} for {osm_type}/{osm_id}")
             except Exception as e:
-                log.warning(f"Overpass request to {endpoint} failed for {osm_type}/{osm_id}: {e}")
+                log.warning(f"Overpass geom request to {endpoint} failed for {osm_type}/{osm_id}: {e}")
+
+        # Fallback: classic query if `out geom` didn't work
+        if data is None:
+            for endpoint in OVERPASS_ENDPOINTS:
+                try:
+                    resp = await client.post(endpoint, data={"data": query_classic}, headers=OVERPASS_HEADERS)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        if data.get("elements"):
+                            log.info(f"Overpass classic succeeded from {endpoint} for {osm_type}/{osm_id}")
+                            break
+                        data = None
+                    else:
+                        log.warning(f"Overpass HTTP {resp.status_code} from {endpoint} for {osm_type}/{osm_id}")
+                except Exception as e:
+                    log.warning(f"Overpass request to {endpoint} failed for {osm_type}/{osm_id}: {e}")
 
     if data is None:
         return None
@@ -120,7 +177,109 @@ async def _fetch_via_overpass(osm_id: int, osm_type: str) -> MultiPolygon | Poly
     if not elements:
         return None
 
+    if used_geom_query:
+        geom = _build_geometry_from_overpass_geom(elements, osm_id, element_type)
+        if geom is not None:
+            return geom
+        # If geom parsing failed, try classic reconstruction
+        log.warning(f"out geom parsing failed for {osm_type}/{osm_id}, trying classic reconstruction")
+
     return _build_geometry_from_overpass(elements, osm_id, element_type)
+
+
+def _build_geometry_from_overpass_geom(elements: list[dict], target_id: int, target_type: str) -> MultiPolygon | Polygon | None:
+    """Build geometry from Overpass `out geom` response.
+
+    When Overpass returns `out geom`, each way member of a relation includes
+    a `geometry` array with {lat, lon} objects — no need to look up nodes
+    separately. This is more reliable than the classic approach.
+    """
+    relation = None
+    for el in elements:
+        if el["type"] == target_type and el["id"] == target_id:
+            relation = el
+            break
+
+    if relation is None:
+        return None
+
+    # For ways, the geometry is directly on the element
+    if target_type == "way":
+        geom_coords = relation.get("geometry", [])
+        coords = [(pt["lon"], pt["lat"]) for pt in geom_coords if "lon" in pt and "lat" in pt]
+        if len(coords) >= 4:
+            if coords[0] != coords[-1]:
+                coords.append(coords[0])
+            try:
+                return Polygon(coords)
+            except Exception:
+                return None
+        return None
+
+    # For relations, iterate members and extract geometry
+    members = relation.get("members", [])
+    if not members:
+        return None
+
+    outer_segments = []
+    inner_segments = []
+
+    for member in members:
+        if member.get("type") != "way":
+            continue
+        role = member.get("role", "outer")
+        geom_coords = member.get("geometry", [])
+        coords = [(pt["lon"], pt["lat"]) for pt in geom_coords if "lon" in pt and "lat" in pt]
+        if len(coords) < 2:
+            continue
+
+        if role == "inner":
+            inner_segments.append(coords)
+        else:
+            outer_segments.append(coords)
+
+    if not outer_segments:
+        return None
+
+    merged_outers = _merge_way_segments(outer_segments)
+    merged_inners = _merge_way_segments(inner_segments)
+
+    polygons = []
+    for ring in merged_outers:
+        if len(ring) < 4:
+            continue
+        if ring[0] != ring[-1]:
+            ring.append(ring[0])
+        holes = []
+        for inner in merged_inners:
+            if len(inner) >= 4:
+                if inner[0] != inner[-1]:
+                    inner.append(inner[0])
+                holes.append(inner)
+        try:
+            poly = Polygon(ring, holes)
+            if not poly.is_valid:
+                from shapely.validation import make_valid
+                poly = make_valid(poly)
+            if isinstance(poly, Polygon) and poly.is_valid:
+                polygons.append(poly)
+            elif isinstance(poly, (MultiPolygon, GeometryCollection)):
+                for g in poly.geoms:
+                    if isinstance(g, Polygon) and g.is_valid:
+                        polygons.append(g)
+        except Exception:
+            try:
+                poly = Polygon(ring)
+                if poly.is_valid:
+                    polygons.append(poly)
+            except Exception:
+                continue
+
+    if not polygons:
+        return None
+    if len(polygons) == 1:
+        return polygons[0]
+    return MultiPolygon(polygons)
 
 
 def _build_geometry_from_overpass(elements: list[dict], target_id: int, target_type: str) -> MultiPolygon | Polygon | None:
