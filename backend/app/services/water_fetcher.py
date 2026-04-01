@@ -6,10 +6,12 @@ Uses sequential endpoint fallback with proper identification headers.
 """
 
 import asyncio
+import time
 
 import httpx
 
 from app.logging_config import log
+from app.services.overpass_health import overpass_health
 
 OVERPASS_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
@@ -28,6 +30,7 @@ async def _try_endpoint(client: httpx.AsyncClient, endpoint: str, query: str) ->
 
     On 429 (rate limited), waits for the retry-after period and retries once.
     """
+    started = time.monotonic()
     try:
         resp = await client.post(endpoint, data={"data": query}, headers=REQUEST_HEADERS)
 
@@ -39,30 +42,36 @@ async def _try_endpoint(client: httpx.AsyncClient, endpoint: str, query: str) ->
             resp = await client.post(endpoint, data={"data": query}, headers=REQUEST_HEADERS)
             if resp.status_code != 200:
                 log.warning(f"Overpass retry still failed: HTTP {resp.status_code}")
+                overpass_health.record_failure(endpoint, reason=f"http_{resp.status_code}")
                 return None
 
         if resp.status_code != 200:
             log.warning(f"Overpass HTTP {resp.status_code} from {endpoint}")
+            overpass_health.record_failure(endpoint, reason=f"http_{resp.status_code}")
             return None
 
         data = resp.json()
 
         if "remark" in data:
             log.warning(f"Overpass remark from {endpoint}: {data['remark'][:120]}")
+            overpass_health.record_failure(endpoint, reason="remark")
             return None
 
         if not data.get("elements"):
             log.warning(f"Overpass returned 0 elements from {endpoint}")
             return None
 
+        overpass_health.record_success(endpoint, latency_s=(time.monotonic() - started))
         log.info(f"Overpass OK from {endpoint}: {len(data['elements'])} elements")
         return data
 
     except httpx.TimeoutException:
         log.warning(f"Overpass timeout from {endpoint}")
+        overpass_health.record_failure(endpoint, reason="timeout")
         return None
     except Exception as e:
         log.warning(f"Overpass error from {endpoint}: {type(e).__name__}: {e}")
+        overpass_health.record_failure(endpoint, reason=type(e).__name__)
         return None
 
 
@@ -76,12 +85,12 @@ async def _fetch_overpass_with_retry(
 
     Small delay between attempts to avoid hammering busy endpoints.
     """
-    import time
     start = time.monotonic()
     budget = max(8.0, max_budget_s)
 
     async with httpx.AsyncClient(timeout=per_endpoint_timeout_s, follow_redirects=True) as client:
-        for i, endpoint in enumerate(OVERPASS_ENDPOINTS):
+        ordered_endpoints = overpass_health.get_endpoint_order(OVERPASS_ENDPOINTS, service="water")
+        for i, endpoint in enumerate(ordered_endpoints):
             elapsed = time.monotonic() - start
             if elapsed >= budget:
                 break
@@ -102,7 +111,9 @@ async def _fetch_overpass_with_retry(
     log.warning("All Overpass endpoints failed for water — waiting 1.5s for second chance")
     await asyncio.sleep(1.5)
     async with httpx.AsyncClient(timeout=max(6.0, per_endpoint_timeout_s * 0.7), follow_redirects=True) as client:
-        result = await _try_endpoint(client, OVERPASS_ENDPOINTS[0], query)
+        second_chance = overpass_health.get_endpoint_order(OVERPASS_ENDPOINTS, service="water")
+        endpoint = second_chance[0] if second_chance else OVERPASS_ENDPOINTS[0]
+        result = await _try_endpoint(client, endpoint, query)
         if result is not None:
             log.info("Second-chance water fetch succeeded")
             return result

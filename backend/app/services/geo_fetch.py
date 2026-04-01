@@ -1,6 +1,8 @@
 """Fetch full geometry from OpenStreetMap Overpass API and Nominatim with caching."""
 
 import math
+import time
+import asyncio
 
 import httpx
 from shapely.geometry import shape, mapping, MultiPolygon, Polygon, GeometryCollection
@@ -8,6 +10,7 @@ from shapely.geometry import shape, mapping, MultiPolygon, Polygon, GeometryColl
 from app.config import settings
 from app.logging_config import log
 from app.services.cache import cache_get, cache_set, make_geometry_key
+from app.services.overpass_health import overpass_health
 
 OVERPASS_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
@@ -145,19 +148,27 @@ async def _fetch_via_overpass(osm_id: int, osm_type: str) -> MultiPolygon | Poly
     """
 
     data = None
+    ordered_endpoints = overpass_health.get_endpoint_order(OVERPASS_ENDPOINTS, service="geometry")
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-        for endpoint in OVERPASS_ENDPOINTS:
+        for i, endpoint in enumerate(ordered_endpoints):
             try:
+                if i > 0:
+                    await asyncio.sleep(0.5)
+                started = time.monotonic()
                 resp = await client.post(endpoint, data={"data": query}, headers=OVERPASS_HEADERS)
                 if resp.status_code == 200:
                     data = resp.json()
                     if data.get("elements"):
+                        overpass_health.record_success(endpoint, latency_s=(time.monotonic() - started))
                         break
                     data = None
+                    overpass_health.record_failure(endpoint, reason="empty_elements")
                 else:
                     log.warning(f"Overpass HTTP {resp.status_code} from {endpoint} for {osm_type}/{osm_id}")
+                    overpass_health.record_failure(endpoint, reason=f"http_{resp.status_code}")
             except Exception as e:
                 log.warning(f"Overpass request to {endpoint} failed for {osm_type}/{osm_id}: {e}")
+                overpass_health.record_failure(endpoint, reason=type(e).__name__)
 
     if data is None:
         return None
