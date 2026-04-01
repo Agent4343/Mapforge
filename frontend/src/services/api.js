@@ -102,8 +102,10 @@ async function getProfile() {
 }
 
 async function requestPasswordReset(email) {
-  const resp = await fetchWithTimeout(`${API_BASE}/auth/request-reset?email=${encodeURIComponent(email)}`, {
+  const resp = await fetchWithTimeout(`${API_BASE}/auth/request-reset`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
@@ -113,8 +115,10 @@ async function requestPasswordReset(email) {
 }
 
 async function resetPassword(token, newPassword) {
-  const resp = await fetchWithTimeout(`${API_BASE}/auth/reset-password?token=${encodeURIComponent(token)}&new_password=${encodeURIComponent(newPassword)}`, {
+  const resp = await fetchWithTimeout(`${API_BASE}/auth/reset-password`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, new_password: newPassword }),
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));

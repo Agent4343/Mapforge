@@ -79,6 +79,29 @@ const COUNTRIES = [
   { code: "", label: "Global" },
 ];
 
+function isFiniteCoordinate(value) {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isValidLatitude(value) {
+  return isFiniteCoordinate(value) && value >= -90 && value <= 90;
+}
+
+function isValidLongitude(value) {
+  return isFiniteCoordinate(value) && value >= -180 && value <= 180;
+}
+
+function hasValidPinCoords(pinCoords) {
+  if (!pinCoords) return false;
+  return isValidLatitude(pinCoords.lat) && isValidLongitude(pinCoords.lon);
+}
+
+function parseCoordinateInput(rawValue) {
+  if (rawValue === "") return null;
+  const parsed = Number(rawValue);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 // Toast notification system
 function Toast({ message, type, onDismiss }) {
   useEffect(() => {
@@ -318,7 +341,7 @@ export default function App() {
 
   const handleGenerate = useCallback(async () => {
     // Pin-drop mode: use coordinates instead of OSM search result
-    const isPinMode = config.productType === "name_sign" && pinCoords;
+    const isPinMode = config.productType === "name_sign" && hasValidPinCoords(pinCoords);
     if (!selectedResult && !isPinMode) return;
 
     setGenerating(true);
@@ -656,8 +679,8 @@ export default function App() {
                     style={{ fontSize: "12px", padding: "6px 8px" }}
                     value={pinCoords?.lat ?? ""}
                     onChange={(e) => {
-                      const lat = parseFloat(e.target.value);
-                      setPinCoords((prev) => ({ lon: prev?.lon || 0, lat: isNaN(lat) ? 0 : lat }));
+                      const lat = parseCoordinateInput(e.target.value);
+                      setPinCoords((prev) => ({ lon: prev?.lon ?? null, lat }));
                     }}
                   />
                 </div>
@@ -671,13 +694,18 @@ export default function App() {
                     style={{ fontSize: "12px", padding: "6px 8px" }}
                     value={pinCoords?.lon ?? ""}
                     onChange={(e) => {
-                      const lon = parseFloat(e.target.value);
-                      setPinCoords((prev) => ({ lat: prev?.lat || 0, lon: isNaN(lon) ? 0 : lon }));
+                      const lon = parseCoordinateInput(e.target.value);
+                      setPinCoords((prev) => ({ lat: prev?.lat ?? null, lon }));
                     }}
                   />
                 </div>
               </div>
-              {pinCoords && pinCoords.lat !== 0 && (
+              {pinCoords && !hasValidPinCoords(pinCoords) && (
+                <p style={{ margin: "0 0 8px", fontSize: "11px", color: "var(--text-muted, #888)" }}>
+                  Enter valid coordinates (latitude between -90 and 90, longitude between -180 and 180).
+                </p>
+              )}
+              {hasValidPinCoords(pinCoords) && (
                 <MapPreview
                   lat={pinCoords.lat}
                   lon={pinCoords.lon}
@@ -742,7 +770,7 @@ export default function App() {
 
           {/* Generate button for Etsy customers with a credit */}
           {creditToken && creditData && creditData.status === "unused" &&
-           (!!selectedResult || (config.productType === "name_sign" && !!pinCoords)) && (
+           (!!selectedResult || (config.productType === "name_sign" && hasValidPinCoords(pinCoords))) && (
             <button
               className="btn btn-primary btn-full checkout-cta"
               onClick={() => setShowGenerateModal(true)}
@@ -769,7 +797,7 @@ export default function App() {
             onDownloadEtsyPackage={handleDownloadEtsyPackage}
             onDownloadPreview={handleDownloadPreview}
             onDownloadWallMockup={handleDownloadWallMockup}
-            canGenerate={!!selectedResult || (config.productType === "name_sign" && !!pinCoords)}
+            canGenerate={!!selectedResult || (config.productType === "name_sign" && hasValidPinCoords(pinCoords))}
             generating={generating}
             user={user}
             printDPI={config.printDPI}

@@ -78,6 +78,18 @@ function applyPrintColors(svg, themeName) {
   return result;
 }
 
+function sanitizeSvg(svg) {
+  if (!svg || typeof svg !== "string") return null;
+  // Client-side safety net; server should sanitize SVG too.
+  let cleaned = svg.replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "");
+  cleaned = cleaned.replace(/\son\w+\s*=\s*"[^"]*"/gi, "");
+  cleaned = cleaned.replace(/\son\w+\s*=\s*'[^']*'/gi, "");
+  cleaned = cleaned.replace(/\son\w+\s*=\s*[^\s>]+/gi, "");
+  cleaned = cleaned.replace(/\s(?:href|xlink:href)\s*=\s*"(?:javascript:|data:)[^"]*"/gi, "");
+  cleaned = cleaned.replace(/\s(?:href|xlink:href)\s*=\s*'(?:javascript:|data:)[^']*'/gi, "");
+  return cleaned;
+}
+
 export default function SVGPreview({ svgContent, loading, error, colorTheme }) {
   const [zoom, setZoom] = useState(100);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -95,7 +107,8 @@ export default function SVGPreview({ svgContent, loading, error, colorTheme }) {
   const displaySvg = useMemo(() => {
     if (!svgContent) return null;
 
-    let svg = svgContent;
+    let svg = sanitizeSvg(svgContent);
+    if (!svg) return null;
 
     // Make SVG responsive: set width to 100% and remove fixed height
     // so the viewBox attribute controls aspect ratio naturally

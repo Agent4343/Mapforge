@@ -11,6 +11,13 @@ export default function MapPreview({ lat, lon, boundingbox, name }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const markerRef = useRef(null);
+  const hasValidCoords =
+    Number.isFinite(lat) &&
+    Number.isFinite(lon) &&
+    lat >= -90 &&
+    lat <= 90 &&
+    lon >= -180 &&
+    lon <= 180;
 
   useEffect(() => {
     // Lazy-load Leaflet CSS + JS from CDN
@@ -48,7 +55,7 @@ export default function MapPreview({ lat, lon, boundingbox, name }) {
     const map = L.map(containerRef.current, {
       zoomControl: false,
       attributionControl: false,
-    }).setView([lat || 56, lon || -96], 5);
+    }).setView(hasValidCoords ? [lat, lon] : [56, -96], 5);
 
     L.tileLayer(TILE_URL, { subdomains: "abc" }).addTo(map);
     L.control.zoom({ position: "bottomright" }).addTo(map);
@@ -68,7 +75,7 @@ export default function MapPreview({ lat, lon, boundingbox, name }) {
       markerRef.current = null;
     }
 
-    if (lat && lon) {
+    if (hasValidCoords) {
       markerRef.current = L.circleMarker([lat, lon], {
         radius: 8,
         fillColor: "#c0392b",

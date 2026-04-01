@@ -26,9 +26,80 @@ const SUBTITLE_PRESETS = [
   "Forever & Always",
 ];
 
+const MAP_ART_PRESETS = [
+  {
+    id: "gallery_minimal",
+    label: "Gallery Minimal",
+    hint: "Clean Scandinavian style for modern homes",
+    updates: {
+      colorTheme: "minimal",
+      posterLayout: "minimal",
+      fontFamily: "sans",
+      borderStyle: "thin",
+      showCoordinates: false,
+      showCompass: false,
+      showScaleBar: false,
+      gradientWater: false,
+      landShadow: false,
+    },
+  },
+  {
+    id: "vintage_romance",
+    label: "Vintage Romance",
+    hint: "Warm gift style with classic typography",
+    updates: {
+      colorTheme: "vintage_map",
+      posterLayout: "vintage",
+      fontFamily: "serif",
+      borderStyle: "ornate",
+      showCoordinates: true,
+      showCompass: true,
+      showScaleBar: false,
+      gradientWater: true,
+      landShadow: true,
+    },
+  },
+  {
+    id: "coastal_calm",
+    label: "Coastal Calm",
+    hint: "Airy blue palette perfect for lake and ocean art",
+    updates: {
+      colorTheme: "ocean",
+      posterLayout: "editorial",
+      fontFamily: "condensed",
+      borderStyle: "none",
+      showCoordinates: true,
+      showCompass: false,
+      showScaleBar: true,
+      gradientWater: true,
+      landShadow: true,
+    },
+  },
+  {
+    id: "dark_bold",
+    label: "Dark Bold",
+    hint: "High-contrast dramatic wall piece",
+    updates: {
+      colorTheme: "midnight",
+      posterLayout: "bold",
+      fontFamily: "display",
+      borderStyle: "double",
+      showCoordinates: false,
+      showCompass: true,
+      showScaleBar: true,
+      gradientWater: true,
+      landShadow: true,
+    },
+  },
+];
+
 export default function CustomizePanel({ config, onChange, user }) {
   function update(key, value) {
     onChange({ ...config, [key]: value });
+  }
+
+  function applyMapArtPreset(preset) {
+    onChange({ ...config, ...preset.updates });
   }
 
   const isPro = user?.tier === "pro" || user?.tier === "admin";
@@ -75,6 +146,30 @@ export default function CustomizePanel({ config, onChange, user }) {
               </button>
             ))}
           </div>
+        </div>
+      )}
+
+      {isPrint && (
+        <div className="control-group">
+          <label>Quick Style Presets</label>
+          <div className="preset-chips">
+            {MAP_ART_PRESETS.map((preset) => {
+              const active = Object.entries(preset.updates).every(([key, value]) => config[key] === value);
+              return (
+                <button
+                  key={preset.id}
+                  className={`preset-chip${active ? " active" : ""}`}
+                  onClick={() => applyMapArtPreset(preset)}
+                  title={preset.hint}
+                >
+                  {preset.label}
+                </button>
+              );
+            })}
+          </div>
+          <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: "6px 0 0" }}>
+            Apply curated combinations of theme, layout, typography, and map elements.
+          </p>
         </div>
       )}
 
