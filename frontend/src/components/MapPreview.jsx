@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const MAPLIBRE_CSS_ID = "maplibre-gl-css";
 const MAPLIBRE_JS_ID = "maplibre-gl-js";
@@ -6,10 +6,7 @@ const MAPLIBRE_CSS_URL = "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.c
 const MAPLIBRE_JS_URL = "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js";
 
 const RAW_MAPTILER_KEY = import.meta.env.VITE_MAPTILER_KEY;
-const MAPTILER_KEY = typeof RAW_MAPTILER_KEY === "string" ? RAW_MAPTILER_KEY.trim() : "";
-const MAPTILER_STYLE_URL = MAPTILER_KEY
-  ? `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_KEY}`
-  : null;
+const BUILD_MAPTILER_KEY = typeof RAW_MAPTILER_KEY === "string" ? RAW_MAPTILER_KEY.trim() : "";
 
 // Free fallback style when MapTiler key is not configured.
 const OSM_RASTER_STYLE = {
@@ -104,13 +101,21 @@ function shouldFallbackToOsm(event) {
  * Lightweight map preview using MapLibre GL JS.
  * Uses MapTiler style when configured, otherwise falls back to OSM raster tiles.
  */
-export default function MapPreview({ lat, lon, boundingbox, name }) {
+export default function MapPreview({ lat, lon, boundingbox, name, maptilerKey = "" }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const markerRef = useRef(null);
   const usedFallbackRef = useRef(false);
+  const runtimeMaptilerKey = typeof maptilerKey === "string" ? maptilerKey.trim() : "";
+  const effectiveMaptilerKey = runtimeMaptilerKey || BUILD_MAPTILER_KEY;
+  const maptilerStyleUrl = useMemo(
+    () => (effectiveMaptilerKey
+      ? `https://api.maptiler.com/maps/streets-v2/style.json?key=${effectiveMaptilerKey}`
+      : null),
+    [effectiveMaptilerKey]
+  );
   const [sourceLabel, setSourceLabel] = useState(
-    MAPTILER_STYLE_URL ? "MapTiler" : "OSM Fallback"
+    maptilerStyleUrl ? "MapTiler" : "OSM Fallback"
   );
   const hasValidCoords = isValidLatitude(lat) && isValidLongitude(lon);
 
@@ -124,7 +129,7 @@ export default function MapPreview({ lat, lon, boundingbox, name }) {
 
         const map = new maplibregl.Map({
           container: containerRef.current,
-          style: MAPTILER_STYLE_URL || OSM_RASTER_STYLE,
+          style: maptilerStyleUrl || OSM_RASTER_STYLE,
           center: hasValidCoords ? [lon, lat] : [-96, 56],
           zoom: hasValidCoords ? 10 : 4,
           attributionControl: true,
@@ -133,7 +138,7 @@ export default function MapPreview({ lat, lon, boundingbox, name }) {
         map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
         mapRef.current = map;
 
-        if (MAPTILER_STYLE_URL) {
+        if (maptilerStyleUrl) {
           map.on("error", (event) => {
             if (usedFallbackRef.current) return;
             if (!shouldFallbackToOsm(event)) return;
@@ -162,7 +167,11 @@ export default function MapPreview({ lat, lon, boundingbox, name }) {
       usedFallbackRef.current = false;
       markerRef.current = null;
     };
-  }, []);
+  }, [maptilerStyleUrl, hasValidCoords, lat, lon]);
+
+  useEffect(() => {
+    setSourceLabel(maptilerStyleUrl ? "MapTiler" : "OSM Fallback");
+  }, [maptilerStyleUrl]);
 
   useEffect(() => {
     updateMap();

@@ -307,9 +307,15 @@ export default function App() {
 
   // Fetch public config (Etsy shop URL, etc.)
   const [etsyShopUrl, setEtsyShopUrl] = useState(null);
+  const [maptilerKey, setMaptilerKey] = useState("");
   useEffect(() => {
     getPublicConfig()
-      .then((c) => { if (c?.etsy_shop_url) setEtsyShopUrl(c.etsy_shop_url); })
+      .then((c) => {
+        if (c?.etsy_shop_url) setEtsyShopUrl(c.etsy_shop_url);
+        if (typeof c?.maptiler_key === "string") {
+          setMaptilerKey(c.maptiler_key.trim());
+        }
+      })
       .catch(() => {});
   }, []);
 
@@ -861,7 +867,12 @@ export default function App() {
         </button>
 
         <div className={`panel-left${panelCollapsed ? " collapsed" : ""}`}>
-          <SearchPanel onSelect={handleSelect} selectedResult={selectedResult} country={country} />
+          <SearchPanel
+            onSelect={handleSelect}
+            selectedResult={selectedResult}
+            country={country}
+            maptilerKey={maptilerKey}
+          />
 
           {/* Pin Drop for Name Sign — mark a home or special location */}
           {config.productType === "name_sign" && (
@@ -920,6 +931,7 @@ export default function App() {
                   lat={pinCoords.lat}
                   lon={pinCoords.lon}
                   name={config.text || "Pin Location"}
+                  maptilerKey={maptilerKey}
                 />
               )}
             </div>

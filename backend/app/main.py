@@ -112,6 +112,7 @@ async def get_public_config():
     from app.config import settings
     return {
         "etsy_shop_url": settings.ETSY_SHOP_URL or None,
+        "maptiler_key": settings.MAPTILER_KEY or None,
     }
 
 

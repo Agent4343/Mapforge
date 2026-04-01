@@ -54,6 +54,10 @@ class Settings:
     # Etsy shop URL (shown to customers as the purchase link)
     ETSY_SHOP_URL: str = os.getenv("ETSY_SHOP_URL", "")
 
+    # MapTiler key for browser-side map preview.
+    # Supports both MAPTILER_KEY and VITE_MAPTILER_KEY for deployment flexibility.
+    MAPTILER_KEY: str = os.getenv("MAPTILER_KEY", os.getenv("VITE_MAPTILER_KEY", ""))
+
     # Redis (optional caching layer)
     REDIS_URL: str = os.getenv("REDIS_URL", "")
     CACHE_TTL_SEARCH: int = 3600  # 1 hour

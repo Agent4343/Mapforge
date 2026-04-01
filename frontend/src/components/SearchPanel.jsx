@@ -136,6 +136,7 @@ export default function SearchPanel({ onSelect, selectedResult, country }) {
           lon={selectedResult.lon}
           boundingbox={selectedResult.boundingbox}
           name={selectedResult.display_name.split(",")[0]}
+          maptilerKey={null}
         />
       )}
     </div>

@@ -20,6 +20,15 @@ async def test_health(client):
 
 
 @pytest.mark.asyncio
+async def test_public_config_exposes_runtime_settings(client):
+    resp = await client.get("/api/v1/config")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "etsy_shop_url" in data
+    assert "maptiler_key" in data
+
+
+@pytest.mark.asyncio
 async def test_library_requires_auth(client):
     resp = await client.get("/api/v1/library")
     assert resp.status_code == 401
