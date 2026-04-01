@@ -22,7 +22,7 @@ _transformer = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
 # suitable for wall art. Detailed bays/inlets look jagged at poster scale —
 # smoothing them produces the clean shapes seen in premium map prints.
 SIMPLIFICATION_TOLERANCES = {
-    ProductType.province: 500.0,
+    ProductType.province: 800.0,
     ProductType.lake: 50.0,
     ProductType.city: 75.0,
     ProductType.community: 30.0,
