@@ -1080,7 +1080,19 @@ def _generate_vintage_map_svg(
     svg_h = board_h + 2 * bleed
 
     path_count = 0
-    layer_count = 5  # texture, border, water, streets, text
+    layer_count = 6  # texture, border, geography, water, streets, text
+
+    major_roads = streets_data.get("major_roads", []) if streets_data else []
+    minor_roads = streets_data.get("minor_roads", []) if streets_data else []
+    total_roads = len(major_roads) + len(minor_roads)
+    boundary_major_count = sum(1 for _coords, road_class, _width, _name in major_roads if road_class == "boundary")
+    boundary_fallback_only = bool(major_roads) and boundary_major_count == len(major_roads) and not minor_roads
+    # Sparse fallback and small-town maps benefit from extra structure so the output
+    # still reads as intentional premium artwork instead of an unfinished draft.
+    is_sparse = total_roads < 120
+    geography_fill = "#dfcfad" if boundary_fallback_only else "#e4d5b7"
+    geography_stroke_w = 0.8 if boundary_fallback_only else 0.42
+    use_land_hatch = boundary_fallback_only or total_roads < 40
 
     lines = []
     lines.append('<?xml version="1.0" encoding="UTF-8"?>')
@@ -1128,6 +1140,10 @@ def _generate_vintage_map_svg(
     lines.append(f'      <circle cx="18" cy="30" r="6" fill="#c0a870" opacity="0.07"/>')
     lines.append(f'      <circle cx="35" cy="25" r="4" fill="#a89060" opacity="0.05"/>')
     lines.append(f'    </pattern>')
+    # Light engraving-style hatching for sparse/fallback renders.
+    lines.append('    <pattern id="terrain_hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(28)">')
+    lines.append('      <line x1="0" y1="0" x2="0" y2="6" stroke="#b29d77" stroke-width="0.18" opacity="0.26"/>')
+    lines.append('    </pattern>')
     # Clip for map content
     lines.append(
         f'    <clipPath id="map_clip">'
@@ -1173,7 +1189,26 @@ def _generate_vintage_map_svg(
     # All map content clipped to map area
     lines.append(f'  <g clip-path="url(#map_clip)">')
 
-    # Layer 3: Water features — subtle tinted fill so water is distinguishable
+    # Layer 3: Land silhouette — makes sparse maps look intentional and complete.
+    lines.append('    <g id="geography_base">')
+    for exterior, holes in polygons:
+        path_d = _coords_to_path(exterior)
+        for hole in holes:
+            path_d += " " + _coords_to_path(hole)
+        lines.append(
+            f'      <path d="{path_d}"'
+            f' fill="{geography_fill}" stroke="{ink_light}" stroke-width="{geography_stroke_w}"'
+            f' fill-rule="evenodd" stroke-linejoin="round"/>'
+        )
+        path_count += 1
+        if use_land_hatch:
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="url(#terrain_hatch)" stroke="none" fill-rule="evenodd" opacity="0.55"/>'
+            )
+    lines.append("    </g>")
+
+    # Layer 4: Water features — subtle tinted fill so water is distinguishable
     if water_data:
         transform = processed.get("transform")
         lines.append('    <g id="water_features">')
@@ -1205,13 +1240,10 @@ def _generate_vintage_map_svg(
     # No land boundary outlines — the streets define the shape,
     # admin boundary polygons look ugly as geometric lines
 
-    # Layer 4: Streets — curated monochrome hierarchy for cleaner premium output
+    # Layer 5: Streets — curated monochrome hierarchy for cleaner premium output
     if streets_data:
         transform = processed.get("transform")
         lines.append('    <g id="streets">')
-
-        total_roads = len(streets_data.get("major_roads", [])) + len(streets_data.get("minor_roads", []))
-        is_sparse = total_roads < 120
 
         # Width table tuned for readable hierarchy without over-cluttering.
         if is_sparse:
@@ -1245,7 +1277,7 @@ def _generate_vintage_map_svg(
         keep_major_classes = {"motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link", "secondary"}
 
         # Draw roads with subtle contrast separation.
-        for coords, road_class, _width, name in streets_data.get("minor_roads", []):
+        for coords, road_class, _width, name in minor_roads:
             if is_large_region and road_class not in keep_minor_classes:
                 continue
             if len(coords) < 2:
@@ -1263,7 +1295,7 @@ def _generate_vintage_map_svg(
             )
             path_count += 1
 
-        for coords, road_class, _width, name in streets_data.get("major_roads", []):
+        for coords, road_class, _width, name in major_roads:
             if is_large_region and road_class not in keep_major_classes:
                 continue
             if len(coords) < 2:
@@ -1273,6 +1305,13 @@ def _generate_vintage_map_svg(
             w = vintage_widths.get(road_class, 0.5)
             if is_large_region:
                 w = max(0.45, round(w * 0.9, 2))
+            # A thin casing around major roads adds clarity and depth at print size.
+            casing_w = round(max(w + 0.22, w * 1.24), 2)
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="none" stroke="{ink_light}" stroke-width="{casing_w}"'
+                f' stroke-linecap="round" stroke-linejoin="round" opacity="0.58"/>'
+            )
             lines.append(
                 f'      <path d="{path_d}"'
                 f' fill="none" stroke="{ink}" stroke-width="{w}"'

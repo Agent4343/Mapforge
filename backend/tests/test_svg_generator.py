@@ -179,3 +179,49 @@ def test_svg_node_count():
     assert result["node_count"] > 0
     assert result["path_count"] > 0
     assert result["layer_count"] >= 3
+
+
+def test_vintage_map_fallback_streets_include_land_boundary_and_texture():
+    processed = _make_processed()
+    fallback_streets = {
+        "major_roads": [(
+            [(10.0, 10.0), (40.0, 20.0), (80.0, 35.0)],
+            "boundary",
+            0.9,
+            "Boundary",
+        )],
+        "minor_roads": [],
+    }
+    result = generate_svg(
+        processed=processed,
+        location_name="Little Narrows",
+        style=CutStyle.filled,
+        show_coordinates=True,
+        font_size_mm=14,
+        streets_data=fallback_streets,
+        color_theme="vintage_map",
+        product_type="city",
+        subtitle="No Forever & Always",
+        show_compass=True,
+        output_mode="print",
+    )
+    svg = result["svg"]
+    assert 'id="geography_base"' in svg
+    assert "terrain_hatch" in svg
+
+
+def test_vintage_map_hides_placeholder_subtitle_no():
+    processed = _make_processed()
+    result = generate_svg(
+        processed=processed,
+        location_name="Nova Scotia",
+        style=CutStyle.filled,
+        show_coordinates=True,
+        font_size_mm=14,
+        color_theme="vintage_map",
+        product_type="province",
+        subtitle="No",
+        output_mode="print",
+    )
+    svg = result["svg"]
+    assert ">No<" not in svg
