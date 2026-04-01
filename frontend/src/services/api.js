@@ -5,6 +5,10 @@
 const API_BASE = "/api/v1";
 const TIMEOUT_MS = 30000;
 const ENV_API_ORIGIN = (import.meta.env.VITE_API_URL || "").trim().replace(/\/+$/, "");
+const ENV_API_FALLBACK_ORIGINS = (import.meta.env.VITE_API_FALLBACK_URLS || "")
+  .split(",")
+  .map((v) => v.trim().replace(/\/+$/, ""))
+  .filter(Boolean);
 
 let authToken = localStorage.getItem("mapforge_token") || null;
 
@@ -13,12 +17,30 @@ function buildApiFallbackOrigins() {
   if (ENV_API_ORIGIN) {
     origins.push(ENV_API_ORIGIN);
   }
+  origins.push(...ENV_API_FALLBACK_ORIGINS);
   if (typeof window !== "undefined") {
     const host = window.location.hostname;
     const protocol = window.location.protocol || "http:";
+
+    // Local/dev direct backend fallback.
     if (host === "localhost" || host === "127.0.0.1") {
       origins.push(`${protocol}//${host}:8000`);
     }
+
+    // Common deployment topology fallback: app.example.com -> api.example.com
+    if (host.startsWith("www.")) {
+      origins.push(`${protocol}//api.${host.slice(4)}`);
+    } else {
+      origins.push(`${protocol}//api.${host}`);
+    }
+
+    // Common service-name split fallback: "frontend" host segment -> "backend".
+    if (host.includes("frontend")) {
+      origins.push(`${protocol}//${host.replace("frontend", "backend")}`);
+    }
+
+    // Project default hosted backend (used by existing backend defaults).
+    origins.push("https://mapforge-production.up.railway.app");
   }
   return [...new Set(origins)];
 }
