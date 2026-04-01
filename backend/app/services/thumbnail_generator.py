@@ -659,6 +659,39 @@ def generate_print_image(
     return png_bytes
 
 
+def generate_print_pdf(
+    svg_string: str,
+    *,
+    output_width_px: int = 4800,
+    board_size: str | None = None,
+    dpi: int = PRINT_DPI_STANDARD,
+    color_theme: str = "classic",
+    skip_remap: bool = False,
+) -> bytes:
+    """Render an SVG poster directly to a vector PDF.
+
+    CairoSVG preserves vector paths when converting SVG→PDF, which gives
+    sharper print output than raster-only workflows.
+    """
+    if skip_remap:
+        pdf_svg = svg_string
+    else:
+        colors = get_theme_colors(color_theme)
+        bg = get_theme_background(color_theme)
+        pdf_svg = _remap_colors(svg_string, colors)
+        pdf_svg = _add_background(pdf_svg, bg)
+
+    if board_size and board_size in PRINT_SIZE_PIXELS:
+        base_w, _base_h = PRINT_SIZE_PIXELS[board_size]
+        scale = dpi / PRINT_DPI_STANDARD
+        output_width_px = int(base_w * scale)
+
+    return cairosvg.svg2pdf(
+        bytestring=pdf_svg.encode("utf-8"),
+        output_width=output_width_px,
+    )
+
+
 def _remap_colors(svg_string: str, color_map: dict[str, str]) -> str:
     """Replace CNC toolpath colors with print-friendly colors."""
     result = svg_string

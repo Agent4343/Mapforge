@@ -33,7 +33,7 @@ from app.services.water_fetcher import fetch_water_features
 from app.services.contour_fetcher import fetch_contour_lines, generate_depth_bands
 from app.services.file_storage import store_file, retrieve_file
 from app.services.thumbnail_generator import (
-    generate_thumbnail, generate_print_image, generate_etsy_listing_image,
+    generate_thumbnail, generate_print_image, generate_print_pdf, generate_etsy_listing_image,
     generate_watermarked_preview, generate_wall_mockup, calculate_print_pixels,
     remap_poster_theme,
     COLOR_THEMES, MOCKUP_STYLES, PRINT_SIZE_PIXELS,
@@ -422,6 +422,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     stl_key = None
     thumbnail_key = None
     print_png_key = None
+    print_pdf_key = None
     etsy_key = None
 
     if user:
@@ -487,6 +488,21 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             log.error(f"Print PNG generation failed: {type(e).__name__}: {e}")
             print_png_key = None
 
+        # Generate vector print PDF for pro print workflow.
+        try:
+            pdf_bytes = generate_print_pdf(
+                result["svg"],
+                board_size=req.board_size.value,
+                dpi=req.print_dpi,
+                color_theme=req.color_theme,
+                skip_remap=True,
+            )
+            print_pdf_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.pdf")
+            await store_file(print_pdf_key, pdf_bytes, content_type="application/pdf")
+        except Exception as e:
+            log.error(f"Print PDF generation failed: {type(e).__name__}: {e}")
+            print_pdf_key = None
+
         # Generate Etsy listing image (4:3 ratio for Etsy grid)
         try:
             etsy_bytes = generate_etsy_listing_image(result["svg"])
@@ -530,6 +546,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             dxf_storage_key=dxf_key,
             thumbnail_key=thumbnail_key,
             print_png_key=print_png_key,
+            print_pdf_key=print_pdf_key,
             province=province,
             lat=center[0],
             lon=center[1],
@@ -901,6 +918,22 @@ async def download(
             raise HTTPException(status_code=404, detail="Print PNG not available for this file.")
         media_type = "image/png"
         ext = "png"
+    elif format == ExportFormat.pdf:
+        content = None
+        if getattr(file_record, "print_pdf_key", None):
+            content = await retrieve_file(file_record.print_pdf_key)
+        if content is None and file_record.svg_storage_key:
+            svg_bytes = await retrieve_file(file_record.svg_storage_key)
+            if svg_bytes:
+                try:
+                    content = generate_print_pdf(svg_bytes.decode("utf-8"))
+                    log.info(f"On-demand PDF render succeeded for {file_id}")
+                except Exception as e:
+                    log.error(f"On-demand PDF render failed for {file_id}: {e}")
+        if content is None:
+            raise HTTPException(status_code=404, detail="Print PDF not available for this file.")
+        media_type = "application/pdf"
+        ext = "pdf"
     elif format == ExportFormat.dxf:
         if not file_record.dxf_storage_key:
             raise HTTPException(status_code=404, detail="DXF not available. Regenerate the map to create a DXF file.")

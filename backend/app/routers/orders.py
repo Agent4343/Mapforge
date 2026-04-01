@@ -185,7 +185,7 @@ async def get_credit_status(token: str):
 async def download_files(token: str, format: str = Query("png")):
     """Download generated files using the design credit token."""
     from fastapi.responses import StreamingResponse
-    from app.services.file_storage import get_file
+    from app.services.file_storage import retrieve_file
 
     async with async_session() as db:
         result = await db.execute(
@@ -235,7 +235,7 @@ async def download_files(token: str, format: str = Query("png")):
     else:
         raise HTTPException(status_code=400, detail=f"Format '{format}' not available")
 
-    file_data = await get_file(key)
+    file_data = await retrieve_file(key)
     if not file_data:
         raise HTTPException(status_code=404, detail="File data not found in storage")
 

@@ -24,6 +24,7 @@ class CutStyle(str, Enum):
 class ExportFormat(str, Enum):
     svg = "svg"
     png = "png"
+    pdf = "pdf"
     dxf = "dxf"
     stl = "stl"
 
@@ -268,6 +269,57 @@ class GenerateResponse(BaseModel):
     geometry_fallback_used: bool = False
     needs_location_repick: bool = False
     warnings: list[str] = Field(default_factory=list)
+
+
+class RenderEngineProfile(str, Enum):
+    basic_svg = "basic_svg"
+    professional_print = "professional_print"
+
+
+class RenderOutputFormat(str, Enum):
+    png = "png"
+    pdf = "pdf"
+
+
+# Backward-compatible alias for router/service typing.
+RenderJobOutputFormat = RenderOutputFormat
+
+
+class RenderJobCreateRequest(BaseModel):
+    file_id: str
+    formats: list[RenderOutputFormat] = Field(
+        default_factory=lambda: [RenderOutputFormat.png, RenderOutputFormat.pdf],
+        min_length=1,
+        max_length=2,
+    )
+    dpi: int = Field(600, ge=300, le=1200)
+    engine_profile: RenderEngineProfile = RenderEngineProfile.professional_print
+
+
+class RenderJobCreateResponse(BaseModel):
+    job_id: str
+    status: str
+    engine_profile: RenderEngineProfile
+    formats: list[RenderOutputFormat]
+
+
+class RenderJobOutput(BaseModel):
+    format: RenderOutputFormat
+    status: str
+    content_type: Optional[str] = None
+    download_url: Optional[str] = None
+    error: Optional[str] = None
+
+
+class RenderJobStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    file_id: str
+    engine_profile: RenderEngineProfile
+    dpi: int
+    formats: list[str]
+    outputs: list[RenderJobOutput] = Field(default_factory=list)
+    error: Optional[str] = None
 
 
 class PreviewResponse(BaseModel):
