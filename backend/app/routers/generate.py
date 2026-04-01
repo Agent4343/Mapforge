@@ -88,6 +88,7 @@ def _check_tier_limits(user: User | None, req: GenerateRequest):
 async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession) -> GenerateResponse:
     """Core generation logic shared by single and batch endpoints."""
     warnings: list[str] = []
+    is_preview_request = user is None
 
     # Resolve board dimensions
     if req.board_width_inches and req.board_height_inches:
@@ -153,6 +154,21 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     need_streets = req.include_streets or auto_streets
     # Always fetch water for provinces — lakes/rivers give the shape character
     need_water = req.product_type.value in water_types or req.product_type.value == "province"
+
+    # Preview mode prioritizes speed: default auto overlays off unless explicitly enabled.
+    if is_preview_request:
+        if not req.include_streets and auto_streets:
+            need_streets = False
+            warnings.append(
+                "Fast preview mode: street overlays were skipped for speed. "
+                "Enable Include Streets for a full-detail render."
+            )
+        if req.product_type.value != "province":
+            need_water = False
+            warnings.append(
+                "Fast preview mode: water overlays were skipped for speed. "
+                "Generate again for full water detail."
+            )
 
     # Always fetch major highways for provinces — with cased road styling
     # they look professional and give the map structure

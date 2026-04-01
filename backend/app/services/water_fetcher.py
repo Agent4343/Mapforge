@@ -73,9 +73,9 @@ async def _fetch_overpass_with_retry(query: str) -> dict | None:
     """
     import time
     start = time.monotonic()
-    budget = 25.0  # slightly more generous budget for reliability
+    budget = 12.0  # fast-preview budget to keep overall generation responsive
 
-    async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
         for i, endpoint in enumerate(OVERPASS_ENDPOINTS):
             elapsed = time.monotonic() - start
             if elapsed >= budget:
@@ -88,16 +88,15 @@ async def _fetch_overpass_with_retry(query: str) -> dict | None:
             if i > 0:
                 await asyncio.sleep(1.0)
 
-            client.timeout = httpx.Timeout(min(15.0, remaining))
+            client.timeout = httpx.Timeout(min(8.0, remaining))
             result = await _try_endpoint(client, endpoint, query)
             if result is not None:
                 return result
 
-    # Second chance: wait 3 seconds and try the primary endpoint one more time.
-    # Often Overpass is just momentarily busy and recovers quickly.
-    log.warning("All Overpass endpoints failed for water — waiting 3s for second chance")
-    await asyncio.sleep(3.0)
-    async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
+    # Second chance: short cooldown then retry the primary endpoint.
+    log.warning("All Overpass endpoints failed for water — waiting 1.5s for second chance")
+    await asyncio.sleep(1.5)
+    async with httpx.AsyncClient(timeout=6.0, follow_redirects=True) as client:
         result = await _try_endpoint(client, OVERPASS_ENDPOINTS[0], query)
         if result is not None:
             log.info("Second-chance water fetch succeeded")

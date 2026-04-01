@@ -51,9 +51,8 @@ ROAD_CLASSES = {
 }
 
 # Maximum total time budget for the entire street fetch (seconds).
-# Must be tight enough that streets + water + SVG + PNG all fit
-# within Railway's ~60s proxy timeout.
-STREET_FETCH_BUDGET = 25
+# Keep this tight so a busy Overpass cluster doesn't block map generation.
+STREET_FETCH_BUDGET = 14
 
 
 async def _try_endpoint(client: httpx.AsyncClient, endpoint: str, query: str) -> dict | None:
@@ -104,7 +103,7 @@ async def _try_endpoint(client: httpx.AsyncClient, endpoint: str, query: str) ->
         return None
 
 
-async def _fetch_with_fallback(query: str, timeout_per_endpoint: float = 20.0, total_budget: float = 30.0) -> dict | None:
+async def _fetch_with_fallback(query: str, timeout_per_endpoint: float = 8.0, total_budget: float = 12.0) -> dict | None:
     """Try Overpass endpoints sequentially with a hard total time limit.
 
     Each endpoint gets a limited timeout. A small delay between attempts
@@ -134,9 +133,9 @@ async def _fetch_with_fallback(query: str, timeout_per_endpoint: float = 20.0, t
                 return result
 
     # Second chance: wait and retry the primary endpoint
-    log.warning("All Overpass endpoints failed for streets — waiting 3s for second chance")
-    await asyncio.sleep(3.0)
-    async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
+    log.warning("All Overpass endpoints failed for streets — waiting 1.5s for second chance")
+    await asyncio.sleep(1.5)
+    async with httpx.AsyncClient(timeout=6.0, follow_redirects=True) as client:
         result = await _try_endpoint(client, OVERPASS_ENDPOINTS[0], query)
         if result is not None:
             log.info("Second-chance street fetch succeeded")
@@ -200,8 +199,8 @@ async def fetch_streets(
     data = None
 
     if include_minor:
-        # Try all roads with ~25s budget
-        data = await _fetch_with_fallback(build_q(all_filter), timeout_per_endpoint=15.0, total_budget=20.0)
+        # Try all roads with a constrained budget for responsive previews.
+        data = await _fetch_with_fallback(build_q(all_filter), timeout_per_endpoint=8.0, total_budget=10.0)
 
         # Fall back to major roads if all roads failed
         if data is None:
@@ -209,9 +208,9 @@ async def fetch_streets(
             remaining = STREET_FETCH_BUDGET - elapsed
             if remaining > 5:
                 log.warning(f"All-roads fetch failed ({elapsed:.0f}s) — trying major only")
-                data = await _fetch_with_fallback(build_q(major_filter), timeout_per_endpoint=10.0, total_budget=min(remaining, 15.0))
+                data = await _fetch_with_fallback(build_q(major_filter), timeout_per_endpoint=6.0, total_budget=min(remaining, 8.0))
     else:
-        data = await _fetch_with_fallback(build_q(major_filter), timeout_per_endpoint=15.0, total_budget=20.0)
+        data = await _fetch_with_fallback(build_q(major_filter), timeout_per_endpoint=8.0, total_budget=10.0)
 
     elapsed = time.monotonic() - start
     if data is None:
