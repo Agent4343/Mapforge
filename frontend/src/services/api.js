@@ -4,6 +4,7 @@
 
 const API_BASE = "/api/v1";
 const TIMEOUT_MS = 30000;
+const GENERATE_TIMEOUT_MS = 300000;
 const ENV_API_ORIGIN = (import.meta.env.VITE_API_URL || "").trim().replace(/\/+$/, "");
 const ENV_API_FALLBACK_ORIGINS = (import.meta.env.VITE_API_FALLBACK_URLS || "")
   .split(",")
@@ -104,8 +105,18 @@ async function fetchWithTimeout(url, options = {}) {
       return await fetch(candidateUrl, { ...requestOptions, headers, signal: controller.signal });
     } catch (err) {
       if (err.name === "AbortError") {
-        clearTimeout(timeout);
-        throw new Error("Request timed out. Please check your connection and try again.");
+        lastError = err;
+        const isFinalAttempt = i === candidateUrls.length - 1;
+        if (isFinalAttempt) {
+          const endpoint = typeof url === "string" ? String(url).split("?")[0] : "API request";
+          const attempted = candidateUrls
+            .map((u) => (typeof u === "string" ? String(u).split("?")[0] : "API request"))
+            .join(", ");
+          throw new Error(
+            `Request timed out while calling ${endpoint}. Please check your connection and try again. Tried: ${attempted}`
+          );
+        }
+        continue;
       }
       lastError = err;
       const isFinalAttempt = i === candidateUrls.length - 1;
@@ -246,7 +257,7 @@ async function generateSVG(params) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
-    timeout: 180000,
+    timeout: GENERATE_TIMEOUT_MS,
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
@@ -260,7 +271,7 @@ async function generatePin(params) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
-    timeout: 180000,
+    timeout: GENERATE_TIMEOUT_MS,
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
