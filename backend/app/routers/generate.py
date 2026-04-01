@@ -64,6 +64,21 @@ def _cache_overpass(key: str, data: dict) -> dict:
     return data
 
 
+def _synthesize_boundary_streets(processed: dict) -> dict | None:
+    """Build minimal fallback linework from boundary polygons when Overpass is unavailable."""
+    polygons = processed.get("polygons") or []
+    if not polygons:
+        return None
+    major_roads = []
+    for exterior, _holes in polygons:
+        if not exterior or len(exterior) < 4:
+            continue
+        major_roads.append((exterior, "boundary", 0.9, "Boundary"))
+    if not major_roads:
+        return None
+    return {"major_roads": major_roads, "minor_roads": []}
+
+
 async def _maybe_reset_monthly_counter(user: User, db: AsyncSession):
     """Reset generation counter if a new month has started."""
     now = datetime.now(timezone.utc)
@@ -260,6 +275,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     if req.include_contours:
         tasks.append(("contours", _get_contours()))
 
+    overpass_missing_count = 0
     if tasks:
         results = await asyncio.gather(
             *(t[1] for t in tasks), return_exceptions=True
@@ -274,12 +290,23 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                     # Contour data is optional; empty results are normal for many areas.
                     # Only warn users when streets/water are unavailable.
                     warnings.append(f"{label.title()} data unavailable — the Overpass API may be busy. Try regenerating in a minute.")
+                    overpass_missing_count += 1
             elif label == "streets":
                 streets_data = result
             elif label == "water":
                 water_data = result
             elif label == "contours":
                 contour_data = result
+
+    # If Overpass street data is unavailable, synthesize outline linework so the poster
+    # still renders with a clean silhouette instead of looking broken/sparse.
+    if need_streets and not streets_data:
+        synthesized = _synthesize_boundary_streets(processed)
+        if synthesized:
+            streets_data = synthesized
+            warnings.append(
+                "Street overlays were unavailable, so MapForge used boundary linework fallback."
+            )
 
     # Transform custom markers from lat/lon to board mm coordinates
     board_markers = None
@@ -336,6 +363,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
 
     # Quality gates for map acceptance
     needs_location_repick = False
+    base_path_count = sum(1 + len(holes) for _, holes in (processed.get("polygons") or []))
     if geometry_fallback_used:
         needs_location_repick = True
     if result["node_count"] < 20:
@@ -349,12 +377,13 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         )
         needs_location_repick = True
     overlay_unavailable = (need_streets and not streets_data) or (need_water and not water_data)
-    if result["path_count"] < 8:
+    effective_path_count = max(result["path_count"], base_path_count)
+    if effective_path_count < 8:
         warnings.append(
             "Low path count detected. This location may not render a strong map silhouette; consider a different match."
         )
         # Do not force re-pick when low path count is caused by temporary overlay outages.
-        if not overlay_unavailable:
+        if not overlay_unavailable and overpass_missing_count == 0:
             needs_location_repick = True
     warnings = list(dict.fromkeys(warnings))
 
