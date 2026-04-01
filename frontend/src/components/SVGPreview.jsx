@@ -62,6 +62,10 @@ const THEME_COLOR_MAPS = {
     bg: "#f0f8ff",
     map: { "#2a2a2a": "#85c1e9", "#1a1a1a": "#2c3e50", "#d4e6f1": "#d6eaf8", "#7fb3d3": "#5dade2", "#333333": "#2c3e50", "#555555": "#34495e", "#444444": "#1a252f", "#cccccc": "#aed6f1", "#666666": "#2c3e50" },
   },
+  gallery_premium: {
+    bg: "#f8f3e8",
+    map: { "#2a2a2a": "#ddd2ba", "#1a1a1a": "#1f1a14", "#d4e6f1": "#c8d8dc", "#7fb3d3": "#7a9aa6", "#333333": "#2f261b", "#555555": "#5b4a36", "#444444": "#3f3124", "#cccccc": "#cdbf9f", "#666666": "#6a5540" },
+  },
 };
 
 function applyPrintColors(svg, themeName) {

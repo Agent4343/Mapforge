@@ -1,5 +1,6 @@
 const COLOR_THEMES = [
   { value: "classic", label: "Classic", bg: "#faf8f5", road: "#8b7355", land: "#4a7c59" },
+  { value: "gallery_premium", label: "Gallery Premium", bg: "#f7f2e7", road: "#2b2217", land: "#e2d4bc" },
   { value: "modern_dark", label: "Modern Dark", bg: "#1a1a2e", road: "#e2e8f0", land: "#2d3748" },
   { value: "rose_gold", label: "Rose Gold", bg: "#fdf2f0", road: "#8b6f66", land: "#d4a59a" },
   { value: "midnight", label: "Midnight Blue", bg: "#0f1923", road: "#c9d6df", land: "#1b3a4b" },
@@ -27,6 +28,22 @@ const SUBTITLE_PRESETS = [
 ];
 
 const MAP_ART_PRESETS = [
+  {
+    id: "gallery_premium",
+    label: "Gallery Premium",
+    hint: "Museum-grade neutral palette with polished typography",
+    updates: {
+      colorTheme: "gallery_premium",
+      posterLayout: "classic",
+      fontFamily: "serif",
+      borderStyle: "thin",
+      showCoordinates: true,
+      showCompass: true,
+      showScaleBar: true,
+      gradientWater: true,
+      landShadow: true,
+    },
+  },
   {
     id: "gallery_minimal",
     label: "Gallery Minimal",

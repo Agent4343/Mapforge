@@ -390,9 +390,9 @@ def _generate_print_svg(
     renderer with SVG paper texture for an aged parchment look.
     Professional map elements: compass rose, scale bar, gradient water, land shadow.
     """
-    # Vintage map: monochrome line art on aged parchment — completely
+    # Vintage-style map: monochrome line art on aged parchment — completely
     # different rendering path from the standard colored poster themes.
-    if color_theme == "vintage_map":
+    if color_theme in {"vintage_map", "gallery_premium"}:
         return _generate_vintage_map_svg(
             processed=processed,
             location_name=location_name,
@@ -405,6 +405,7 @@ def _generate_print_svg(
             include_bleed=include_bleed,
             include_crop_marks=include_crop_marks,
             show_compass=show_compass,
+            style_variant=color_theme,
         )
 
     from app.services.thumbnail_generator import get_poster_theme
@@ -996,6 +997,7 @@ def _generate_vintage_map_svg(
     include_bleed: bool = False,
     include_crop_marks: bool = False,
     show_compass: bool = False,
+    style_variant: str = "vintage_map",
 ) -> dict:
     """Generate a vintage parchment-style map with monochrome line art.
 
@@ -1008,13 +1010,24 @@ def _generate_vintage_map_svg(
     latlon = center_latlon or processed.get("center_latlon", (0, 0))
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # Vintage color palette — monochrome ink on parchment
-    ink = "#1e1810"          # Dark brown-black ink
-    ink_light = "#3a2e20"    # Lighter ink for minor features
-    ink_faint = "#5a4a38"    # Faint ink for detail roads
-    parchment = "#e8dcc0"   # Base parchment color
-    parchment_edge = "#c8b890"  # Darker edge color for vignette
-    water_tint = "#d0c4a4"  # Subtle darker tint for water areas
+    # Vintage / gallery-premium palettes share the same rendering structure
+    # with slightly different tone and contrast.
+    is_gallery_premium = style_variant == "gallery_premium"
+    if is_gallery_premium:
+        ink = "#1f1a14"
+        ink_light = "#3f3124"
+        ink_faint = "#6a5540"
+        parchment = "#f6f0e4"
+        parchment_edge = "#cfc1a4"
+        water_tint = "#ddd2ba"
+    else:
+        # Vintage color palette — monochrome ink on parchment
+        ink = "#1e1810"          # Dark brown-black ink
+        ink_light = "#3a2e20"    # Lighter ink for minor features
+        ink_faint = "#5a4a38"    # Faint ink for detail roads
+        parchment = "#e8dcc0"    # Base parchment color
+        parchment_edge = "#c8b890"  # Darker edge color for vignette
+        water_tint = "#d0c4a4"   # Subtle darker tint for water areas
 
     # Layout: text at bottom (15% of height), map fills the rest
     margin = round(board_w * 0.04, 2)
@@ -1084,6 +1097,23 @@ def _generate_vintage_map_svg(
 
     major_roads = streets_data.get("major_roads", []) if streets_data else []
     minor_roads = streets_data.get("minor_roads", []) if streets_data else []
+    boundary_major_count = sum(1 for _coords, road_class, _width, _name in major_roads if road_class == "boundary")
+    boundary_fallback_only = bool(major_roads) and boundary_major_count == len(major_roads) and not minor_roads
+    # Remove tiny fallback fragments that look like random scratches.
+    if boundary_fallback_only and major_roads:
+        min_render_len = max(2.2, min(map_w, map_h) * 0.025)
+        major_roads = [
+            entry for entry in major_roads
+            if _path_length(entry[0]) >= min_render_len
+        ]
+    # For sparse non-fallback maps, drop very short detail segments that add noise.
+    elif minor_roads:
+        min_minor_len = max(1.2, min(map_w, map_h) * 0.008)
+        minor_roads = [
+            entry for entry in minor_roads
+            if _path_length(entry[0]) >= min_minor_len
+        ]
+
     total_roads = len(major_roads) + len(minor_roads)
     boundary_major_count = sum(1 for _coords, road_class, _width, _name in major_roads if road_class == "boundary")
     boundary_fallback_only = bool(major_roads) and boundary_major_count == len(major_roads) and not minor_roads
@@ -1129,16 +1159,16 @@ def _generate_vintage_map_svg(
     lines.append('    </radialGradient>')
     # Subtle speckle pattern for paper grain
     lines.append(f'    <pattern id="grain" width="3" height="3" patternUnits="userSpaceOnUse">')
-    lines.append(f'      <circle cx="0.8" cy="1.2" r="0.15" fill="#a09070" opacity="0.12"/>')
-    lines.append(f'      <circle cx="2.4" cy="0.4" r="0.1" fill="#907858" opacity="0.1"/>')
-    lines.append(f'      <circle cx="1.6" cy="2.6" r="0.12" fill="#b0a080" opacity="0.08"/>')
+    lines.append(f'      <circle cx="0.8" cy="1.2" r="0.15" fill="#a09070" opacity="0.08"/>')
+    lines.append(f'      <circle cx="2.4" cy="0.4" r="0.1" fill="#907858" opacity="0.07"/>')
+    lines.append(f'      <circle cx="1.6" cy="2.6" r="0.12" fill="#b0a080" opacity="0.06"/>')
     lines.append(f'    </pattern>')
     # Larger stain-like spots pattern
     lines.append(f'    <pattern id="stains" width="40" height="40" patternUnits="userSpaceOnUse">')
-    lines.append(f'      <circle cx="8" cy="12" r="5" fill="#b8a878" opacity="0.08"/>')
-    lines.append(f'      <circle cx="28" cy="6" r="3" fill="#a89868" opacity="0.06"/>')
-    lines.append(f'      <circle cx="18" cy="30" r="6" fill="#c0a870" opacity="0.07"/>')
-    lines.append(f'      <circle cx="35" cy="25" r="4" fill="#a89060" opacity="0.05"/>')
+    lines.append(f'      <circle cx="8" cy="12" r="5" fill="#b8a878" opacity="0.05"/>')
+    lines.append(f'      <circle cx="28" cy="6" r="3" fill="#a89868" opacity="0.04"/>')
+    lines.append(f'      <circle cx="18" cy="30" r="6" fill="#c0a870" opacity="0.045"/>')
+    lines.append(f'      <circle cx="35" cy="25" r="4" fill="#a89060" opacity="0.035"/>')
     lines.append(f'    </pattern>')
     # Light engraving-style hatching for sparse/fallback renders.
     lines.append('    <pattern id="terrain_hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(28)">')
@@ -1335,7 +1365,7 @@ def _generate_vintage_map_svg(
     coord_size = round(font_size_mm * 0.4, 2)
 
     title_text = location_name.upper()
-    title_tracking = title_size * 0.25
+    title_tracking = title_size * (0.2 if is_gallery_premium else 0.23)
 
     # Auto-scale title to fit
     est_width = len(title_text) * (title_size * 0.75 + title_tracking)
@@ -1343,9 +1373,9 @@ def _generate_vintage_map_svg(
     if est_width > avail_w and len(title_text) > 0:
         scale = avail_w / est_width
         title_size = round(title_size * scale, 2)
-        title_tracking = title_size * 0.25
+        title_tracking = title_size * (0.2 if is_gallery_premium else 0.23)
 
-    text_start_y = round(map_y + map_h + text_area_h * 0.35, 2)
+    text_start_y = round(map_y + map_h + text_area_h * (0.33 if is_gallery_premium else 0.35), 2)
 
     lines.append('  <g id="poster_text">')
     lines.append(
@@ -1355,7 +1385,7 @@ def _generate_vintage_map_svg(
         f' letter-spacing="{round(title_tracking, 2)}"'
         f' fill="{ink}">{_escape_xml(title_text)}</text>'
     )
-    next_y = text_start_y + title_size * 1.2
+    next_y = text_start_y + title_size * (1.28 if is_gallery_premium else 1.2)
     subtitle_clean = (subtitle or "").strip()
     hide_subtitle = subtitle_clean.lower() in {"no", "none", "n/a", "na"}
 
@@ -1364,10 +1394,10 @@ def _generate_vintage_map_svg(
             f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
             f' text-anchor="middle" font-family="{ff}"'
             f' font-size="{subtitle_size}" font-weight="normal"'
-            f' letter-spacing="{round(subtitle_size * 0.2, 2)}"'
+                f' letter-spacing="{round(subtitle_size * (0.16 if is_gallery_premium else 0.2), 2)}"'
             f' fill="{ink_light}">{_escape_xml(subtitle_clean)}</text>'
         )
-        next_y += subtitle_size * 1.8
+        next_y += subtitle_size * (2.0 if is_gallery_premium else 1.8)
     if show_coordinates and latlon:
         lat, lon = latlon
         lat_dir = "N" if lat >= 0 else "S"
@@ -1377,7 +1407,7 @@ def _generate_vintage_map_svg(
             f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
             f' text-anchor="middle" font-family="{ff}"'
             f' font-size="{coord_size}"'
-            f' letter-spacing="{round(coord_size * 0.15, 2)}"'
+            f' letter-spacing="{round(coord_size * (0.18 if is_gallery_premium else 0.15), 2)}"'
             f' fill="{ink_light}">{coord_text}</text>'
         )
     elif subtitle and subtitle.strip().lower() in {"no", "none", "n/a", "na"}:

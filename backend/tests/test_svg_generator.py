@@ -225,3 +225,30 @@ def test_vintage_map_hides_placeholder_subtitle_no():
     )
     svg = result["svg"]
     assert ">No<" not in svg
+
+
+def test_vintage_map_suppresses_short_fallback_segments():
+    processed = _make_processed()
+    fallback_streets = {
+        "major_roads": [
+            ([(10.0, 10.0), (10.8, 10.4)], "boundary", 0.9, "Boundary"),
+            ([(12.0, 12.0), (60.0, 30.0), (120.0, 50.0)], "boundary", 0.9, "Boundary"),
+        ],
+        "minor_roads": [],
+    }
+    result = generate_svg(
+        processed=processed,
+        location_name="Little Narrows",
+        style=CutStyle.filled,
+        show_coordinates=True,
+        font_size_mm=14,
+        streets_data=fallback_streets,
+        color_theme="vintage_map",
+        product_type="city",
+        output_mode="print",
+    )
+    svg = result["svg"]
+    # Tiny segment should be omitted from fallback rendering. In vintage mode,
+    # each retained major road draws one casing path (opacity 0.58) and one ink path.
+    # Only one of the two fallback boundary segments should remain after filtering.
+    assert svg.count('opacity="0.58"') == 1

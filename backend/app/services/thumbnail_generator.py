@@ -504,6 +504,34 @@ COLOR_THEMES = {
             "text_secondary": "#4a3828",
         },
     },
+    "gallery_premium": {
+        "label": "Gallery Premium",
+        "background": "#f4eee2",
+        "colors": {
+            "#2a2a2a": "#cdbb9b",
+            "#1a1a1a": "#221a14",
+            "#d4e6f1": "#e3d8c2",
+            "#7fb3d3": "#4f4230",
+            "#333333": "#2b2119",
+            "#555555": "#594935",
+            "#444444": "#2b2119",
+            "#cccccc": "#cab899",
+            "#666666": "#5b4b38",
+        },
+        "poster": {
+            "mat": "#f4eee2",
+            "map_bg": "#f4eee2",
+            "land": "#e7dac1",
+            "land_stroke": "#5a4833",
+            "water": "#d8ccb2",
+            "water_stroke": "#4f4230",
+            "street_major": "#221a14",
+            "street_minor": "#5b4b38",
+            "street_label": "#2b2119",
+            "text_primary": "#221a14",
+            "text_secondary": "#5b4b38",
+        },
+    },
 }
 
 
