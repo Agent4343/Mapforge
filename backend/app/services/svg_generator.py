@@ -832,8 +832,9 @@ def _generate_print_svg(
     lines.append("  </g>")  # close map clip group
     lines.append("")
 
-    # Map frame and text — depends on layout
-    if layout.get("map_frame", False) and not full_bleed_map:
+    # Map frame — skip for province maps (the land shape IS the visual,
+    # a box around it looks cheap). Keep for city/lake maps where it frames nicely.
+    if layout.get("map_frame", False) and not full_bleed_map and not is_province_map:
         inset = 1.5
         lines.append('  <g id="map_frame">')
         lines.append(
@@ -849,8 +850,8 @@ def _generate_print_svg(
         lines.append("  </g>")
         lines.append("")
 
-    # Ornate corners for vintage layout
-    if layout.get("ornate_corners", False):
+    # Ornate corners for vintage layout — skip for provinces (too busy)
+    if layout.get("ornate_corners", False) and not is_province_map:
         _add_ornate_corners(lines, map_x, map_y, map_w, map_h, theme)
         lines.append("")
 
