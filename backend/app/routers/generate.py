@@ -189,11 +189,10 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
 
     # Size thresholds for street fetching:
     #   Cities (<1 deg²): full streets with all road types
-    #   Small provinces (1-30 deg²): full streets — PEI, Nova Scotia, New Brunswick
-    #   Medium provinces (30-80 deg²): major roads only — Saskatchewan, Manitoba
-    #   Very large provinces (>80 deg²): skip streets — Ontario, Quebec, BC, Alberta
+    #   Provinces (any size): major highways only — clean, professional look
+    #   Very large provinces (>80 deg²): skip streets entirely
     bbox_area_deg2 = (bounds[2] - bounds[0]) * (bounds[3] - bounds[1])
-    is_medium_area = bbox_area_deg2 > 30.0
+    is_medium_area = is_province or bbox_area_deg2 > 10.0
     is_very_large_area = bbox_area_deg2 > 80.0
 
     if is_very_large_area and need_streets:
@@ -203,9 +202,9 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     elif is_medium_area and need_streets:
         log.info(f"Medium area ({bbox_area_deg2:.1f} deg²) — fetching major roads only")
 
-    # Provinces get major roads only (highways) unless user explicitly enabled streets.
-    # Cities always get full street grid.
-    include_minor_streets = not is_medium_area and not (is_province and not req.include_streets)
+    # Provinces ALWAYS get major highways only — minor roads create visual noise
+    # at province scale. Cities get the full street grid.
+    include_minor_streets = not is_province and not is_medium_area
 
     async def _get_streets():
         cache_key = _bbox_cache_key("streets", street_bbox)

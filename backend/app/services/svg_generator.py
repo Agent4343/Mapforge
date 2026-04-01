@@ -639,10 +639,10 @@ def _generate_print_svg(
     has_streets = streets_data and (streets_data.get("major_roads") or streets_data.get("minor_roads"))
 
     # Land shadow — render BEFORE geography so it appears behind the land mass.
-    # Province maps: lighter shadow — the smooth coastline is elegant on its own.
+    # Province maps: NO shadow — the clean land/water contrast is elegant on its own.
     # Sparse/rural areas get a deeper shadow for more visual depth.
-    if land_shadow and not full_bleed_map:
-        shadow_opacity = "0.08" if is_province_map else ("0.18" if is_sparse_area else "0.12")
+    if land_shadow and not full_bleed_map and not is_province_map:
+        shadow_opacity = "0.18" if is_sparse_area else "0.12"
         lines.append(f'    <g id="land_shadow" opacity="{shadow_opacity}">')
         shadow_scale = 0.006 if is_sparse_area else 0.004
         shadow_offset = round(min(board_w, board_h) * shadow_scale, 2)
@@ -2182,9 +2182,10 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
     major_paths = []
     minor_paths = []
 
-    # For provinces, only show major highways — skip minor/residential for clean look
+    # For provinces, only show TOP-TIER highways — motorway, trunk, primary.
+    # Secondary roads are too numerous and create spider-web visual noise.
     province_allowed = {"motorway", "motorway_link", "trunk", "trunk_link",
-                        "primary", "primary_link", "secondary", "secondary_link"}
+                        "primary", "primary_link"}
 
     for coords, road_class, _width, name in streets_data.get("major_roads", []):
         if len(coords) < 2:
