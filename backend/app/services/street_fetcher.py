@@ -15,7 +15,7 @@ from app.logging_config import log
 # Racing all endpoints simultaneously looks like abuse and gets IPs blocked.
 OVERPASS_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
-    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
     "https://overpass.openstreetmap.fr/api/interpreter",
     "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
 ]
