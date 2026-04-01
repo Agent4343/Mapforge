@@ -18,6 +18,7 @@ export default function ExportPanel({
   user,
   printDPI,
   etsyShopUrl,
+  onStartEtsyCheckout,
 }) {
   const [showListForm, setShowListForm] = useState(false);
   const [listTitle, setListTitle] = useState("");
@@ -363,22 +364,34 @@ export default function ExportPanel({
         </div>
       )}
 
-      {/* Non-admin visitors: show "Buy on Etsy" CTA after they generate a preview */}
+      {/* Non-admin visitors: show Etsy handoff CTA after they generate a preview */}
       {result && !isAdmin && etsyShopUrl && (
         <div className="etsy-cta-section">
           <div className="etsy-cta-card">
             <h3>Love your design?</h3>
             <p>Get your print-ready files — high-resolution PNG, SVG source, and mockup image.</p>
-            <a
-              href={etsyShopUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn btn-etsy btn-full etsy-buy-btn"
-            >
-              Buy on Etsy — Get Your Files
-            </a>
+            {typeof onStartEtsyCheckout === "function" ? (
+              <button
+                type="button"
+                className="btn btn-etsy btn-full etsy-buy-btn"
+                onClick={onStartEtsyCheckout}
+              >
+                Continue to Etsy Checkout
+              </button>
+            ) : (
+              <a
+                href={etsyShopUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-etsy btn-full etsy-buy-btn"
+              >
+                Buy on Etsy — Get Your Files
+              </a>
+            )}
             <p className="etsy-cta-note">
-              After purchase, you'll receive a unique link to download your custom print-ready files.
+              {typeof onStartEtsyCheckout === "function"
+                ? "We'll save this design and include a reference so you can continue after Etsy checkout."
+                : "After purchase, you'll receive a unique link to download your custom print-ready files."}
             </p>
           </div>
         </div>

@@ -79,6 +79,9 @@ const COUNTRIES = [
   { code: "", label: "Global" },
 ];
 
+const ETSY_DRAFT_STORAGE_KEY = "mapforge_etsy_drafts";
+const MAX_ETSY_DRAFTS = 20;
+
 function isFiniteCoordinate(value) {
   return typeof value === "number" && Number.isFinite(value);
 }
@@ -100,6 +103,58 @@ function parseCoordinateInput(rawValue) {
   if (rawValue === "") return null;
   const parsed = Number(rawValue);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function createDraftId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function createDesignRef() {
+  return `MF-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+}
+
+function readEtsyDraftStore() {
+  try {
+    const raw = localStorage.getItem(ETSY_DRAFT_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeEtsyDraftStore(store) {
+  try {
+    localStorage.setItem(ETSY_DRAFT_STORAGE_KEY, JSON.stringify(store));
+  } catch {}
+}
+
+function saveEtsyDraft(payload) {
+  const draftId = createDraftId();
+  const designRef = createDesignRef();
+  const store = readEtsyDraftStore();
+  store[draftId] = {
+    ...payload,
+    draft_id: draftId,
+    design_ref: designRef,
+    updated_at: new Date().toISOString(),
+  };
+
+  const orderedDrafts = Object.entries(store)
+    .sort(([, a], [, b]) => String(b?.updated_at || "").localeCompare(String(a?.updated_at || "")))
+    .slice(0, MAX_ETSY_DRAFTS);
+
+  writeEtsyDraftStore(Object.fromEntries(orderedDrafts));
+  return { draftId, designRef };
+}
+
+function loadEtsyDraft(draftId) {
+  const store = readEtsyDraftStore();
+  return store[draftId] || null;
 }
 
 // Toast notification system
@@ -217,30 +272,62 @@ export default function App() {
       return;
     }
 
+    let shouldClearQuery = false;
+    let restoredFromDraft = false;
+
+    // Restore draft when returning from Etsy with a saved draft ID
+    const draftParam = params.get("draft");
+    if (draftParam) {
+      shouldClearQuery = true;
+      const draft = loadEtsyDraft(draftParam);
+      if (draft?.config) {
+        const restoredConfig = { ...DEFAULT_CONFIG, ...draft.config };
+        restoredFromDraft = true;
+        setShowLanding(false);
+        setIsEtsyReferral(true);
+        setConfig(restoredConfig);
+        setConfigHistory([restoredConfig]);
+        setHistoryIndex(0);
+        setSelectedResult(draft.selectedResult || null);
+        setPinCoords(draft.pinCoords || null);
+        setMarkers(Array.isArray(draft.markers) ? draft.markers : []);
+        addToast(
+          draft.design_ref ? `Restored your Etsy design (${draft.design_ref}).` : "Restored your Etsy design.",
+          "success"
+        );
+      }
+    }
+
     // Etsy OAuth callback success
     if (params.get("etsy_connected") === "1") {
+      shouldClearQuery = true;
       addToast("Etsy shop connected! Generate a map and publish it to your shop.", "success");
-      window.history.replaceState({}, "", window.location.pathname);
     }
 
     // Etsy OAuth callback error
     const etsyError = params.get("etsy_error");
     if (etsyError) {
+      shouldClearQuery = true;
       addToast(`Etsy connection failed: ${etsyError}. Please try again.`, "error");
-      window.history.replaceState({}, "", window.location.pathname);
     }
 
     // Etsy referral (no credit yet — just browsing from listing description)
     if (params.get("ref") === "etsy") {
+      shouldClearQuery = true;
       setIsEtsyReferral(true);
       setShowLanding(false);
-      const updates = {};
-      if (params.get("product_type")) updates.productType = params.get("product_type");
-      if (params.get("board_size")) updates.boardSize = params.get("board_size");
-      if (params.get("color_theme")) updates.colorTheme = params.get("color_theme");
-      if (Object.keys(updates).length > 0) {
-        setConfig((prev) => ({ ...prev, ...updates }));
+      if (!restoredFromDraft) {
+        const updates = {};
+        if (params.get("product_type")) updates.productType = params.get("product_type");
+        if (params.get("board_size")) updates.boardSize = params.get("board_size");
+        if (params.get("color_theme")) updates.colorTheme = params.get("color_theme");
+        if (Object.keys(updates).length > 0) {
+          setConfig((prev) => ({ ...prev, ...updates }));
+        }
       }
+    }
+
+    if (shouldClearQuery) {
       window.history.replaceState({}, "", window.location.pathname);
     }
   }, []);
@@ -540,6 +627,53 @@ export default function App() {
     }
   }, [result, config.text]);
 
+  const handleStartEtsyCheckout = useCallback(() => {
+    if (!etsyShopUrl) {
+      addToast("Etsy shop link is not configured yet.", "error");
+      return;
+    }
+
+    const selectedSnapshot = selectedResult
+      ? {
+          osm_id: selectedResult.osm_id,
+          osm_type: selectedResult.osm_type,
+          display_name: selectedResult.display_name,
+          feature_type: selectedResult.feature_type,
+          lat: selectedResult.lat,
+          lon: selectedResult.lon,
+          has_geometry: selectedResult.has_geometry,
+          boundingbox: selectedResult.boundingbox,
+        }
+      : null;
+
+    const { draftId, designRef } = saveEtsyDraft({
+      source: "etsy_checkout_handoff",
+      config,
+      selectedResult: selectedSnapshot,
+      pinCoords,
+      markers,
+      result: result
+        ? {
+            file_id: result.file_id,
+            location_name: result.location_name,
+            product_type: result.product_type,
+            style: result.style,
+          }
+        : null,
+    });
+
+    const checkoutUrl = new URL(etsyShopUrl, window.location.origin);
+    checkoutUrl.searchParams.set("ref", "mapforge_app");
+    checkoutUrl.searchParams.set("draft", draftId);
+    checkoutUrl.searchParams.set("design_ref", designRef);
+    if (config.productType) checkoutUrl.searchParams.set("product_type", config.productType);
+    if (config.boardSize) checkoutUrl.searchParams.set("board_size", config.boardSize);
+    if (config.colorTheme) checkoutUrl.searchParams.set("color_theme", config.colorTheme);
+    if (result?.location_name) checkoutUrl.searchParams.set("location", result.location_name);
+
+    window.location.href = checkoutUrl.toString();
+  }, [addToast, config, etsyShopUrl, markers, pinCoords, result, selectedResult]);
+
   function _triggerDownload(blob, name, ext) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -802,6 +936,7 @@ export default function App() {
             user={user}
             printDPI={config.printDPI}
             etsyShopUrl={etsyShopUrl}
+            onStartEtsyCheckout={handleStartEtsyCheckout}
           />
         </div>
         <div className="panel-right">
