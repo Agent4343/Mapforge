@@ -1,6 +1,9 @@
 # Stage 1: Build frontend
 FROM node:22-alpine AS frontend-build
 
+ARG VITE_MAPTILER_KEY=""
+ENV VITE_MAPTILER_KEY=${VITE_MAPTILER_KEY}
+
 WORKDIR /frontend
 COPY frontend/package.json ./
 RUN npm install

@@ -11,7 +11,7 @@ const TYPE_LABELS = {
   name_sign: "Name Sign",
 };
 
-export default function SearchPanel({ onSelect, selectedResult, country }) {
+export default function SearchPanel({ onSelect, selectedResult, country, maptilerKey = "" }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -136,7 +136,7 @@ export default function SearchPanel({ onSelect, selectedResult, country }) {
           lon={selectedResult.lon}
           boundingbox={selectedResult.boundingbox}
           name={selectedResult.display_name.split(",")[0]}
-          maptilerKey={null}
+          maptilerKey={maptilerKey}
         />
       )}
     </div>
