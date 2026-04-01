@@ -22,7 +22,7 @@ import {
   downloadThumbnail, downloadPrintPNG,
   downloadEtsyListing, downloadEtsyPackage, downloadPreview, downloadWallMockup,
   getProfile, logout, getToken, subscribe,
-  redeemCredit,
+  redeemCredit, getPublicConfig,
 } from "./services/api.js";
 
 const DEFAULT_CONFIG = {
@@ -308,9 +308,8 @@ export default function App() {
   // Fetch public config (Etsy shop URL, etc.)
   const [etsyShopUrl, setEtsyShopUrl] = useState(null);
   useEffect(() => {
-    fetch(`${import.meta.env.VITE_API_URL || ""}/api/v1/config`)
-      .then((r) => r.json())
-      .then((c) => { if (c.etsy_shop_url) setEtsyShopUrl(c.etsy_shop_url); })
+    getPublicConfig()
+      .then((c) => { if (c?.etsy_shop_url) setEtsyShopUrl(c.etsy_shop_url); })
       .catch(() => {});
   }, []);
 

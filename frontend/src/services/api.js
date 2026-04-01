@@ -4,8 +4,26 @@
 
 const API_BASE = "/api/v1";
 const TIMEOUT_MS = 30000;
+const ENV_API_ORIGIN = (import.meta.env.VITE_API_URL || "").trim().replace(/\/+$/, "");
 
 let authToken = localStorage.getItem("mapforge_token") || null;
+
+function buildApiFallbackOrigins() {
+  const origins = [];
+  if (ENV_API_ORIGIN) {
+    origins.push(ENV_API_ORIGIN);
+  }
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    const protocol = window.location.protocol || "http:";
+    if (host === "localhost" || host === "127.0.0.1") {
+      origins.push(`${protocol}//${host}:8000`);
+    }
+  }
+  return [...new Set(origins)];
+}
+
+const API_FALLBACK_ORIGINS = buildApiFallbackOrigins();
 
 function setToken(token) {
   authToken = token;
@@ -36,29 +54,56 @@ function extractErrorMessage(detail, fallback) {
 }
 
 async function fetchWithTimeout(url, options = {}) {
-  const controller = new AbortController();
   const timeoutMs = options.timeout || TIMEOUT_MS;
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  delete options.timeout;
+  const requestOptions = { ...options };
+  delete requestOptions.timeout;
 
-  const headers = { ...options.headers };
-  if (authToken) {
-    headers["Authorization"] = `Bearer ${authToken}`;
-  }
-
-  try {
-    const resp = await fetch(url, { ...options, headers, signal: controller.signal });
-    return resp;
-  } catch (err) {
-    if (err.name === "AbortError") {
-      throw new Error("Request timed out. Please check your connection and try again.");
+  const candidateUrls = [url];
+  if (typeof url === "string" && url.startsWith("/api/")) {
+    for (const origin of API_FALLBACK_ORIGINS) {
+      const candidate = `${origin}${url}`;
+      if (!candidateUrls.includes(candidate)) {
+        candidateUrls.push(candidate);
+      }
     }
-    const endpoint = typeof url === "string" ? String(url).split("?")[0] : "API request";
-    const reason = err?.message ? ` (${err.message})` : "";
-    throw new Error(`Network error while calling ${endpoint}${reason}. Please check your connection and API server.`);
-  } finally {
-    clearTimeout(timeout);
   }
+
+  let lastError = null;
+  for (let i = 0; i < candidateUrls.length; i += 1) {
+    const candidateUrl = candidateUrls[i];
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const headers = { ...requestOptions.headers };
+    if (authToken) {
+      headers["Authorization"] = `Bearer ${authToken}`;
+    }
+
+    try {
+      return await fetch(candidateUrl, { ...requestOptions, headers, signal: controller.signal });
+    } catch (err) {
+      if (err.name === "AbortError") {
+        clearTimeout(timeout);
+        throw new Error("Request timed out. Please check your connection and try again.");
+      }
+      lastError = err;
+      const isFinalAttempt = i === candidateUrls.length - 1;
+      if (isFinalAttempt) {
+        const endpoint = typeof url === "string" ? String(url).split("?")[0] : "API request";
+        const reason = err?.message ? ` (${err.message})` : "";
+        const attempted = candidateUrls
+          .map((u) => (typeof u === "string" ? String(u).split("?")[0] : "API request"))
+          .join(", ");
+        throw new Error(
+          `Network error while calling ${endpoint}${reason}. Please check your connection and API server. Tried: ${attempted}`
+        );
+      }
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  const reason = lastError?.message ? ` (${lastError.message})` : "";
+  throw new Error(`Network error while calling API request${reason}. Please check your connection and API server.`);
 }
 
 // --- Auth ---
@@ -280,6 +325,12 @@ async function downloadEtsyPackage(fileId) {
 async function getPrintSizes() {
   const resp = await fetchWithTimeout(`${API_BASE}/print-sizes`);
   if (!resp.ok) throw new Error("Failed to load print sizes");
+  return resp.json();
+}
+
+async function getPublicConfig() {
+  const resp = await fetchWithTimeout(`${API_BASE}/config`);
+  if (!resp.ok) return {};
   return resp.json();
 }
 
@@ -626,6 +677,7 @@ export {
   searchLocations, generateSVG, generatePin, batchGenerate,
   downloadSVG, downloadDXF, downloadSTL, downloadThumbnail, downloadPrintPNG,
   downloadEtsyListing, downloadEtsyPackage, downloadPreview, downloadWallMockup, getPrintSizes,
+  getPublicConfig,
   getLibrary, deleteLibraryFile,
   browseMarketplace, createListing, purchaseListing,
   getMyPurchases, updateListing, removeListing,
