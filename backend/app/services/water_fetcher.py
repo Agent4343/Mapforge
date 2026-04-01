@@ -66,16 +66,21 @@ async def _try_endpoint(client: httpx.AsyncClient, endpoint: str, query: str) ->
         return None
 
 
-async def _fetch_overpass_with_retry(query: str) -> dict | None:
+async def _fetch_overpass_with_retry(
+    query: str,
+    *,
+    max_budget_s: float = 16.0,
+    per_endpoint_timeout_s: float = 10.0,
+) -> dict | None:
     """Try Overpass endpoints sequentially with a total time budget.
 
     Small delay between attempts to avoid hammering busy endpoints.
     """
     import time
     start = time.monotonic()
-    budget = 12.0  # fast-preview budget to keep overall generation responsive
+    budget = max(8.0, max_budget_s)
 
-    async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=per_endpoint_timeout_s, follow_redirects=True) as client:
         for i, endpoint in enumerate(OVERPASS_ENDPOINTS):
             elapsed = time.monotonic() - start
             if elapsed >= budget:
@@ -88,7 +93,7 @@ async def _fetch_overpass_with_retry(query: str) -> dict | None:
             if i > 0:
                 await asyncio.sleep(1.0)
 
-            client.timeout = httpx.Timeout(min(8.0, remaining))
+            client.timeout = httpx.Timeout(min(per_endpoint_timeout_s, remaining))
             result = await _try_endpoint(client, endpoint, query)
             if result is not None:
                 return result
@@ -96,7 +101,7 @@ async def _fetch_overpass_with_retry(query: str) -> dict | None:
     # Second chance: short cooldown then retry the primary endpoint.
     log.warning("All Overpass endpoints failed for water — waiting 1.5s for second chance")
     await asyncio.sleep(1.5)
-    async with httpx.AsyncClient(timeout=6.0, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=max(6.0, per_endpoint_timeout_s * 0.7), follow_redirects=True) as client:
         result = await _try_endpoint(client, OVERPASS_ENDPOINTS[0], query)
         if result is not None:
             log.info("Second-chance water fetch succeeded")
@@ -108,6 +113,8 @@ async def _fetch_overpass_with_retry(query: str) -> dict | None:
 
 async def fetch_water_features(
     bbox: tuple[float, float, float, float],
+    *,
+    fast_mode: bool = False,
 ) -> dict:
     """Fetch water features within bounding box.
 
@@ -127,7 +134,18 @@ async def fetch_water_features(
 
     log.info(f"Fetching water features for bbox: {bbox}")
 
-    data = await _fetch_overpass_with_retry(query)
+    if fast_mode:
+        data = await _fetch_overpass_with_retry(
+            query,
+            max_budget_s=12.0,
+            per_endpoint_timeout_s=8.0,
+        )
+    else:
+        data = await _fetch_overpass_with_retry(
+            query,
+            max_budget_s=18.0,
+            per_endpoint_timeout_s=10.0,
+        )
     if data is None:
         return {"water_polygons": [], "waterways": []}
 

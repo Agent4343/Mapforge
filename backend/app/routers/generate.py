@@ -209,6 +209,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             include_minor=include_minor_streets,
             osm_id=req.osm_id,
             osm_type=req.osm_type,
+            fast_mode=is_preview_request,
         )
         has_data = result and (result.get("major_roads") or result.get("minor_roads"))
         if has_data:
@@ -221,7 +222,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         if cache_key in _overpass_cache:
             log.info("Using cached water data")
             return _overpass_cache[cache_key]
-        result = await fetch_water_features(bbox=bbox)
+        result = await fetch_water_features(bbox=bbox, fast_mode=is_preview_request)
         has_data = result and (result.get("water_polygons") or result.get("waterways"))
         if has_data:
             _cache_overpass(cache_key, result)
@@ -347,11 +348,14 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             "Low map detail detected. If the preview looks sparse, pick a nearby city/community for richer data."
         )
         needs_location_repick = True
+    overlay_unavailable = (need_streets and not streets_data) or (need_water and not water_data)
     if result["path_count"] < 8:
         warnings.append(
             "Low path count detected. This location may not render a strong map silhouette; consider a different match."
         )
-        needs_location_repick = True
+        # Do not force re-pick when low path count is caused by temporary overlay outages.
+        if not overlay_unavailable:
+            needs_location_repick = True
     warnings = list(dict.fromkeys(warnings))
 
     # Store files + generate derivatives (only for authenticated users)
