@@ -1,6 +1,7 @@
 """Tests for API endpoints (health, root)."""
 
 import pytest
+from app.services.app_settings import set_setting
 
 
 @pytest.mark.asyncio
@@ -17,6 +18,16 @@ async def test_health(client):
     resp = await client.get("/health")
     assert resp.status_code == 200
     assert resp.json()["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_public_config_exposes_maptiler_key_from_settings(client, db_session):
+    await set_setting(db_session, "MAPTILER_KEY", "abc123")
+    resp = await client.get("/api/v1/config")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "maptiler_key" in data
+    assert data["maptiler_key"] == "abc123"
 
 
 @pytest.mark.asyncio
