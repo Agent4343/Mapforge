@@ -693,7 +693,6 @@ def _generate_print_svg(
         # With water-colored background, the land shape pops beautifully.
         # Province coastlines: thin and clean. The geometry has hundreds of
         # detailed points (bays, coves) that look messy at thick widths.
-        coast_w = "0.25" if is_province_map else "0.6"
         for exterior, holes in polygons:
             # Fill with holes (evenodd cuts out bays/inlets)
             path_d = _coords_to_path(exterior)
@@ -704,14 +703,16 @@ def _generate_print_svg(
                 f' fill="{theme["land"]}" stroke="none"'
                 f' fill-rule="evenodd"/>'
             )
-            # Stroke ONLY the exterior coastline — no strokes on bay/inlet holes
-            # This prevents dozens of internal bay edges from creating visual clutter
-            ext_path = _coords_to_path(exterior)
-            lines.append(
-                f'      <path d="{ext_path}"'
-                f' fill="none" stroke="{theme["land_stroke"]}"'
-                f' stroke-width="{coast_w}" stroke-linejoin="round"/>'
-            )
+            # Province: NO coastline stroke — land/water contrast defines the edge.
+            # Any visible outline looks cheap at province scale.
+            # City/park/lake: subtle stroke for definition at smaller scale.
+            if not is_province_map:
+                ext_path = _coords_to_path(exterior)
+                lines.append(
+                    f'      <path d="{ext_path}"'
+                    f' fill="none" stroke="{theme["land_stroke"]}"'
+                    f' stroke-width="0.6" stroke-linejoin="round"/>'
+                )
     lines.append("    </g>")
 
     # Subtle texture overlay for sparse/rural areas — fills empty land with
@@ -1309,11 +1310,11 @@ def _generate_vintage_map_svg(
         )
     lines.append("    </g>")
 
-    # Layer 4: Land polygons — filled with parchment so land stands out from water
-    # Province coastlines need to be THIN — the coastline geometry has hundreds
-    # of detailed points (every bay, cove, inlet) that at thick widths create
-    # visual noise. A thin, clean coastline lets the land shape speak.
-    coastline_width = "0.2" if map_scale == "province" else "0.3" if map_scale == "city" else "0.25"
+    # Layer 4: Land polygons — filled with parchment so land stands out from water.
+    # Province: NO coastline stroke — the natural contrast between parchment land
+    # and blue water defines the edge cleanly. Any stroke creates a visible outline
+    # that looks cheap. City/town: subtle stroke for definition at smaller scale.
+    coastline_width = "0.3" if map_scale == "city" else "0.25"
     if polygons:
         lines.append('    <g id="land_polygons">')
         for exterior, holes in polygons:
@@ -1329,13 +1330,15 @@ def _generate_vintage_map_svg(
                 f' fill="{parchment}" stroke="none"'
                 f' fill-rule="evenodd"/>'
             )
-            # Stroke ONLY exterior coastline — skip bay/inlet hole strokes
-            ext_path = _coords_to_path(exterior)
-            lines.append(
-                f'      <path d="{ext_path}"'
-                f' fill="none" stroke="{coastline_color}"'
-                f' stroke-width="{coastline_width}" stroke-linejoin="round"/>'
-            )
+            # Province: no stroke at all — land/water contrast is enough.
+            # City/town: subtle exterior coastline stroke for definition.
+            if not is_province:
+                ext_path = _coords_to_path(exterior)
+                lines.append(
+                    f'      <path d="{ext_path}"'
+                    f' fill="none" stroke="{coastline_color}"'
+                    f' stroke-width="{coastline_width}" stroke-linejoin="round"/>'
+                )
             path_count += 1
         lines.append("    </g>")
         # Province: no land texture (clean, smooth look).
