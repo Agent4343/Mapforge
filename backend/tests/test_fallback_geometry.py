@@ -85,3 +85,43 @@ async def test_generate_sets_repick_when_fallback_used(db_session):
     assert resp.geometry_fallback_used is True
     assert resp.needs_location_repick is True
     assert any("approximate map area" in w.lower() for w in resp.warnings)
+
+
+@pytest.mark.asyncio
+async def test_generate_uses_single_recovery_warning_when_street_fallback_succeeds(db_session):
+    req = GenerateRequest(
+        osm_id=999777,
+        osm_type="relation",
+        product_type=ProductType.city,
+        board_size=BoardSize.medium,
+        style=CutStyle.filled,
+        text="Little Narrows",
+        include_streets=True,
+        include_contours=False,
+        print_dpi=300,
+    )
+
+    base_geom = Polygon([
+        (-60.25, 46.05),
+        (-60.15, 46.05),
+        (-60.15, 46.15),
+        (-60.25, 46.15),
+        (-60.25, 46.05),
+    ])
+
+    async def _mock_fetch_geometry(*_args, **_kwargs):
+        return base_geom
+
+    async def _mock_fetch_streets(*_args, **_kwargs):
+        # Simulate Overpass outage: no street features returned.
+        return {"major_roads": [], "minor_roads": []}
+
+    with (
+        patch("app.routers.generate.fetch_geometry", side_effect=_mock_fetch_geometry),
+        patch("app.routers.generate.fetch_streets", side_effect=_mock_fetch_streets),
+    ):
+        resp = await _do_generate(req, user=None, db=db_session)
+
+    joined = " ".join(resp.warnings).lower()
+    assert "boundary linework fallback" in joined
+    assert "street data unavailable — the overpass api may be busy" not in joined

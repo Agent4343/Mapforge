@@ -276,6 +276,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         tasks.append(("contours", _get_contours()))
 
     overpass_missing_count = 0
+    street_overpass_unavailable = False
+    water_overpass_unavailable = False
     if tasks:
         results = await asyncio.gather(
             *(t[1] for t in tasks), return_exceptions=True
@@ -283,14 +285,26 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         for (label, _), result in zip(tasks, results):
             if isinstance(result, Exception):
                 log.warning(f"{label.title()} fetch failed (non-fatal): {result}")
-                warnings.append(f"{label.title()} data unavailable — map generated without {label}.")
+                if label == "streets":
+                    street_overpass_unavailable = True
+                    overpass_missing_count += 1
+                elif label == "water":
+                    water_overpass_unavailable = True
+                    overpass_missing_count += 1
+                else:
+                    warnings.append(f"{label.title()} data unavailable — map generated without {label}.")
             elif result is None:
                 log.warning(f"{label.title()} fetch returned empty results — not caching")
                 if label != "contours":
                     # Contour data is optional; empty results are normal for many areas.
-                    # Only warn users when streets/water are unavailable.
-                    warnings.append(f"{label.title()} data unavailable — the Overpass API may be busy. Try regenerating in a minute.")
-                    overpass_missing_count += 1
+                    # Streets/water warnings are finalized below so we can avoid
+                    # double-warning when boundary fallback succeeds.
+                    if label == "streets":
+                        street_overpass_unavailable = True
+                        overpass_missing_count += 1
+                    elif label == "water":
+                        water_overpass_unavailable = True
+                        overpass_missing_count += 1
             elif label == "streets":
                 streets_data = result
             elif label == "water":
@@ -300,13 +314,26 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
 
     # If Overpass street data is unavailable, synthesize outline linework so the poster
     # still renders with a clean silhouette instead of looking broken/sparse.
+    street_fallback_used = False
     if need_streets and not streets_data:
         synthesized = _synthesize_boundary_streets(processed)
         if synthesized:
             streets_data = synthesized
+            street_fallback_used = True
+
+    if street_overpass_unavailable:
+        if street_fallback_used:
             warnings.append(
-                "Street overlays were unavailable, so MapForge used boundary linework fallback."
+                "Detailed street overlays were unavailable, so MapForge used boundary linework fallback."
             )
+        else:
+            warnings.append(
+                "Street data unavailable — the Overpass API may be busy. Try regenerating in a minute."
+            )
+    if water_overpass_unavailable:
+        warnings.append(
+            "Water data unavailable — the Overpass API may be busy. Try regenerating in a minute."
+        )
 
     # Transform custom markers from lat/lon to board mm coordinates
     board_markers = None
