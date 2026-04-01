@@ -1205,8 +1205,7 @@ def _generate_vintage_map_svg(
     # No land boundary outlines — the streets define the shape,
     # admin boundary polygons look ugly as geometric lines
 
-    # Layer 4: Streets — bold monochrome line art, ALL roads visible
-    # Auto-detect sparse maps and boost widths accordingly
+    # Layer 4: Streets — curated monochrome hierarchy for cleaner premium output
     if streets_data:
         transform = processed.get("transform")
         lines.append('    <g id="streets">')
@@ -1214,7 +1213,7 @@ def _generate_vintage_map_svg(
         total_roads = len(streets_data.get("major_roads", [])) + len(streets_data.get("minor_roads", []))
         is_sparse = total_roads < 120
 
-        # Width table — sparse maps get ~2x thicker lines for visual impact
+        # Width table tuned for readable hierarchy without over-cluttering.
         if is_sparse:
             vintage_widths = {
                 "motorway": 1.6, "motorway_link": 1.2,
@@ -1240,13 +1239,22 @@ def _generate_vintage_map_svg(
                 "path": 0.1, "steps": 0.08, "bridleway": 0.1,
             }
 
-        # Draw all roads — minor first, major on top
+        # Province/state prints can look busy quickly; filter micro roads.
+        is_large_region = total_roads > 420
+        keep_minor_classes = {"tertiary", "tertiary_link", "residential", "secondary_link", "unclassified"}
+        keep_major_classes = {"motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link", "secondary"}
+
+        # Draw roads with subtle contrast separation.
         for coords, road_class, _width, name in streets_data.get("minor_roads", []):
+            if is_large_region and road_class not in keep_minor_classes:
+                continue
             if len(coords) < 2:
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
             path_d = _coords_to_open_path(board_coords)
             w = vintage_widths.get(road_class, 0.15)
+            if is_large_region:
+                w = max(0.12, round(w * 0.78, 2))
             color = ink_faint if road_class in ("footway", "cycleway", "path", "steps", "bridleway") else ink_light
             lines.append(
                 f'      <path d="{path_d}"'
@@ -1256,11 +1264,15 @@ def _generate_vintage_map_svg(
             path_count += 1
 
         for coords, road_class, _width, name in streets_data.get("major_roads", []):
+            if is_large_region and road_class not in keep_major_classes:
+                continue
             if len(coords) < 2:
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
             path_d = _coords_to_open_path(board_coords)
             w = vintage_widths.get(road_class, 0.5)
+            if is_large_region:
+                w = max(0.45, round(w * 0.9, 2))
             lines.append(
                 f'      <path d="{path_d}"'
                 f' fill="none" stroke="{ink}" stroke-width="{w}"'
@@ -1279,9 +1291,9 @@ def _generate_vintage_map_svg(
 
     # --- Text area below the map ---
     text_center_x = round(board_w / 2, 2)
-    title_size = round(font_size_mm * 1.5, 2)
-    subtitle_size = round(font_size_mm * 0.6, 2)
-    coord_size = round(font_size_mm * 0.45, 2)
+    title_size = round(font_size_mm * 1.38, 2)
+    subtitle_size = round(font_size_mm * 0.58, 2)
+    coord_size = round(font_size_mm * 0.4, 2)
 
     title_text = location_name.upper()
     title_tracking = title_size * 0.25
@@ -1305,20 +1317,23 @@ def _generate_vintage_map_svg(
         f' fill="{ink}">{_escape_xml(title_text)}</text>'
     )
     next_y = text_start_y + title_size * 1.2
-    if subtitle:
+    subtitle_clean = (subtitle or "").strip()
+    hide_subtitle = subtitle_clean.lower() in {"no", "none", "n/a", "na"}
+
+    if subtitle_clean and not hide_subtitle:
         lines.append(
             f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
             f' text-anchor="middle" font-family="{ff}"'
             f' font-size="{subtitle_size}" font-weight="normal"'
             f' letter-spacing="{round(subtitle_size * 0.2, 2)}"'
-            f' fill="{ink_light}">{_escape_xml(subtitle)}</text>'
+            f' fill="{ink_light}">{_escape_xml(subtitle_clean)}</text>'
         )
         next_y += subtitle_size * 1.8
     if show_coordinates and latlon:
         lat, lon = latlon
         lat_dir = "N" if lat >= 0 else "S"
         lon_dir = "W" if lon < 0 else "E"
-        coord_text = f"{abs(lat):.4f}\u00b0{lat_dir}    ~    {abs(lon):.4f}\u00b0{lon_dir}"
+        coord_text = f"{abs(lat):.4f}\u00b0{lat_dir}  \u2022  {abs(lon):.4f}\u00b0{lon_dir}"
         lines.append(
             f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
             f' text-anchor="middle" font-family="{ff}"'
@@ -1326,6 +1341,9 @@ def _generate_vintage_map_svg(
             f' letter-spacing="{round(coord_size * 0.15, 2)}"'
             f' fill="{ink_light}">{coord_text}</text>'
         )
+    elif subtitle and subtitle.strip().lower() in {"no", "none", "n/a", "na"}:
+        # Avoid noisy placeholder subtitles in premium output.
+        pass
     lines.append("  </g>")
     lines.append("")
 
