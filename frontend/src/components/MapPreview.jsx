@@ -1,11 +1,12 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const MAPLIBRE_CSS_ID = "maplibre-gl-css";
 const MAPLIBRE_JS_ID = "maplibre-gl-js";
 const MAPLIBRE_CSS_URL = "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css";
 const MAPLIBRE_JS_URL = "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js";
 
-const MAPTILER_KEY = import.meta.env.VITE_MAPTILER_KEY;
+const RAW_MAPTILER_KEY = import.meta.env.VITE_MAPTILER_KEY;
+const MAPTILER_KEY = typeof RAW_MAPTILER_KEY === "string" ? RAW_MAPTILER_KEY.trim() : "";
 const MAPTILER_STYLE_URL = MAPTILER_KEY
   ? `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_KEY}`
   : null;
@@ -85,6 +86,20 @@ function loadMapLibre() {
   return mapLibreLoadPromise;
 }
 
+function shouldFallbackToOsm(event) {
+  const message = String(event?.error?.message || event?.message || "").toLowerCase();
+  const status = Number(event?.error?.status || event?.status || 0);
+  const sourceText = String(event?.sourceId || event?.tile?.url || "").toLowerCase();
+  return (
+    status === 401 ||
+    status === 403 ||
+    message.includes("401") ||
+    message.includes("403") ||
+    message.includes("maptiler") ||
+    sourceText.includes("maptiler")
+  );
+}
+
 /**
  * Lightweight map preview using MapLibre GL JS.
  * Uses MapTiler style when configured, otherwise falls back to OSM raster tiles.
@@ -93,6 +108,10 @@ export default function MapPreview({ lat, lon, boundingbox, name }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const markerRef = useRef(null);
+  const usedFallbackRef = useRef(false);
+  const [sourceLabel, setSourceLabel] = useState(
+    MAPTILER_STYLE_URL ? "MapTiler" : "OSM Fallback"
+  );
   const hasValidCoords = isValidLatitude(lat) && isValidLongitude(lon);
 
   useEffect(() => {
@@ -114,6 +133,18 @@ export default function MapPreview({ lat, lon, boundingbox, name }) {
         map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
         mapRef.current = map;
 
+        if (MAPTILER_STYLE_URL) {
+          map.on("error", (event) => {
+            if (usedFallbackRef.current) return;
+            if (!shouldFallbackToOsm(event)) return;
+            usedFallbackRef.current = true;
+            setSourceLabel("OSM Fallback");
+            map.setStyle(OSM_RASTER_STYLE);
+            // Useful during setup when API key or origin restrictions are wrong.
+            console.warn("MapTiler style failed; switched to OSM fallback.", event?.error || event);
+          });
+        }
+
         map.on("load", () => {
           if (!cancelled) updateMap();
         });
@@ -128,6 +159,7 @@ export default function MapPreview({ lat, lon, boundingbox, name }) {
         mapRef.current.remove();
         mapRef.current = null;
       }
+      usedFallbackRef.current = false;
       markerRef.current = null;
     };
   }, []);
@@ -212,17 +244,34 @@ export default function MapPreview({ lat, lon, boundingbox, name }) {
   }
 
   return (
-    <div
-      ref={containerRef}
-      className="map-preview"
-      style={{
-        width: "100%",
-        height: "180px",
-        borderRadius: "6px",
-        overflow: "hidden",
-        border: "1px solid var(--border)",
-        marginTop: "8px",
-      }}
-    />
+    <div style={{ position: "relative", marginTop: "8px" }}>
+      <div
+        ref={containerRef}
+        className="map-preview"
+        style={{
+          width: "100%",
+          height: "180px",
+          borderRadius: "6px",
+          overflow: "hidden",
+          border: "1px solid var(--border)",
+        }}
+      />
+      <div
+        style={{
+          position: "absolute",
+          top: 6,
+          left: 6,
+          background: "rgba(20,20,20,0.72)",
+          color: "#fff",
+          fontSize: 10,
+          padding: "3px 6px",
+          borderRadius: 4,
+          pointerEvents: "none",
+          letterSpacing: "0.02em",
+        }}
+      >
+        {sourceLabel}
+      </div>
+    </div>
   );
 }
