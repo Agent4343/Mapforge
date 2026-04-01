@@ -83,7 +83,10 @@ async def _ensure_columns():
                             default = f" DEFAULT {val!r}" if isinstance(val, str) else f" DEFAULT {val}"
                         elif col.nullable:
                             default = " DEFAULT NULL"
-                        sql = f"ALTER TABLE {table.name} ADD COLUMN {col.name} {col_type} {nullable}{default}"
+                        # Quote identifiers to prevent SQL injection
+                        quoted_table = f'"{table.name}"'
+                        quoted_col = f'"{col.name}"'
+                        sql = f"ALTER TABLE {quoted_table} ADD COLUMN {quoted_col} {col_type} {nullable}{default}"
                         log.info(f"Adding missing column: {sql}")
                         connection.execute(text(sql))
 

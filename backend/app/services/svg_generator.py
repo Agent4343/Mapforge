@@ -602,18 +602,18 @@ def _generate_print_svg(
     lines.append("")
 
     # Premium layered border frame around the map area
-    # Outer thin line (the mat border edge)
-    inset = 1.5  # mm inset for the inner accent line
+    # Outer thin line (the mat border edge) — thinner for cleaner appearance
+    inset = 1.2  # mm inset for the inner accent line
     lines.append('  <g id="map_frame">')
     lines.append(
         f'    <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"'
-        f' fill="none" stroke="{theme["land_stroke"]}" stroke-width="0.6"/>'
+        f' fill="none" stroke="{theme["land_stroke"]}" stroke-width="0.4"/>'
     )
     # Inner accent line (creates premium double-frame effect)
     lines.append(
         f'    <rect x="{round(map_x - inset, 2)}" y="{round(map_y - inset, 2)}"'
         f' width="{round(map_w + 2 * inset, 2)}" height="{round(map_h + 2 * inset, 2)}"'
-        f' fill="none" stroke="{theme["land_stroke"]}" stroke-width="0.25"'
+        f' fill="none" stroke="{theme["land_stroke"]}" stroke-width="0.2"'
         f' opacity="0.5"/>'
     )
     lines.append("  </g>")
@@ -624,7 +624,7 @@ def _generate_print_svg(
     sep_margin = round(board_w * 0.25, 2)  # 25% inset from each side
     lines.append(
         f'  <line x1="{sep_margin}" y1="{sep_y}" x2="{round(board_w - sep_margin, 2)}" y2="{sep_y}"'
-        f' stroke="{theme["land_stroke"]}" stroke-width="0.3" opacity="0.4"/>'
+        f' stroke="{theme["land_stroke"]}" stroke-width="0.2" opacity="0.35"/>'
     )
     lines.append("")
 
@@ -633,9 +633,9 @@ def _generate_print_svg(
     # Vertically center text block within the text area (below separator)
     text_start_y = round(sep_y + text_area_h * 0.22, 2)
 
-    # Print-mode font sizes (larger for poster readability)
-    title_size = round(font_size_mm * 1.6, 2)
-    subtitle_size = round(font_size_mm * 0.65, 2)
+    # Print-mode font sizes — balanced for poster readability and elegance
+    title_size = round(font_size_mm * 1.35, 2)
+    subtitle_size = round(font_size_mm * 0.75, 2)
     coord_size = round(font_size_mm * 0.45, 2)
 
     # Auto-scale title if it would overflow the board width.

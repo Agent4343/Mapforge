@@ -64,6 +64,17 @@ const THEME_COLOR_MAPS = {
   },
 };
 
+function sanitizeSvg(svg) {
+  if (!svg) return svg;
+  // Strip script tags, event handlers, javascript: URLs, and foreignObject
+  let clean = svg.replace(/<script[\s\S]*?<\/script>/gi, "");
+  clean = clean.replace(/<foreignObject[\s\S]*?<\/foreignObject>/gi, "");
+  clean = clean.replace(/\s+on\w+\s*=\s*"[^"]*"/gi, "");
+  clean = clean.replace(/\s+on\w+\s*=\s*'[^']*'/gi, "");
+  clean = clean.replace(/javascript\s*:/gi, "");
+  return clean;
+}
+
 function applyPrintColors(svg, themeName) {
   if (!svg || !themeName) return svg;
   const theme = THEME_COLOR_MAPS[themeName];
@@ -95,7 +106,7 @@ export default function SVGPreview({ svgContent, loading, error, colorTheme }) {
   const displaySvg = useMemo(() => {
     if (!svgContent) return null;
 
-    let svg = svgContent;
+    let svg = sanitizeSvg(svgContent);
 
     // Make SVG responsive: set width to 100% and remove fixed height
     // so the viewBox attribute controls aspect ratio naturally

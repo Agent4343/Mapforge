@@ -1,7 +1,9 @@
 """Marketplace router — list, browse, purchase, review, seller dashboard."""
 
+import re
+
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -47,7 +49,9 @@ async def browse_marketplace(
     if province:
         query = query.where(GeneratedFile.province == province)
     if search:
-        query = query.where(MarketplaceListing.title.ilike(f"%{search}%"))
+        # Escape SQL LIKE wildcards in user input
+        safe_search = re.sub(r"([%_\\])", r"\\\1", search)
+        query = query.where(MarketplaceListing.title.ilike(f"%{safe_search}%"))
 
     # Sorting
     if sort == "popular":
@@ -72,7 +76,8 @@ async def browse_marketplace(
     if province:
         count_sub = count_sub.where(GeneratedFile.province == province)
     if search:
-        count_sub = count_sub.where(MarketplaceListing.title.ilike(f"%{search}%"))
+        safe_search = re.sub(r"([%_\\])", r"\\\1", search)
+        count_sub = count_sub.where(MarketplaceListing.title.ilike(f"%{safe_search}%"))
     count_q = select(func.count()).select_from(count_sub.subquery())
     total = (await db.execute(count_q)).scalar() or 0
 
@@ -258,16 +263,18 @@ async def create_review(
     )
     db.add(review)
 
-    # Update listing rating atomically to avoid race conditions
-    listing_result = await db.execute(
-        select(MarketplaceListing).where(MarketplaceListing.id == req.listing_id)
+    # Update listing rating using atomic SQL to prevent race conditions
+    await db.execute(
+        update(MarketplaceListing)
+        .where(MarketplaceListing.id == req.listing_id)
+        .values(
+            average_rating=(
+                (MarketplaceListing.average_rating * MarketplaceListing.rating_count + req.rating)
+                / (MarketplaceListing.rating_count + 1)
+            ),
+            rating_count=MarketplaceListing.rating_count + 1,
+        )
     )
-    listing = listing_result.scalar_one_or_none()
-    if not listing:
-        raise HTTPException(status_code=404, detail="Listing not found.")
-    total_rating = listing.average_rating * listing.rating_count + req.rating
-    listing.rating_count += 1
-    listing.average_rating = round(total_rating / listing.rating_count, 2)
 
     await db.commit()
     await db.refresh(review)

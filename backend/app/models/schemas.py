@@ -131,6 +131,13 @@ class MapMarker(BaseModel):
     label: str = Field("", max_length=60)
     icon: MarkerIcon = MarkerIcon.pin
 
+    @field_validator("label")
+    @classmethod
+    def sanitize_label(cls, v: str) -> str:
+        """Sanitize marker labels to prevent XSS in SVG output."""
+        import html
+        return html.escape(v)
+
 
 class FontFamily(str, Enum):
     sans = "sans"         # Arial/Helvetica — clean modern

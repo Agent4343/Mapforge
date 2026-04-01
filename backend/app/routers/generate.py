@@ -160,7 +160,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     #   Medium provinces (30-80 deg²): major roads only — Saskatchewan, Manitoba
     #   Very large provinces (>80 deg²): skip streets — Ontario, Quebec, BC, Alberta
     bbox_area_deg2 = (bounds[2] - bounds[0]) * (bounds[3] - bounds[1])
-    is_medium_area = bbox_area_deg2 > 30.0
+    is_medium_area = is_province or bbox_area_deg2 > 10.0
     is_very_large_area = bbox_area_deg2 > 80.0
 
     if is_very_large_area and need_streets:
@@ -170,9 +170,9 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     elif is_medium_area and need_streets:
         log.info(f"Medium area ({bbox_area_deg2:.1f} deg²) — fetching major roads only")
 
-    # Provinces get major roads only (highways) unless user explicitly enabled streets.
+    # Provinces always get major highways only — minor roads create spider-web noise.
     # Cities always get full street grid.
-    include_minor_streets = not is_medium_area and not (is_province and not req.include_streets)
+    include_minor_streets = not is_province and not is_medium_area
 
     async def _get_streets():
         cache_key = _bbox_cache_key("streets", bbox)
@@ -196,7 +196,12 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         if cache_key in _overpass_cache:
             log.info("Using cached water data")
             return _overpass_cache[cache_key]
-        result = await fetch_water_features(bbox=bbox)
+        result = await fetch_water_features(
+            bbox=bbox,
+            osm_id=req.osm_id,
+            osm_type=req.osm_type,
+            large_area=is_province or is_medium_area,
+        )
         has_data = result and (result.get("water_polygons") or result.get("waterways"))
         if has_data:
             _cache_overpass(cache_key, result)

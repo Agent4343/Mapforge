@@ -168,12 +168,12 @@ def _get_tolerance(geom_m: Polygon | MultiPolygon, product_type: ProductType, si
 
     if extent < 5000:       # < 5km
         return base * 0.3
-    elif extent < 50000:    # < 50km
-        return base * 0.7
+    elif extent < 50000:    # < 50km — less aggressive for medium areas
+        return base * 0.5
     elif extent < 500000:   # < 500km
         return base
-    else:                   # > 500km (provinces)
-        return base * 1.5
+    else:                   # > 500km (provinces) — smoother coastlines
+        return base * 1.2
 
 
 def _scale_to_board(

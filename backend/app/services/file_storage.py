@@ -20,9 +20,14 @@ def _validate_key(key: str) -> str:
     return key
 
 
+MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB
+
+
 async def store_file(key: str, content: bytes, content_type: str = "image/svg+xml") -> str:
     """Store a file and return its storage key."""
     _validate_key(key)
+    if len(content) > MAX_FILE_SIZE:
+        raise ValueError(f"File too large: {len(content)} bytes exceeds {MAX_FILE_SIZE} byte limit")
     if settings.STORAGE_BACKEND == "s3":
         return await _store_s3(key, content, content_type)
     return _store_local(key, content)

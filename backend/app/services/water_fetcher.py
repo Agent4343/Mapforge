@@ -78,11 +78,17 @@ async def _fetch_overpass_with_retry(query: str) -> dict | None:
 
 async def fetch_water_features(
     bbox: tuple[float, float, float, float],
+    osm_id: int | None = None,
+    osm_type: str | None = None,
+    large_area: bool = False,
 ) -> dict:
     """Fetch water features within bounding box.
 
     Args:
         bbox: (south, west, north, east) in WGS84
+        osm_id: OSM relation ID for area-scoped queries (faster for provinces)
+        osm_type: OSM element type ('relation', 'way', 'node')
+        large_area: If True, skip streams/canals and only fetch major water features
 
     Returns:
         dict with 'water_polygons' (closed areas) and 'waterways' (rivers/streams)
@@ -90,22 +96,44 @@ async def fetch_water_features(
     """
     south, west, north, east = bbox
 
-    query = f"""
-    [out:json][timeout:45];
-    (
-      way["natural"="water"]({south},{west},{north},{east});
-      way["natural"="coastline"]({south},{west},{north},{east});
-      way["waterway"~"^(river|stream|canal)$"]({south},{west},{north},{east});
-      relation["natural"="water"]({south},{west},{north},{east});
-      way["water"~"^(lake|reservoir|pond|river)$"]({south},{west},{north},{east});
-      relation["water"~"^(lake|reservoir|pond|river)$"]({south},{west},{north},{east});
-    );
-    out body;
-    >;
-    out skel qt;
-    """
+    # For provinces/large areas, use area-scoped query (much faster than bbox)
+    use_area = osm_id and osm_type == "relation" and large_area
+    if use_area:
+        area_id = osm_id + 3600000000
+        # Large areas: only fetch lakes and coastlines, skip streams/canals
+        query = f"""
+        [out:json][timeout:25];
+        area({area_id})->.a;
+        (
+          way["natural"="water"](area.a);
+          way["natural"="coastline"](area.a);
+          relation["natural"="water"](area.a);
+          way["water"~"^(lake|reservoir|pond|river)$"](area.a);
+          relation["water"~"^(lake|reservoir|pond|river)$"](area.a);
+        );
+        out body;
+        >;
+        out skel qt;
+        """
+    else:
+        waterway_filter = '      way["waterway"~"^(river)$"]({s},{w},{n},{e});\n' if large_area else \
+                          '      way["waterway"~"^(river|stream|canal)$"]({s},{w},{n},{e});\n'
+        query = f"""
+        [out:json][timeout:45];
+        (
+          way["natural"="water"]({south},{west},{north},{east});
+          way["natural"="coastline"]({south},{west},{north},{east});
+          {waterway_filter.format(s=south, w=west, n=north, e=east)}
+          relation["natural"="water"]({south},{west},{north},{east});
+          way["water"~"^(lake|reservoir|pond|river)$"]({south},{west},{north},{east});
+          relation["water"~"^(lake|reservoir|pond|river)$"]({south},{west},{north},{east});
+        );
+        out body;
+        >;
+        out skel qt;
+        """
 
-    log.info(f"Fetching water features for bbox: {bbox}")
+    log.info(f"Fetching water features for bbox: {bbox} (area_scoped={use_area}, large={large_area})")
 
     data = await _fetch_overpass_with_retry(query)
     if data is None:

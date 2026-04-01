@@ -1,5 +1,6 @@
 """Fetch full geometry from OpenStreetMap Overpass API and Nominatim with caching."""
 
+import asyncio
 import json
 
 import httpx
@@ -60,15 +61,22 @@ async def _fetch_via_nominatim(osm_id: int, osm_type: str) -> MultiPolygon | Pol
         "osm_ids": f"{type_prefix}{osm_id}",
         "format": "json",
         "polygon_geojson": 1,
+        "polygon_threshold": 0.0,  # Full unsimplified geometry
     }
 
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(NOMINATIM_LOOKUP_URL, params=params, headers=NOMINATIM_HEADERS)
-            resp.raise_for_status()
-            data = resp.json()
-    except (httpx.HTTPError, httpx.ProxyError) as e:
-        log.warning(f"Nominatim request failed for {osm_type}/{osm_id}: {e}")
+    data = None
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(NOMINATIM_LOOKUP_URL, params=params, headers=NOMINATIM_HEADERS)
+                resp.raise_for_status()
+                data = resp.json()
+                break
+        except (httpx.HTTPError, httpx.ProxyError) as e:
+            log.warning(f"Nominatim attempt {attempt+1}/3 failed for {osm_type}/{osm_id}: {e}")
+            if attempt < 2:
+                await asyncio.sleep(1.0 * (attempt + 1))
+    if data is None:
         return None
 
     if not data:
