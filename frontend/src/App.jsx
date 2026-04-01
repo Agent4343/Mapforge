@@ -601,7 +601,7 @@ export default function App() {
       }
       if (data.needs_location_repick) {
         allWarnings.push(
-          "Recommendation: re-pick another search result (prefer Best Match + medium/high geometry) before final purchase."
+          "Tip: if you want a denser look, try another Best Match result with medium/high geometry."
         );
       }
       setQualityWarning(allWarnings.length > 0 ? allWarnings.join(" ") : null);

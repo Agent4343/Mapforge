@@ -400,7 +400,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         needs_location_repick = True
     elif result["node_count"] < 45:
         warnings.append(
-            "Low map detail detected. If the preview looks sparse, pick a nearby city/community for richer data."
+            "Map detail is lighter for this selection. If you want a fuller line pattern, try a nearby city/community result."
         )
         needs_location_repick = True
     overlay_unavailable = (need_streets and not streets_data) or (need_water and not water_data)
