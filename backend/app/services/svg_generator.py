@@ -453,11 +453,10 @@ def _generate_print_svg(
     lines.append("")
 
     # Layer: map area background
-    # For provinces/lakes, use water color as the background so the ocean
-    # is visible and the land shape has strong contrast. For cities, use
-    # the standard map_bg since streets are the focus.
-    is_coastal_map = product_type in ("province", "lake", "park")
-    map_area_bg = theme["water"] if is_coastal_map else theme["map_bg"]
+    # Use water color as background for ALL map types so the ocean/surrounding
+    # area is visible. The land polygon on top creates the geographic shape.
+    # This gives every map — cities, communities, provinces — a sense of place.
+    map_area_bg = theme["water"]
     lines.append('  <g id="map_area">')
     lines.append(
         f'    <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"'
@@ -473,6 +472,18 @@ def _generate_print_svg(
         f'<rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"/>'
         f"</clipPath>"
     )
+    # Subtle drop shadow for the land mass — gives visual depth
+    lines.append('    <filter id="land_shadow" x="-5%" y="-5%" width="115%" height="115%">')
+    lines.append('      <feGaussianBlur in="SourceAlpha" stdDeviation="1.5"/>')
+    lines.append('      <feOffset dx="0.8" dy="0.8"/>')
+    lines.append('      <feComponentTransfer>')
+    lines.append('        <feFuncA type="linear" slope="0.15"/>')
+    lines.append('      </feComponentTransfer>')
+    lines.append('      <feMerge>')
+    lines.append('        <feMergeNode/>')
+    lines.append('        <feMergeNode in="SourceGraphic"/>')
+    lines.append('      </feMerge>')
+    lines.append('    </filter>')
 
     # Clip path using the city boundary polygon — clips streets/water
     # to the actual geographic boundary so nothing bleeds outside
@@ -503,38 +514,30 @@ def _generate_print_svg(
     is_street_map = product_type in ("city", "community", "name_sign")
     has_streets = streets_data and (streets_data.get("major_roads") or streets_data.get("minor_roads"))
 
-    lines.append('    <g id="geography_fill">')
-    if is_street_map:
-        # Street maps: fill the boundary polygon with land color to create
-        # visible contrast between the city area and the white mat border.
-        # Streets and water are layered on top.
-        for exterior, holes in polygons:
-            path_d = _coords_to_path(exterior)
-            for hole in holes:
-                path_d += " " + _coords_to_path(hole)
-            lines.append(
-                f'      <path d="{path_d}"'
-                f' fill="{theme["land"]}" stroke="{theme["land_stroke"]}"'
-                f' stroke-width="0.5" fill-rule="evenodd" stroke-linejoin="round"/>'
-            )
-    else:
-        # Province/lake/park maps: filled polygon is the main visual.
-        # With water-colored background, the land shape pops beautifully.
-        # Use a clean stroke to define the coastline edge.
-        for exterior, holes in polygons:
-            path_d = _coords_to_path(exterior)
-            for hole in holes:
-                path_d += " " + _coords_to_path(hole)
-            lines.append(
-                f'      <path d="{path_d}"'
-                f' fill="{theme["land"]}" stroke="{theme["land_stroke"]}"'
-                f' stroke-width="0.5" fill-rule="evenodd" stroke-linejoin="round"/>'
-            )
+    # Land mass with drop shadow for depth — all map types benefit from
+    # the shadow since water background is now always visible
+    lines.append('    <g id="geography_fill" filter="url(#land_shadow)">')
+    for exterior, holes in polygons:
+        path_d = _coords_to_path(exterior)
+        for hole in holes:
+            path_d += " " + _coords_to_path(hole)
+        # Thinner stroke for street maps (boundary is secondary),
+        # slightly bolder for shape-focused maps (province/lake/park)
+        stroke_w = "0.3" if is_street_map else "0.5"
+        lines.append(
+            f'      <path d="{path_d}"'
+            f' fill="{theme["land"]}" stroke="{theme["land_stroke"]}"'
+            f' stroke-width="{stroke_w}" fill-rule="evenodd" stroke-linejoin="round"/>'
+        )
     lines.append("    </g>")
 
     # Clip streets and water to the boundary polygon so they don't bleed
-    # outside the geographic area (applies to cities AND provinces with streets)
-    clip_to_boundary = boundary_paths and (is_street_map or (streets_data and (streets_data.get("major_roads") or streets_data.get("minor_roads"))))
+    # outside the geographic area
+    clip_to_boundary = bool(boundary_paths) and (
+        is_street_map
+        or has_streets
+        or bool(water_data and (water_data.get("water_polygons") or water_data.get("waterways")))
+    )
     if clip_to_boundary:
         lines.append('    <g clip-path="url(#boundary_clip)">')
 
@@ -580,16 +583,19 @@ def _generate_print_svg(
         layer_count += 1
         path_count += len(markers)
 
-    # Subtle vignette edge fade — softens the map boundary for a premium look
+    # Subtle vignette edge fade — softens map edges for a premium gallery feel.
+    # Uses mat color (white) to gently blend the water edges into the frame,
+    # creating a natural transition. The inner stop is far enough out that
+    # the land shape and center content remain fully visible.
     lines.append('    <g id="vignette">')
     vig_id = "vig_grad"
     lines.append("      <defs>")
-    # Radial gradient: transparent center → semi-transparent map_bg edges
     lines.append(
         f'        <radialGradient id="{vig_id}" cx="50%" cy="50%" r="70%">'
     )
-    lines.append(f'          <stop offset="60%" stop-color="{theme["map_bg"]}" stop-opacity="0"/>')
-    lines.append(f'          <stop offset="100%" stop-color="{theme["map_bg"]}" stop-opacity="0.3"/>')
+    lines.append(f'          <stop offset="55%" stop-color="{theme["mat"]}" stop-opacity="0"/>')
+    lines.append(f'          <stop offset="90%" stop-color="{theme["mat"]}" stop-opacity="0.25"/>')
+    lines.append(f'          <stop offset="100%" stop-color="{theme["mat"]}" stop-opacity="0.5"/>')
     lines.append(f"        </radialGradient>")
     lines.append("      </defs>")
     lines.append(
