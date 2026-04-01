@@ -1,6 +1,7 @@
 """Geographic search service using OpenStreetMap Nominatim API with caching."""
 
 import asyncio
+import re
 import time
 
 import httpx
@@ -19,6 +20,194 @@ NOMINATIM_HEADERS = {"User-Agent": "MapForgeCNC/1.0 (mapforge-cnc-app)"}
 _nominatim_lock = asyncio.Lock()
 _nominatim_last_request: float = 0.0
 
+_COUNTRY_LABELS = {"ca": "canada", "us": "united states"}
+_REGION_HINT_ALIASES = {
+    # Canada
+    "nova scotia": "nova scotia",
+    "ns": "nova scotia",
+    "new brunswick": "new brunswick",
+    "nb": "new brunswick",
+    "newfoundland and labrador": "newfoundland and labrador",
+    "newfoundland": "newfoundland and labrador",
+    "nl": "newfoundland and labrador",
+    "prince edward island": "prince edward island",
+    "pei": "prince edward island",
+    "on": "ontario",
+    "ontario": "ontario",
+    "quebec": "quebec",
+    "qc": "quebec",
+    "alberta": "alberta",
+    "ab": "alberta",
+    "british columbia": "british columbia",
+    "bc": "british columbia",
+    # Common US short-hands for disambiguation
+    "new york": "new york",
+    "ny": "new york",
+    "california": "california",
+    "ca": "california",
+    "florida": "florida",
+    "fl": "florida",
+    "texas": "texas",
+    "tx": "texas",
+}
+
+
+def _normalize_text(value: str) -> str:
+    return re.sub(r"\s+", " ", (value or "").strip().lower())
+
+
+def _parse_query_parts(query: str) -> dict:
+    normalized = _normalize_text(query)
+    parts = [p.strip() for p in normalized.split(",") if p.strip()]
+    region_hint = parts[1] if len(parts) > 1 else ""
+    country_hint = parts[2] if len(parts) > 2 else ""
+    if len(parts) == 2:
+        # Common case: "city, province" where country omitted.
+        country_hint = ""
+    if len(parts) <= 1:
+        # Handle no-comma searches such as "sydney nova scotia" or "sydney ns".
+        words = normalized.split()
+        matched_region = ""
+        for size in (3, 2, 1):
+            if len(words) <= size:
+                continue
+            candidate = " ".join(words[-size:])
+            alias = _REGION_HINT_ALIASES.get(candidate)
+            if alias:
+                matched_region = alias
+                region_hint = alias
+                primary_words = words[:-size]
+                if primary_words:
+                    parts = [" ".join(primary_words), alias]
+                break
+        if matched_region and len(parts) > 1:
+            country_hint = ""
+    return {
+        "normalized": normalized,
+        "parts": parts,
+        "primary": parts[0] if parts else normalized,
+        "region_hint": region_hint,
+        "country_hint": country_hint,
+    }
+
+
+def _extract_admin_region(item: dict) -> str:
+    address = item.get("address", {}) or {}
+    for key in ("state", "province", "region", "county"):
+        if address.get(key):
+            return str(address.get(key))
+    display_parts = [p.strip() for p in (item.get("display_name", "") or "").split(",")]
+    if len(display_parts) >= 2:
+        return display_parts[-2]
+    return ""
+
+
+def _feature_weight(item: dict, feature_type: str) -> float:
+    # City/community features are most reliable for personalized map art.
+    base = {
+        "city": 2.6,
+        "community": 2.3,
+        "park": 1.6,
+        "lake": 1.4,
+        "province": 1.0,
+    }.get(feature_type, 1.0)
+
+    place_type = (item.get("type") or "").lower()
+    if place_type in {"city", "town", "municipality"}:
+        base += 0.5
+    elif place_type in {"hamlet", "village", "suburb"}:
+        base += 0.2
+    return base
+
+
+def _geometry_quality(item: dict, has_geometry: bool) -> tuple[str, float]:
+    if not has_geometry:
+        return "low", -1.5
+    geojson = item.get("geojson") or {}
+    gtype = geojson.get("type")
+    coords = geojson.get("coordinates")
+    if gtype == "Polygon":
+        rings = coords if isinstance(coords, list) else []
+        points = len(rings[0]) if rings and isinstance(rings[0], list) else 0
+    elif gtype == "MultiPolygon":
+        polys = coords if isinstance(coords, list) else []
+        points = 0
+        for poly in polys:
+            if poly and isinstance(poly, list) and poly[0] and isinstance(poly[0], list):
+                points += len(poly[0])
+    else:
+        points = 0
+
+    if points >= 250:
+        return "high", 2.2
+    if points >= 80:
+        return "medium", 1.2
+    return "low", 0.2
+
+
+def _match_confidence(score: float) -> str:
+    if score >= 8.0:
+        return "high"
+    if score >= 5.0:
+        return "medium"
+    return "low"
+
+
+def _score_candidate(
+    item: dict,
+    query_parts: dict,
+    selected_country: str,
+    feature_type: str,
+    has_geometry: bool,
+) -> tuple[float, str, str, str]:
+    display_name = _normalize_text(item.get("display_name", ""))
+    primary = query_parts["primary"]
+    region_hint = query_parts["region_hint"]
+    country_hint = query_parts["country_hint"]
+    country_code = (item.get("address", {}) or {}).get("country_code", "")
+    country_code = str(country_code).lower() if country_code else ""
+    admin_region = _normalize_text(_extract_admin_region(item))
+
+    score = 0.0
+    if primary and display_name.startswith(primary):
+        score += 2.6
+    elif primary and primary in display_name:
+        score += 1.4
+
+    score += _feature_weight(item, feature_type)
+
+    if selected_country and country_code == selected_country:
+        score += 2.0
+    elif selected_country and country_code:
+        score -= 2.2
+
+    country_label = _COUNTRY_LABELS.get(selected_country, "")
+    if country_label and country_label in display_name:
+        score += 0.5
+
+    if country_hint and country_hint in display_name:
+        score += 0.6
+
+    if region_hint:
+        if region_hint in display_name or region_hint in admin_region:
+            score += 1.2
+        else:
+            score -= 0.9
+
+    geometry_quality, geometry_bonus = _geometry_quality(item, has_geometry)
+    score += geometry_bonus
+
+    importance = float(item.get("importance") or 0.0)
+    rank_search = float(item.get("place_rank") or 30.0)
+    if importance > 0:
+        score += min(importance * 3.0, 1.8)
+    score += max(0.0, (35.0 - rank_search) / 40.0)
+
+    # Keep score bounded and deterministic.
+    score = round(score, 3)
+    confidence = _match_confidence(score)
+    return score, confidence, geometry_quality, admin_region
+
 
 async def search_location(query: str, country: str = "ca", limit: int = 10) -> list[SearchResult]:
     """Search for a geographic location via Nominatim. Supports ca, us, or empty for global."""
@@ -28,11 +217,12 @@ async def search_location(query: str, country: str = "ca", limit: int = 10) -> l
     if cached is not None:
         return [SearchResult(**r) for r in cached]
 
+    fetch_limit = max(limit, min(25, limit * 3))
     params = {
         "q": query,
         "format": "json",
         "addressdetails": 1,
-        "limit": limit,
+        "limit": fetch_limit,
         "polygon_geojson": 1,
         "extratags": 1,
     }
@@ -61,12 +251,22 @@ async def search_location(query: str, country: str = "ca", limit: int = 10) -> l
         )
 
     results = []
+    query_parts = _parse_query_parts(query)
+    selected_country = (country or "").strip().lower()
     for item in data:
         osm_type = item.get("osm_type", "node")
         feature_type = _classify_feature(item)
         has_geometry = "geojson" in item and item["geojson"]["type"] in (
             "Polygon", "MultiPolygon",
         )
+        score, confidence, geometry_quality, admin_region = _score_candidate(
+            item=item,
+            query_parts=query_parts,
+            selected_country=selected_country,
+            feature_type=feature_type,
+            has_geometry=has_geometry,
+        )
+        country_code = str((item.get("address", {}) or {}).get("country_code", "")).lower() or None
 
         results.append(SearchResult(
             osm_id=int(item["osm_id"]),
@@ -77,7 +277,28 @@ async def search_location(query: str, country: str = "ca", limit: int = 10) -> l
             feature_type=feature_type,
             boundingbox=[float(b) for b in item.get("boundingbox", [])],
             has_geometry=has_geometry,
+            relevance_score=score,
+            match_confidence=confidence,
+            geometry_quality=geometry_quality,
+            country_code=country_code,
+            admin_region=admin_region or None,
         ))
+
+    # Sort by computed relevance so the best candidate appears first.
+    results.sort(
+        key=lambda r: (
+            -r.relevance_score,
+            0 if r.has_geometry else 1,
+            0 if r.match_confidence == "high" else (1 if r.match_confidence == "medium" else 2),
+        )
+    )
+
+    if results:
+        best = results[0]
+        # Mark exactly one recommended result when confidence is reasonable.
+        if best.match_confidence in ("high", "medium"):
+            best.is_recommended = True
+    results = results[:limit]
 
     # Cache results
     await cache_set(cache_key, [r.model_dump() for r in results], ttl=settings.CACHE_TTL_SEARCH)

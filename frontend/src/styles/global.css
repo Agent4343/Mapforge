@@ -184,6 +184,62 @@ body {
   color: var(--text-muted);
 }
 
+.result-recommended-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: #d7f4df;
+  background: rgba(39, 174, 96, 0.3);
+  border: 1px solid rgba(39, 174, 96, 0.45);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.result-quality-pill {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 10px;
+  font-size: 9px;
+  line-height: 1.4;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.result-quality-high {
+  color: #8fe0a6;
+  border-color: rgba(39, 174, 96, 0.55);
+}
+
+.result-quality-medium {
+  color: #f6d27d;
+  border-color: rgba(241, 196, 15, 0.55);
+}
+
+.result-quality-low {
+  color: #e6a6a6;
+  border-color: rgba(192, 57, 43, 0.45);
+}
+
+.result-confidence-high {
+  color: #9fd0ff;
+  border-color: rgba(52, 152, 219, 0.55);
+}
+
+.result-confidence-medium {
+  color: #bdbdbd;
+  border-color: rgba(120, 120, 120, 0.55);
+}
+
+.result-confidence-low {
+  color: #e6a6a6;
+  border-color: rgba(192, 57, 43, 0.45);
+}
+
 .result-type-badge {
   display: inline-block;
   background: var(--crimson);

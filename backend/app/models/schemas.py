@@ -106,6 +106,12 @@ class SearchResult(BaseModel):
     feature_type: str
     boundingbox: list[float] = []
     has_geometry: bool = False
+    relevance_score: float = 0.0
+    match_confidence: str = "medium"
+    geometry_quality: str = "low"
+    country_code: Optional[str] = None
+    admin_region: Optional[str] = None
+    is_recommended: bool = False
 
 
 class SearchResponse(BaseModel):

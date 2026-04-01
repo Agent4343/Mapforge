@@ -99,11 +99,26 @@ export default function SearchPanel({ onSelect, selectedResult, country }) {
                   {TYPE_LABELS[r.feature_type] || r.feature_type}
                 </span>
                 {r.display_name.split(",")[0]}
+                {r.is_recommended && (
+                  <span className="result-recommended-badge" title="Best match based on location and geometry quality">
+                    Best Match
+                  </span>
+                )}
               </div>
               <div className="result-meta">
                 {r.display_name.split(",").slice(1, 3).join(",")} &mdash;{" "}
                 {r.lat.toFixed(4)}&deg;{r.lat >= 0 ? "N" : "S"}, {Math.abs(r.lon).toFixed(4)}&deg;{r.lon < 0 ? "W" : "E"}
                 {r.has_geometry ? "" : " (no polygon)"}
+                {r.geometry_quality && (
+                  <span className={`result-quality-pill result-quality-${r.geometry_quality}`}>
+                    {r.geometry_quality} geometry
+                  </span>
+                )}
+                {r.match_confidence && (
+                  <span className={`result-quality-pill result-confidence-${r.match_confidence}`}>
+                    {r.match_confidence} confidence
+                  </span>
+                )}
               </div>
             </div>
           ))}

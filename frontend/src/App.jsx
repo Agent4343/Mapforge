@@ -477,9 +477,17 @@ export default function App() {
     setResult(null);
     setError(null);
 
-    // Check geometry quality
+    // Check geometry quality and search confidence before generation.
     if (!item.has_geometry) {
       setQualityWarning("This location may not have polygon data. Generation might fail or produce incomplete results.");
+    } else if (item.geometry_quality === "low") {
+      setQualityWarning(
+        "This match has low geometry detail and may look inaccurate. Try another result (prefer one marked Best Match / high geometry)."
+      );
+    } else if (item.match_confidence === "low") {
+      setQualityWarning(
+        "This match has low location confidence. If the preview looks wrong, choose a result with higher confidence."
+      );
     } else {
       setQualityWarning(null);
     }
