@@ -160,9 +160,21 @@ export default function ExportPanel({
     try {
       setListError(null);
       const { auth_url } = await connectEtsy();
+      if (!auth_url) {
+        throw new Error("Etsy connect did not return an authorization URL.");
+      }
       window.location.href = auth_url;
     } catch (err) {
-      setListError(err.message);
+      const message = err?.message || "Failed to start Etsy connection.";
+      if (/network error|failed to fetch|load failed|timeout/i.test(message)) {
+        const baseHint = `${window.location.origin}/api/v1/etsy/connect`;
+        setListError(
+          `${message} Troubleshooting: 1) Hard refresh this page (Ctrl+Shift+R). ` +
+          `2) Sign out and sign back in. 3) Verify backend endpoint is reachable: ${baseHint}`
+        );
+      } else {
+        setListError(message);
+      }
     }
   }
 
