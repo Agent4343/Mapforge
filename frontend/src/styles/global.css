@@ -2600,6 +2600,78 @@ body {
   font-weight: 500;
 }
 
+/* Recent Etsy drafts panel */
+.etsy-drafts-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+
+.etsy-drafts-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.etsy-drafts-header h3 {
+  margin: 0;
+  font-family: var(--font-heading);
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+}
+
+.etsy-drafts-empty {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.etsy-drafts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.etsy-draft-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-input);
+}
+
+.etsy-draft-main {
+  min-width: 0;
+}
+
+.etsy-draft-title {
+  font-size: 12px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.etsy-draft-meta {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.etsy-draft-actions {
+  display: flex;
+  gap: 4px;
+}
+
 /* Landing page showcase price */
 .landing-showcase-price {
   font-size: 18px;

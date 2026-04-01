@@ -157,6 +157,31 @@ function loadEtsyDraft(draftId) {
   return store[draftId] || null;
 }
 
+function listEtsyDrafts() {
+  return Object.values(readEtsyDraftStore())
+    .filter((draft) => draft && typeof draft === "object")
+    .sort((a, b) => String(b?.updated_at || "").localeCompare(String(a?.updated_at || "")));
+}
+
+function deleteEtsyDraft(draftId) {
+  const store = readEtsyDraftStore();
+  if (!store[draftId]) return false;
+  delete store[draftId];
+  writeEtsyDraftStore(store);
+  return true;
+}
+
+function formatDraftTime(isoTimestamp) {
+  if (!isoTimestamp) return "saved recently";
+  const date = new Date(isoTimestamp);
+  if (Number.isNaN(date.getTime())) return "saved recently";
+  const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+  if (seconds < 60) return "saved just now";
+  if (seconds < 3600) return `saved ${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `saved ${Math.floor(seconds / 3600)}h ago`;
+  return `saved ${Math.floor(seconds / 86400)}d ago`;
+}
+
 // Toast notification system
 function Toast({ message, type, onDismiss }) {
   useEffect(() => {
@@ -208,6 +233,7 @@ export default function App() {
   const [creditData, setCreditData] = useState(null); // credit info from API
   const [creditView, setCreditView] = useState(null); // "status" to show order status page
   const [isEtsyReferral, setIsEtsyReferral] = useState(false);
+  const [etsyDrafts, setEtsyDrafts] = useState([]);
 
   // Undo/redo state
   const [configHistory, setConfigHistory] = useState([config]);
@@ -221,6 +247,53 @@ export default function App() {
 
   const dismissToast = useCallback((id) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  function loadRecentEtsyDrafts() {
+    setEtsyDrafts(listEtsyDrafts().slice(0, 5));
+  }
+
+  function restoreDraftState(draft, { showToast = false } = {}) {
+    if (!draft?.config) return false;
+    const restoredConfig = { ...DEFAULT_CONFIG, ...draft.config };
+    setShowLanding(false);
+    setIsEtsyReferral(true);
+    setConfig(restoredConfig);
+    setConfigHistory([restoredConfig]);
+    setHistoryIndex(0);
+    setSelectedResult(draft.selectedResult || null);
+    setPinCoords(draft.pinCoords || null);
+    setMarkers(Array.isArray(draft.markers) ? draft.markers : []);
+    setSvgContent(null);
+    setResult(null);
+    setError(null);
+    setQualityWarning(null);
+    if (showToast) {
+      addToast(
+        draft.design_ref ? `Restored your Etsy design (${draft.design_ref}).` : "Restored your Etsy design.",
+        "success"
+      );
+    }
+    return true;
+  }
+
+  function handleRestoreEtsyDraft(draftId) {
+    const draft = loadEtsyDraft(draftId);
+    if (!restoreDraftState(draft, { showToast: true })) {
+      addToast("Could not restore that draft.", "error");
+    }
+    loadRecentEtsyDrafts();
+  }
+
+  function handleDeleteEtsyDraft(draftId) {
+    if (deleteEtsyDraft(draftId)) {
+      addToast("Draft removed.", "success");
+      loadRecentEtsyDrafts();
+    }
+  }
+
+  useEffect(() => {
+    loadRecentEtsyDrafts();
   }, []);
 
   // Load user profile if token exists; clear stale tokens on failure
@@ -280,22 +353,7 @@ export default function App() {
     if (draftParam) {
       shouldClearQuery = true;
       const draft = loadEtsyDraft(draftParam);
-      if (draft?.config) {
-        const restoredConfig = { ...DEFAULT_CONFIG, ...draft.config };
-        restoredFromDraft = true;
-        setShowLanding(false);
-        setIsEtsyReferral(true);
-        setConfig(restoredConfig);
-        setConfigHistory([restoredConfig]);
-        setHistoryIndex(0);
-        setSelectedResult(draft.selectedResult || null);
-        setPinCoords(draft.pinCoords || null);
-        setMarkers(Array.isArray(draft.markers) ? draft.markers : []);
-        addToast(
-          draft.design_ref ? `Restored your Etsy design (${draft.design_ref}).` : "Restored your Etsy design.",
-          "success"
-        );
-      }
+      restoredFromDraft = restoreDraftState(draft, { showToast: true });
     }
 
     // Etsy OAuth callback success
@@ -330,6 +388,7 @@ export default function App() {
     if (shouldClearQuery) {
       window.history.replaceState({}, "", window.location.pathname);
     }
+    loadRecentEtsyDrafts();
   }, []);
 
   // Auto-save config to localStorage
@@ -661,6 +720,7 @@ export default function App() {
           }
         : null,
     });
+    loadRecentEtsyDrafts();
 
     const checkoutUrl = new URL(etsyShopUrl, window.location.origin);
     checkoutUrl.searchParams.set("ref", "mapforge_app");
@@ -890,6 +950,59 @@ export default function App() {
               fontFamily: "var(--font-mono)",
             }}>
               {qualityWarning}
+            </div>
+          )}
+
+          {isEtsyReferral && !creditToken && (
+            <div className="etsy-drafts-panel">
+              <div className="etsy-drafts-header">
+                <h3>Recent Etsy Drafts</h3>
+                <button
+                  className="link-btn"
+                  type="button"
+                  onClick={loadRecentEtsyDrafts}
+                  style={{ fontSize: "11px" }}
+                >
+                  Refresh
+                </button>
+              </div>
+              {etsyDrafts.length === 0 ? (
+                <p className="etsy-drafts-empty">No saved Etsy drafts yet.</p>
+              ) : (
+                <div className="etsy-drafts-list">
+                  {etsyDrafts.map((draft) => (
+                    <div key={draft.draft_id} className="etsy-draft-item">
+                      <div className="etsy-draft-main">
+                        <div className="etsy-draft-title">
+                          {draft.config?.text || draft.result?.location_name || "Untitled design"}
+                        </div>
+                        <div className="etsy-draft-meta">
+                          {draft.design_ref ? `${draft.design_ref} · ` : ""}
+                          {formatDraftTime(draft.updated_at)}
+                        </div>
+                      </div>
+                      <div className="etsy-draft-actions">
+                        <button
+                          className="btn btn-secondary"
+                          type="button"
+                          style={{ fontSize: "10px", padding: "4px 8px" }}
+                          onClick={() => handleRestoreEtsyDraft(draft.draft_id)}
+                        >
+                          Resume
+                        </button>
+                        <button
+                          className="btn btn-secondary"
+                          type="button"
+                          style={{ fontSize: "10px", padding: "4px 8px" }}
+                          onClick={() => handleDeleteEtsyDraft(draft.draft_id)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
