@@ -112,6 +112,7 @@ class SearchResult(BaseModel):
     country_code: Optional[str] = None
     admin_region: Optional[str] = None
     is_recommended: bool = False
+    fallback_available: bool = False
 
 
 class SearchResponse(BaseModel):
@@ -264,6 +265,8 @@ class GenerateResponse(BaseModel):
     layer_count: int
     print_dpi: Optional[int] = None
     print_pixels: Optional[tuple[int, int]] = None
+    geometry_fallback_used: bool = False
+    needs_location_repick: bool = False
     warnings: list[str] = Field(default_factory=list)
 
 

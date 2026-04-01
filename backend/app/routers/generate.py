@@ -25,7 +25,7 @@ from app.models.schemas import (
 from app.services.auth import get_current_user, get_optional_user
 from app.services.dxf_generator import generate_dxf
 from app.services.stl_generator import generate_stl
-from app.services.geo_fetch import fetch_area_around_point, fetch_geometry
+from app.services.geo_fetch import fetch_area_around_point, fetch_fallback_geometry, fetch_geometry
 from app.services.geometry_processor import process_geometry, transform_wgs84_to_board
 from app.services.svg_generator import generate_svg
 from app.services.street_fetcher import fetch_streets
@@ -113,11 +113,20 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     # Fetch geometry
     log.info(f"Generating {req.product_type.value} for OSM {req.osm_type}/{req.osm_id}")
     geom = await fetch_geometry(req.osm_id, req.osm_type)
+    geometry_fallback_used = False
     if geom is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Could not fetch geometry for {req.osm_type}/{req.osm_id}. "
-            "The location may not have polygon data in OpenStreetMap.",
+        geom = await fetch_fallback_geometry(req.osm_id, req.osm_type)
+        if geom is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Could not fetch geometry for {req.osm_type}/{req.osm_id}. "
+                "The location may not have polygon data in OpenStreetMap.",
+            )
+        geometry_fallback_used = True
+        warnings.append(
+            "Exact boundary data is unavailable for this location. "
+            "MapForge used an approximate map area. For the most accurate map art, "
+            "pick a result marked Best Match with medium/high geometry quality."
         )
 
     # Process geometry
@@ -308,6 +317,27 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         land_shadow=req.land_shadow,
     )
 
+    # Quality gates for map acceptance
+    needs_location_repick = False
+    if geometry_fallback_used:
+        needs_location_repick = True
+    if result["node_count"] < 20:
+        warnings.append(
+            "Very low map detail detected. Try another search result (ideally Best Match) for a cleaner poster."
+        )
+        needs_location_repick = True
+    elif result["node_count"] < 45:
+        warnings.append(
+            "Low map detail detected. If the preview looks sparse, pick a nearby city/community for richer data."
+        )
+        needs_location_repick = True
+    if result["path_count"] < 8:
+        warnings.append(
+            "Low path count detected. This location may not render a strong map silhouette; consider a different match."
+        )
+        needs_location_repick = True
+    warnings = list(dict.fromkeys(warnings))
+
     # Store files + generate derivatives (only for authenticated users)
     # Visitors just get the SVG preview — no file storage needed
     board_w, board_h = processed["board_mm"]
@@ -463,6 +493,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         layer_count=result["layer_count"],
         print_dpi=req.print_dpi,
         print_pixels=print_pixels,
+        geometry_fallback_used=geometry_fallback_used,
+        needs_location_repick=needs_location_repick,
         warnings=warnings,
     )
 
@@ -687,6 +719,8 @@ async def generate_pin(
         layer_count=result["layer_count"],
         print_dpi=req.print_dpi,
         print_pixels=pin_print_pixels,
+        geometry_fallback_used=False,
+        needs_location_repick=False,
     )
 
 

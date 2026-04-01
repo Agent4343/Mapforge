@@ -1,6 +1,6 @@
 """Fetch full geometry from OpenStreetMap Overpass API and Nominatim with caching."""
 
-import json
+import math
 
 import httpx
 from shapely.geometry import shape, mapping, MultiPolygon, Polygon, GeometryCollection
@@ -51,6 +51,51 @@ async def fetch_geometry(osm_id: int, osm_type: str = "relation") -> MultiPolygo
             log.debug(f"Failed to cache geometry: {e}")
 
     return geom
+
+
+async def fetch_fallback_geometry(osm_id: int, osm_type: str = "relation") -> Polygon | None:
+    """Build an approximate map area when polygon geometry is unavailable.
+
+    Fallback strategy:
+    1) Use Nominatim lookup bounding box if available.
+    2) Otherwise build a small envelope around the location centroid.
+    """
+    item = await _lookup_nominatim_item(osm_id, osm_type)
+    if not item:
+        return None
+
+    # Relation/way fallbacks can be wider than a point feature.
+    base_span = 0.10 if osm_type == "node" else (0.16 if osm_type == "way" else 0.22)
+    geom = _polygon_from_bbox(item.get("boundingbox"), min_span_deg=base_span, max_span_deg=1.8)
+    if geom is not None:
+        return geom
+
+    lat = _safe_float(item.get("lat"))
+    lon = _safe_float(item.get("lon"))
+    if lat is None or lon is None:
+        return None
+    return _ellipse_envelope(lat, lon, span_lat=base_span, span_lon=base_span, points=64)
+
+
+async def _lookup_nominatim_item(osm_id: int, osm_type: str) -> dict | None:
+    type_prefix = OSM_TYPE_MAP.get(osm_type, "R")
+    params = {
+        "osm_ids": f"{type_prefix}{osm_id}",
+        "format": "json",
+        "addressdetails": 1,
+        "polygon_geojson": 0,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            resp = await client.get(NOMINATIM_LOOKUP_URL, params=params, headers=NOMINATIM_HEADERS)
+            resp.raise_for_status()
+            data = resp.json()
+    except (httpx.HTTPError, httpx.ProxyError) as e:
+        log.warning(f"Nominatim fallback lookup failed for {osm_type}/{osm_id}: {e}")
+        return None
+    if not data:
+        return None
+    return data[0]
 
 
 async def _fetch_via_nominatim(osm_id: int, osm_type: str) -> MultiPolygon | Polygon | None:
@@ -288,3 +333,63 @@ def _to_polygon(geom) -> MultiPolygon | Polygon | None:
         if polys:
             return MultiPolygon(polys) if len(polys) > 1 else polys[0]
     return None
+
+
+def _safe_float(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _polygon_from_bbox(
+    bbox_values,
+    *,
+    min_span_deg: float = 0.12,
+    max_span_deg: float = 1.8,
+) -> Polygon | None:
+    """Convert Nominatim boundingbox into a reasonable fallback polygon."""
+    if not isinstance(bbox_values, list) or len(bbox_values) < 4:
+        return None
+    south = _safe_float(bbox_values[0])
+    north = _safe_float(bbox_values[1])
+    west = _safe_float(bbox_values[2])
+    east = _safe_float(bbox_values[3])
+    if None in (south, north, west, east):
+        return None
+
+    south, north = sorted((south, north))
+    west, east = sorted((west, east))
+    center_lat = (south + north) / 2.0
+    center_lon = (west + east) / 2.0
+
+    span_lat = max(north - south, min_span_deg)
+    span_lon = max(east - west, min_span_deg)
+    span_lat = min(span_lat, max_span_deg)
+    span_lon = min(span_lon, max_span_deg)
+
+    return _ellipse_envelope(center_lat, center_lon, span_lat=span_lat, span_lon=span_lon, points=72)
+
+
+def _ellipse_envelope(
+    lat: float,
+    lon: float,
+    *,
+    span_lat: float,
+    span_lon: float,
+    points: int = 64,
+) -> Polygon:
+    """Create a smooth ellipse-shaped fallback region around a center point."""
+    half_lat = max(0.01, span_lat / 2.0)
+    half_lon = max(0.01, span_lon / 2.0)
+
+    coords = []
+    for i in range(max(24, points)):
+        angle = 2.0 * math.pi * (i / max(24, points))
+        y = lat + math.sin(angle) * half_lat
+        x = lon + math.cos(angle) * half_lon
+        y = min(89.9, max(-89.9, y))
+        x = min(179.9, max(-179.9, x))
+        coords.append((x, y))
+    coords.append(coords[0])
+    return Polygon(coords)

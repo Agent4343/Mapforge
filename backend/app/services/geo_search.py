@@ -20,7 +20,32 @@ NOMINATIM_HEADERS = {"User-Agent": "MapForgeCNC/1.0 (mapforge-cnc-app)"}
 _nominatim_lock = asyncio.Lock()
 _nominatim_last_request: float = 0.0
 
-_COUNTRY_LABELS = {"ca": "canada", "us": "united states"}
+_COUNTRY_LABELS = {
+    "ca": "canada",
+    "us": "united states",
+    "au": "australia",
+    "nz": "new zealand",
+    "gb": "united kingdom",
+    "ie": "ireland",
+}
+_COUNTRY_HINT_ALIASES = {
+    "canada": "ca",
+    "ca": "ca",
+    "united states": "us",
+    "united states of america": "us",
+    "usa": "us",
+    "us": "us",
+    "australia": "au",
+    "au": "au",
+    "new zealand": "nz",
+    "nz": "nz",
+    "united kingdom": "gb",
+    "uk": "gb",
+    "great britain": "gb",
+    "england": "gb",
+    "ireland": "ie",
+    "ie": "ie",
+}
 _REGION_HINT_ALIASES = {
     # Canada
     "nova scotia": "nova scotia",
@@ -49,6 +74,44 @@ _REGION_HINT_ALIASES = {
     "fl": "florida",
     "texas": "texas",
     "tx": "texas",
+    # UK / Ireland
+    "england": "england",
+    "scotland": "scotland",
+    "wales": "wales",
+    "northern ireland": "northern ireland",
+    "ireland": "ireland",
+    # Australia
+    "new south wales": "new south wales",
+    "nsw": "new south wales",
+    "victoria": "victoria",
+    "vic": "victoria",
+    "queensland": "queensland",
+    "qld": "queensland",
+    "western australia": "western australia",
+    "wa": "western australia",
+    "south australia": "south australia",
+    "sa": "south australia",
+    "tasmania": "tasmania",
+    "tas": "tasmania",
+    # New Zealand
+    "auckland": "auckland",
+    "wellington": "wellington",
+    "canterbury": "canterbury",
+    # Germany / Austria / Switzerland (common English forms)
+    "bavaria": "bayern",
+    "berlin": "berlin",
+    "hamburg": "hamburg",
+    "vienna": "wien",
+    "zurich": "zürich",
+    # France / Spain / Italy / Portugal (common regions)
+    "ile de france": "île-de-france",
+    "idf": "île-de-france",
+    "catalonia": "catalunya",
+    "andalusia": "andalucía",
+    "lombardy": "lombardia",
+    "sicily": "sicilia",
+    "lisbon": "lisboa",
+    "porto": "porto",
 }
 
 
@@ -56,13 +119,25 @@ def _normalize_text(value: str) -> str:
     return re.sub(r"\s+", " ", (value or "").strip().lower())
 
 
+def _safe_float(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _parse_query_parts(query: str) -> dict:
     normalized = _normalize_text(query)
     parts = [p.strip() for p in normalized.split(",") if p.strip()]
     region_hint = parts[1] if len(parts) > 1 else ""
     country_hint = parts[2] if len(parts) > 2 else ""
+    country_hint_code = _COUNTRY_HINT_ALIASES.get(country_hint, "")
     if len(parts) == 2:
         # Common case: "city, province" where country omitted.
+        maybe_country = _COUNTRY_HINT_ALIASES.get(region_hint, "")
+        if maybe_country:
+            country_hint_code = maybe_country
+            region_hint = ""
         country_hint = ""
     if len(parts) <= 1:
         # Handle no-comma searches such as "sydney nova scotia" or "sydney ns".
@@ -82,12 +157,26 @@ def _parse_query_parts(query: str) -> dict:
                 break
         if matched_region and len(parts) > 1:
             country_hint = ""
+        if not matched_region:
+            # Handle no-comma searches such as "sydney australia" / "vancouver canada".
+            for size in (3, 2, 1):
+                if len(words) <= size:
+                    continue
+                candidate = " ".join(words[-size:])
+                maybe_country = _COUNTRY_HINT_ALIASES.get(candidate, "")
+                if maybe_country:
+                    country_hint_code = maybe_country
+                    primary_words = words[:-size]
+                    if primary_words:
+                        parts = [" ".join(primary_words)]
+                    break
     return {
         "normalized": normalized,
         "parts": parts,
         "primary": parts[0] if parts else normalized,
         "region_hint": region_hint,
         "country_hint": country_hint,
+        "country_hint_code": country_hint_code,
     }
 
 
@@ -163,7 +252,7 @@ def _score_candidate(
     display_name = _normalize_text(item.get("display_name", ""))
     primary = query_parts["primary"]
     region_hint = query_parts["region_hint"]
-    country_hint = query_parts["country_hint"]
+    country_hint_code = query_parts.get("country_hint_code", "")
     country_code = (item.get("address", {}) or {}).get("country_code", "")
     country_code = str(country_code).lower() if country_code else ""
     admin_region = _normalize_text(_extract_admin_region(item))
@@ -185,8 +274,14 @@ def _score_candidate(
     if country_label and country_label in display_name:
         score += 0.5
 
-    if country_hint and country_hint in display_name:
-        score += 0.6
+    if country_hint_code:
+        if country_code == country_hint_code:
+            score += 1.4
+        elif country_code:
+            score -= 0.7
+        hinted_label = _COUNTRY_LABELS.get(country_hint_code, "")
+        if hinted_label and hinted_label in display_name:
+            score += 0.4
 
     if region_hint:
         if region_hint in display_name or region_hint in admin_region:
@@ -256,9 +351,12 @@ async def search_location(query: str, country: str = "ca", limit: int = 10) -> l
     for item in data:
         osm_type = item.get("osm_type", "node")
         feature_type = _classify_feature(item)
-        has_geometry = "geojson" in item and item["geojson"]["type"] in (
-            "Polygon", "MultiPolygon",
-        )
+        geojson = item.get("geojson") or {}
+        has_geometry = geojson.get("type") in ("Polygon", "MultiPolygon")
+        lat = _safe_float(item.get("lat"))
+        lon = _safe_float(item.get("lon"))
+        if lat is None or lon is None:
+            continue
         score, confidence, geometry_quality, admin_region = _score_candidate(
             item=item,
             query_parts=query_parts,
@@ -267,13 +365,14 @@ async def search_location(query: str, country: str = "ca", limit: int = 10) -> l
             has_geometry=has_geometry,
         )
         country_code = str((item.get("address", {}) or {}).get("country_code", "")).lower() or None
+        fallback_available = (not has_geometry)
 
         results.append(SearchResult(
             osm_id=int(item["osm_id"]),
             osm_type=osm_type,
             display_name=item.get("display_name", ""),
-            lat=float(item["lat"]),
-            lon=float(item["lon"]),
+            lat=lat,
+            lon=lon,
             feature_type=feature_type,
             boundingbox=[float(b) for b in item.get("boundingbox", [])],
             has_geometry=has_geometry,
@@ -282,6 +381,7 @@ async def search_location(query: str, country: str = "ca", limit: int = 10) -> l
             geometry_quality=geometry_quality,
             country_code=country_code,
             admin_region=admin_region or None,
+            fallback_available=fallback_available,
         ))
 
     # Sort by computed relevance so the best candidate appears first.
