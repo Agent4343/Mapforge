@@ -472,12 +472,13 @@ def _generate_print_svg(
         f'<rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"/>'
         f"</clipPath>"
     )
-    # Subtle drop shadow for the land mass — gives visual depth
-    lines.append('    <filter id="land_shadow" x="-5%" y="-5%" width="115%" height="115%">')
-    lines.append('      <feGaussianBlur in="SourceAlpha" stdDeviation="1.5"/>')
-    lines.append('      <feOffset dx="0.8" dy="0.8"/>')
+    # Drop shadow for the land mass — gives visual depth and separation
+    # from the water background, like an embossed map on paper
+    lines.append('    <filter id="land_shadow" x="-8%" y="-8%" width="120%" height="120%">')
+    lines.append('      <feGaussianBlur in="SourceAlpha" stdDeviation="2.5"/>')
+    lines.append('      <feOffset dx="1.0" dy="1.2"/>')
     lines.append('      <feComponentTransfer>')
-    lines.append('        <feFuncA type="linear" slope="0.15"/>')
+    lines.append('        <feFuncA type="linear" slope="0.2"/>')
     lines.append('      </feComponentTransfer>')
     lines.append('      <feMerge>')
     lines.append('        <feMergeNode/>')
@@ -521,13 +522,27 @@ def _generate_print_svg(
         path_d = _coords_to_path(exterior)
         for hole in holes:
             path_d += " " + _coords_to_path(hole)
-        # Thinner stroke for street maps (boundary is secondary),
-        # slightly bolder for shape-focused maps (province/lake/park)
-        stroke_w = "0.3" if is_street_map else "0.5"
         lines.append(
             f'      <path d="{path_d}"'
-            f' fill="{theme["land"]}" stroke="{theme["land_stroke"]}"'
-            f' stroke-width="{stroke_w}" fill-rule="evenodd" stroke-linejoin="round"/>'
+            f' fill="{theme["land"]}" stroke="none"'
+            f' fill-rule="evenodd" stroke-linejoin="round"/>'
+        )
+    lines.append("    </g>")
+
+    # Coastline stroke — drawn separately on top of the land fill so the
+    # stroke straddles the land/water edge. This creates a crisp, elegant
+    # coastline that defines the shape without the stroke being hidden
+    # under the shadow filter.
+    lines.append('    <g id="coastline">')
+    for exterior, holes in polygons:
+        path_d = _coords_to_path(exterior)
+        for hole in holes:
+            path_d += " " + _coords_to_path(hole)
+        lines.append(
+            f'      <path d="{path_d}"'
+            f' fill="none" stroke="{theme["land_stroke"]}"'
+            f' stroke-width="0.6" fill-rule="evenodd"'
+            f' stroke-linejoin="round" opacity="0.7"/>'
         )
     lines.append("    </g>")
 
@@ -607,30 +622,31 @@ def _generate_print_svg(
     lines.append("  </g>")  # close map clip group
     lines.append("")
 
-    # Premium layered border frame around the map area
-    # Outer thin line (the mat border edge) — thinner for cleaner appearance
-    inset = 1.2  # mm inset for the inner accent line
+    # Premium triple-line border frame (Mapiful style)
+    # Creates a refined gallery feel: thin outer line, gap, bold inner line
+    gap = 1.8  # mm gap between outer and inner frames
     lines.append('  <g id="map_frame">')
+    # Inner border — bold, defines the map area
     lines.append(
         f'    <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"'
-        f' fill="none" stroke="{theme["land_stroke"]}" stroke-width="0.4"/>'
+        f' fill="none" stroke="{theme["text_primary"]}" stroke-width="0.5"/>'
     )
-    # Inner accent line (creates premium double-frame effect)
+    # Outer border — thinner accent line
     lines.append(
-        f'    <rect x="{round(map_x - inset, 2)}" y="{round(map_y - inset, 2)}"'
-        f' width="{round(map_w + 2 * inset, 2)}" height="{round(map_h + 2 * inset, 2)}"'
-        f' fill="none" stroke="{theme["land_stroke"]}" stroke-width="0.2"'
-        f' opacity="0.5"/>'
+        f'    <rect x="{round(map_x - gap, 2)}" y="{round(map_y - gap, 2)}"'
+        f' width="{round(map_w + 2 * gap, 2)}" height="{round(map_h + 2 * gap, 2)}"'
+        f' fill="none" stroke="{theme["text_primary"]}" stroke-width="0.25"'
+        f' opacity="0.6"/>'
     )
     lines.append("  </g>")
     lines.append("")
 
     # Thin separator line between map and text area
-    sep_y = round(map_y + map_h + text_area_h * 0.10, 2)
-    sep_margin = round(board_w * 0.25, 2)  # 25% inset from each side
+    sep_y = round(map_y + map_h + text_area_h * 0.12, 2)
+    sep_margin = round(board_w * 0.30, 2)  # 30% inset from each side
     lines.append(
         f'  <line x1="{sep_margin}" y1="{sep_y}" x2="{round(board_w - sep_margin, 2)}" y2="{sep_y}"'
-        f' stroke="{theme["land_stroke"]}" stroke-width="0.2" opacity="0.35"/>'
+        f' stroke="{theme["text_primary"]}" stroke-width="0.25" opacity="0.2"/>'
     )
     lines.append("")
 
@@ -834,15 +850,18 @@ def _render_geography(lines: list[str], polygons: list, style: CutStyle):
 
 
 def _render_print_water(lines: list[str], water_data: dict, processed: dict, theme: dict):
-    """Render water features with themed poster colors.
+    """Render water features as natural bodies that cut through the land.
 
-    Water bodies are drawn with filled polygons and visible strokes to
-    create clear visual contrast against the land color.
+    Water polygons (lakes, ponds) are filled with water color.
+    Waterways (rivers, streams) are drawn wide enough to look like real
+    rivers carving through the land — using water color fill so the land
+    appears to have river valleys cut into it.
     """
     transform = processed.get("transform")
 
     lines.append('    <g id="water_features">')
 
+    # Water polygons (lakes, ponds) — filled shapes
     for coords, water_type, name in water_data.get("water_polygons", []):
         if len(coords) < 3:
             continue
@@ -851,20 +870,36 @@ def _render_print_water(lines: list[str], water_data: dict, processed: dict, the
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="{theme["water"]}" stroke="{theme["water_stroke"]}"'
-            f' stroke-width="0.3" stroke-linejoin="round"/>'
+            f' stroke-width="0.2" stroke-linejoin="round"/>'
         )
 
+    # Waterways (rivers, streams) — drawn as wide paths to look like
+    # actual rivers cutting through the land, not just thin lines.
+    # Uses water color so the river "removes" land to show water below.
     for coords, water_type, name in water_data.get("waterways", []):
         if len(coords) < 2:
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
-        width = 0.6 if water_type in ("river", "coastline") else 0.25
-        lines.append(
-            f'      <path d="{path_d}"'
-            f' fill="none" stroke="{theme["water_stroke"]}" stroke-width="{width}"'
-            f' stroke-linecap="round" stroke-linejoin="round"/>'
-        )
+        if water_type in ("river", "coastline"):
+            # Rivers: thick enough to be visible as water features
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="none" stroke="{theme["water"]}" stroke-width="1.8"'
+                f' stroke-linecap="round" stroke-linejoin="round"/>'
+            )
+            # Subtle darker edge for definition
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="none" stroke="{theme["water_stroke"]}" stroke-width="0.2"'
+                f' stroke-linecap="round" stroke-linejoin="round" opacity="0.4"/>'
+            )
+        elif water_type in ("stream", "canal"):
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="none" stroke="{theme["water"]}" stroke-width="0.8"'
+                f' stroke-linecap="round" stroke-linejoin="round"/>'
+            )
 
     lines.append("    </g>")
 
