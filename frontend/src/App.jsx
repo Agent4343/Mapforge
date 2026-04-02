@@ -914,7 +914,6 @@ export default function App() {
             selectedResult={selectedResult}
             country={country}
             maptilerKey={maptilerKey}
-            onResultsUpdate={handleSearchResultsUpdate}
           />
 
           {/* Pin Drop for Name Sign — mark a home or special location */}
