@@ -18,6 +18,7 @@ import PriceDisplay from "./components/PriceDisplay.jsx";
 import GenerateModal from "./components/CheckoutModal.jsx";
 import OrderStatus from "./components/OrderStatus.jsx";
 import {
+  searchLocations,
   generateSVG, generatePin, downloadSVG, downloadDXF, downloadSTL,
   downloadThumbnail, downloadPrintPNG,
   downloadEtsyListing, downloadEtsyPackage, downloadPreview, downloadWallMockup,
@@ -225,6 +226,8 @@ export default function App() {
   const [error, setError] = useState(null);
   const [qualityWarning, setQualityWarning] = useState(null);
   const [blockCheckoutForQuality, setBlockCheckoutForQuality] = useState(false);
+  const [qualitySuggestions, setQualitySuggestions] = useState([]);
+  const [loadingQualitySuggestions, setLoadingQualitySuggestions] = useState(false);
   const [country, setCountry] = useState("ca");
   const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [pinCoords, setPinCoords] = useState(null); // {lat, lon} for name_sign pin drop
@@ -484,6 +487,8 @@ export default function App() {
     setResult(null);
     setError(null);
     setBlockCheckoutForQuality(false);
+    setQualitySuggestions([]);
+    setLoadingQualitySuggestions(false);
 
     // Check geometry quality and search confidence before generation.
     if (!item.has_geometry && item.fallback_available) {
@@ -504,6 +509,41 @@ export default function App() {
       setQualityWarning(null);
     }
   }
+
+  const fetchQualitySuggestions = useCallback(async (baseResult) => {
+    if (!baseResult?.display_name) {
+      setQualitySuggestions([]);
+      return;
+    }
+    const namePart = String(baseResult.display_name).split(",")[0]?.trim();
+    if (!namePart || namePart.length < 2) {
+      setQualitySuggestions([]);
+      return;
+    }
+    const queryParts = [namePart];
+    if (baseResult.admin_region) queryParts.push(baseResult.admin_region);
+    const query = queryParts.join(" ").trim();
+    const searchCountry = baseResult.country_code || country || "";
+
+    setLoadingQualitySuggestions(true);
+    try {
+      const data = await searchLocations(query, searchCountry);
+      const candidates = (data?.results || [])
+        .filter((r) => !(r.osm_id === baseResult.osm_id && r.osm_type === baseResult.osm_type))
+        .filter((r) => r.has_geometry && (r.geometry_quality === "high" || r.geometry_quality === "medium"))
+        .sort((a, b) => {
+          const recommendedRank = Number(Boolean(b.is_recommended)) - Number(Boolean(a.is_recommended));
+          if (recommendedRank !== 0) return recommendedRank;
+          return (b.relevance_score || 0) - (a.relevance_score || 0);
+        })
+        .slice(0, 3);
+      setQualitySuggestions(candidates);
+    } catch {
+      setQualitySuggestions([]);
+    } finally {
+      setLoadingQualitySuggestions(false);
+    }
+  }, [country]);
 
   const handleGenerate = useCallback(async () => {
     // Pin-drop mode: use coordinates instead of OSM search result
@@ -603,6 +643,12 @@ export default function App() {
       setSvgContent(data.svg);
       setResult(data);
       setBlockCheckoutForQuality(Boolean(data.needs_location_repick));
+      if (data.needs_location_repick && selectedResult) {
+        void fetchQualitySuggestions(selectedResult);
+      } else {
+        setQualitySuggestions([]);
+        setLoadingQualitySuggestions(false);
+      }
 
       // Quality/generation warnings
       const allWarnings = [...(data.warnings || [])];
@@ -612,7 +658,7 @@ export default function App() {
     } finally {
       setGenerating(false);
     }
-  }, [selectedResult, config, pinCoords, markers]);
+  }, [selectedResult, config, pinCoords, markers, fetchQualitySuggestions]);
 
   const handleDownload = useCallback(async () => {
     if (!result) return;
@@ -868,6 +914,7 @@ export default function App() {
             selectedResult={selectedResult}
             country={country}
             maptilerKey={maptilerKey}
+            onResultsUpdate={handleSearchResultsUpdate}
           />
 
           {/* Pin Drop for Name Sign — mark a home or special location */}
@@ -977,6 +1024,42 @@ export default function App() {
             </div>
           )}
 
+          {blockCheckoutForQuality && (loadingQualitySuggestions || qualitySuggestions.length > 0) && (
+            <div className="quality-warning" style={{
+              marginTop: "8px",
+              background: "#1f2430",
+              border: "1px solid #3a4a66",
+              borderRadius: "6px",
+              padding: "8px 12px",
+              fontSize: "12px",
+              color: "#c6d8ff",
+            }}>
+              <div style={{ fontWeight: 600, marginBottom: "6px" }}>
+                Better nearby matches for denser linework
+              </div>
+              {loadingQualitySuggestions ? (
+                <div>Finding nearby Best Match options...</div>
+              ) : (
+                <div style={{ display: "grid", gap: "6px" }}>
+                  {qualitySuggestions.map((s) => (
+                    <button
+                      key={`${s.osm_type}-${s.osm_id}`}
+                      type="button"
+                      className="btn btn-secondary"
+                      style={{ textAlign: "left", fontSize: "11px", padding: "6px 8px" }}
+                      onClick={() => handleSelect(s)}
+                    >
+                      <strong>{String(s.display_name || "").split(",")[0]}</strong>
+                      {" · "}
+                      {s.geometry_quality || "unknown"} geometry
+                      {s.is_recommended ? " · Best Match" : ""}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {isEtsyReferral && !creditToken && (
             <div className="etsy-drafts-panel">
               <div className="etsy-drafts-header">
@@ -1078,6 +1161,8 @@ export default function App() {
               ? "This preview has limited map detail. Pick a nearby Best Match for a stronger print, or continue anyway."
               : null}
             onOverrideCheckoutBlock={() => setBlockCheckoutForQuality(false)}
+            nearbyQualitySuggestions={nearbyQualitySuggestions}
+            onPickNearbySuggestion={handlePickNearbySuggestion}
           />
         </div>
         <div className="panel-right">
