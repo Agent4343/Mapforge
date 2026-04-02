@@ -238,12 +238,28 @@ def _build_geometry_from_overpass(elements: list[dict], target_id: int, target_t
             continue
         if ring[0] != ring[-1]:
             ring.append(ring[0])
+        # Attach only holes that are actually inside this outer ring.
+        # Previous logic attached every merged inner ring to every outer,
+        # which can create large, incorrect cutouts and technical-looking artifacts.
         holes = []
+        outer_poly = None
+        try:
+            outer_poly = Polygon(ring)
+        except Exception:
+            outer_poly = None
         for inner in merged_inners:
-            if len(inner) >= 4:
-                if inner[0] != inner[-1]:
-                    inner.append(inner[0])
-                holes.append(inner)
+            if len(inner) < 4:
+                continue
+            if inner[0] != inner[-1]:
+                inner.append(inner[0])
+            if outer_poly is not None:
+                try:
+                    test_inner = Polygon(inner)
+                    if not outer_poly.contains(test_inner.representative_point()):
+                        continue
+                except Exception:
+                    continue
+            holes.append(inner)
         try:
             poly = Polygon(ring, holes)
             if poly.is_valid:
