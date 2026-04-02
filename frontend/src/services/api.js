@@ -11,7 +11,28 @@ const ENV_API_FALLBACK_ORIGINS = (import.meta.env.VITE_API_FALLBACK_URLS || "")
   .map((v) => v.trim().replace(/\/+$/, ""))
   .filter(Boolean);
 
-let authToken = localStorage.getItem("mapforge_token") || null;
+// Safari private browsing can throw on localStorage access at module load.
+function safeStorageGet(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeStorageSet(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {}
+}
+
+function safeStorageRemove(key) {
+  try {
+    localStorage.removeItem(key);
+  } catch {}
+}
+
+let authToken = safeStorageGet("mapforge_token") || null;
 
 function buildApiFallbackOrigins() {
   const origins = [];
@@ -51,9 +72,9 @@ const API_FALLBACK_ORIGINS = buildApiFallbackOrigins();
 function setToken(token) {
   authToken = token;
   if (token) {
-    localStorage.setItem("mapforge_token", token);
+    safeStorageSet("mapforge_token", token);
   } else {
-    localStorage.removeItem("mapforge_token");
+    safeStorageRemove("mapforge_token");
   }
 }
 
