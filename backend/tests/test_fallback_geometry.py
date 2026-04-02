@@ -1,9 +1,10 @@
 """Tests for geometry fallback generation and acceptance checks."""
 
+import math
 from unittest.mock import patch
 
 import pytest
-from shapely.geometry import Polygon
+from shapely.geometry import Point, Polygon
 
 from app.models.schemas import BoardSize, CutStyle, GenerateRequest, ProductType
 from app.routers.generate import _do_generate
@@ -101,13 +102,19 @@ async def test_generate_uses_single_recovery_warning_when_street_fallback_succee
         print_dpi=300,
     )
 
-    base_geom = Polygon([
-        (-60.25, 46.05),
-        (-60.15, 46.05),
-        (-60.15, 46.15),
-        (-60.25, 46.15),
-        (-60.25, 46.05),
-    ])
+    # Build a denser boundary so this test isolates preview-overlay behavior
+    # (and does not trigger the low-node quality gate by itself).
+    cx, cy = -60.2, 46.1
+    rx, ry = 0.05, 0.04
+    ring = [
+        (
+            cx + math.cos((2 * math.pi * i) / 64) * rx,
+            cy + math.sin((2 * math.pi * i) / 64) * ry,
+        )
+        for i in range(64)
+    ]
+    ring.append(ring[0])
+    base_geom = Polygon(ring)
 
     async def _mock_fetch_geometry(*_args, **_kwargs):
         return base_geom
@@ -141,13 +148,9 @@ async def test_generate_consolidates_sparse_detail_guidance(db_session):
         print_dpi=300,
     )
 
-    base_geom = Polygon([
-        (-60.25, 46.05),
-        (-60.15, 46.05),
-        (-60.15, 46.15),
-        (-60.25, 46.15),
-        (-60.25, 46.05),
-    ])
+    # High-vertex geometry ensures node-floor checks pass so this test isolates
+    # the preview-overlay-skip quality behavior.
+    base_geom = Point(-60.2, 46.1).buffer(0.08, resolution=24)
 
     async def _mock_fetch_geometry(*_args, **_kwargs):
         return base_geom
@@ -166,3 +169,36 @@ async def test_generate_consolidates_sparse_detail_guidance(db_session):
         if "fuller line pattern" in w.lower() or "nearby best match" in w.lower()
     ]
     assert len(sparse_messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_generate_preview_skip_overlay_warning_does_not_force_repick(db_session):
+    req = GenerateRequest(
+        osm_id=992222,
+        osm_type="relation",
+        product_type=ProductType.city,
+        board_size=BoardSize.medium,
+        style=CutStyle.filled,
+        text="Previewville",
+        include_streets=False,
+        include_contours=False,
+        print_dpi=300,
+    )
+
+    ring = []
+    cx, cy = -60.2, 46.1
+    radius = 0.08
+    for i in range(48):
+        angle = (i / 48) * 2 * math.pi
+        ring.append((cx + radius * math.cos(angle), cy + radius * math.sin(angle)))
+    ring.append(ring[0])
+    base_geom = Polygon(ring)
+
+    async def _mock_fetch_geometry(*_args, **_kwargs):
+        return base_geom
+
+    with patch("app.routers.generate.fetch_geometry", side_effect=_mock_fetch_geometry):
+        resp = await _do_generate(req, user=None, db=db_session)
+
+    assert any("fast preview mode" in w.lower() for w in resp.warnings)
+    assert resp.needs_location_repick is False

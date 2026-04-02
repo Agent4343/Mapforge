@@ -84,6 +84,46 @@ POSTER_LAYOUTS = {
 }
 
 
+def _get_vintage_density_profile(product_type: str, total_roads: int) -> dict[str, float | int | str]:
+    """Choose per-scale density tuning for vintage render output.
+
+    The goal is consistent premium-looking prints across sparse and dense places:
+    - sparse areas keep enough structure to avoid looking unfinished
+    - dense areas filter low-value micro streets to reduce visual noise
+    """
+    # (sparse_cutoff, dense_cutoff)
+    cutoffs = {
+        "city": (140, 520),
+        "community": (95, 300),
+        "province": (80, 240),
+        "park": (90, 260),
+    }
+    sparse_cutoff, dense_cutoff = cutoffs.get(product_type, (100, 320))
+
+    if total_roads <= sparse_cutoff:
+        band = "sparse"
+    elif total_roads >= dense_cutoff:
+        band = "dense"
+    else:
+        band = "balanced"
+
+    # Minimum segment-length filter for minor roads (in mm).
+    # Sparse maps keep shorter segments for extra texture.
+    if band == "sparse":
+        min_minor_len_factor = 0.004
+    elif band == "dense":
+        min_minor_len_factor = 0.009
+    else:
+        min_minor_len_factor = 0.006
+
+    return {
+        "band": band,
+        "sparse_cutoff": sparse_cutoff,
+        "dense_cutoff": dense_cutoff,
+        "min_minor_len_factor": min_minor_len_factor,
+    }
+
+
 def generate_svg(
     processed: dict,
     location_name: str,
@@ -1099,6 +1139,9 @@ def _generate_vintage_map_svg(
 
     major_roads = streets_data.get("major_roads", []) if streets_data else []
     minor_roads = streets_data.get("minor_roads", []) if streets_data else []
+    initial_total_roads = len(major_roads) + len(minor_roads)
+    density_profile = _get_vintage_density_profile(product_type, initial_total_roads)
+    density_band = str(density_profile["band"])
     boundary_major_count = sum(1 for _coords, road_class, _width, _name in major_roads if road_class == "boundary")
     boundary_fallback_only = bool(major_roads) and boundary_major_count == len(major_roads) and not minor_roads
     # Remove tiny fallback fragments that look like random scratches.
@@ -1111,18 +1154,21 @@ def _generate_vintage_map_svg(
     # For sparse non-fallback maps, keep more short segments so small towns
     # still get a fuller, more connected street texture.
     elif minor_roads:
-        min_minor_len = max(0.8, min(map_w, map_h) * 0.005)
+        min_minor_len = max(0.7, min(map_w, map_h) * float(density_profile["min_minor_len_factor"]))
         minor_roads = [
             entry for entry in minor_roads
             if _path_length(entry[0]) >= min_minor_len
         ]
 
     total_roads = len(major_roads) + len(minor_roads)
+    density_profile = _get_vintage_density_profile(product_type, total_roads)
+    density_band = str(density_profile["band"])
     boundary_major_count = sum(1 for _coords, road_class, _width, _name in major_roads if road_class == "boundary")
     boundary_fallback_only = bool(major_roads) and boundary_major_count == len(major_roads) and not minor_roads
     # Sparse fallback and small-town maps benefit from extra structure so the output
     # still reads as intentional premium artwork instead of an unfinished draft.
-    is_sparse = total_roads < 160
+    is_sparse = density_band == "sparse"
+    is_dense = density_band == "dense"
     geography_fill = "#dfcfad" if boundary_fallback_only else "#e4d5b7"
     geography_stroke_w = 0.8 if boundary_fallback_only else 0.42
     # City/community relations often contain many administrative segments that
@@ -1133,7 +1179,7 @@ def _generate_vintage_map_svg(
         and not boundary_fallback_only
         and total_roads > 0
     )
-    use_land_hatch = boundary_fallback_only or total_roads < 40
+    use_land_hatch = boundary_fallback_only or total_roads < 40 or (is_sparse and product_type in ("province", "park"))
 
     lines = []
     lines.append('<?xml version="1.0" encoding="UTF-8"?>')
@@ -1301,6 +1347,18 @@ def _generate_vintage_map_svg(
                 "pedestrian": 0.2, "footway": 0.15, "cycleway": 0.15,
                 "path": 0.15, "steps": 0.12, "bridleway": 0.15,
             }
+        elif is_dense:
+            vintage_widths = {
+                "motorway": 0.95, "motorway_link": 0.75,
+                "trunk": 0.85, "trunk_link": 0.65,
+                "primary": 0.72, "primary_link": 0.5,
+                "secondary": 0.52, "secondary_link": 0.4,
+                "tertiary": 0.34, "tertiary_link": 0.28,
+                "residential": 0.2, "unclassified": 0.2,
+                "living_street": 0.18, "service": 0.12, "track": 0.12,
+                "pedestrian": 0.1, "footway": 0.08, "cycleway": 0.08,
+                "path": 0.08, "steps": 0.06, "bridleway": 0.08,
+            }
         else:
             vintage_widths = {
                 "motorway": 1.0, "motorway_link": 0.8,
@@ -1315,16 +1373,25 @@ def _generate_vintage_map_svg(
             }
 
         # Province/state prints can look busy quickly; filter micro roads.
-        is_large_region = total_roads > 420
+        is_large_region = (
+            (product_type == "province" and total_roads > 220)
+            or (product_type in ("city", "community") and total_roads > 620)
+            or total_roads > 780
+        )
         keep_minor_classes = {"tertiary", "tertiary_link", "residential", "secondary_link", "unclassified"}
         keep_major_classes = {"motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link", "secondary"}
 
         # Draw roads with subtle contrast separation.
         drop_minor_classes: set[str] = {"track", "steps", "bridleway"}
-        if product_type in ("city", "community") and not is_sparse:
+        if product_type in ("province", "park"):
+            drop_minor_classes.update({"service", "path", "footway", "cycleway", "pedestrian"})
+        elif product_type in ("city", "community") and is_dense:
             # In denser urban maps, suppress pedestrian micro-lines that add
             # noise without improving print readability.
             drop_minor_classes.update({"service", "path", "footway", "cycleway", "pedestrian"})
+        elif product_type in ("city", "community"):
+            # Balanced urban maps keep service roads but remove footway clutter.
+            drop_minor_classes.update({"path", "footway", "cycleway", "pedestrian"})
         for coords, road_class, _width, name in minor_roads:
             if is_large_region and road_class not in keep_minor_classes:
                 continue

@@ -67,3 +67,32 @@ def test_vintage_city_filters_micro_detail_classes_in_sparse_mode():
     # Dense micro-classes should be skipped in sparse city curation.
     assert "Trail 1" not in svg
     assert "Trail 2" not in svg
+
+
+def test_vintage_province_drops_micro_roads_in_dense_mode():
+    streets = {
+        "major_roads": [
+            ([(25, 25), (175, 145)], "primary", 0.9, "Main Hwy"),
+        ],
+        "minor_roads": [
+            ([(40, 40), (160, 40)], "service", 0.15, "Service Rd"),
+            ([(40, 50), (160, 50)], "footway", 0.1, "Foot Path"),
+            ([(40, 60), (160, 60)], "residential", 0.3, "Elm St"),
+        ] * 90,
+    }
+    svg = generate_svg(
+        processed=_base_processed(),
+        location_name="Nova Scotia",
+        style=CutStyle.filled,
+        show_coordinates=True,
+        font_size_mm=14,
+        streets_data=streets,
+        water_data=None,
+        color_theme="vintage_map",
+        product_type="province",
+        output_mode="print",
+    )["svg"]
+
+    # Province curation removes micro classes to keep dense outputs print-clean.
+    assert "Service Rd" not in svg
+    assert "Foot Path" not in svg

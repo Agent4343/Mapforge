@@ -104,6 +104,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     """Core generation logic shared by single and batch endpoints."""
     warnings: list[str] = []
     is_preview_request = user is None
+    preview_overlays_intentionally_skipped = False
 
     # Resolve board dimensions
     if req.board_width_inches and req.board_height_inches:
@@ -174,12 +175,14 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     if is_preview_request:
         if not req.include_streets and auto_streets:
             need_streets = False
+            preview_overlays_intentionally_skipped = True
             warnings.append(
                 "Fast preview mode: street overlays were skipped for speed. "
                 "Enable Include Streets for a full-detail render."
             )
         if req.product_type.value != "province":
             need_water = False
+            preview_overlays_intentionally_skipped = True
             warnings.append(
                 "Fast preview mode: water overlays were skipped for speed. "
                 "Generate again for full water detail."
@@ -396,10 +399,32 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         needs_location_repick = True
     overlay_unavailable = (need_streets and not streets_data) or (need_water and not water_data)
     effective_path_count = max(result["path_count"], base_path_count)
-    low_node_detail = result["node_count"] < 45
-    low_path_quality = effective_path_count < 8 and not overlay_unavailable and overpass_missing_count == 0
+    product_quality_thresholds = {
+        "city": {"min_nodes": 45, "min_paths": 10},
+        "community": {"min_nodes": 35, "min_paths": 8},
+        "province": {"min_nodes": 24, "min_paths": 6},
+        "park": {"min_nodes": 30, "min_paths": 7},
+        "lake": {"min_nodes": 24, "min_paths": 6},
+        "name_sign": {"min_nodes": 16, "min_paths": 4},
+    }
+    quality_floor = product_quality_thresholds.get(
+        req.product_type.value,
+        {"min_nodes": 24, "min_paths": 6},
+    )
+    low_node_detail = result["node_count"] < quality_floor["min_nodes"]
+    low_path_quality = (
+        effective_path_count < quality_floor["min_paths"]
+        and not overlay_unavailable
+        and overpass_missing_count == 0
+        and not preview_overlays_intentionally_skipped
+    )
     if low_node_detail or low_path_quality:
-        if result["node_count"] < 20:
+        very_limited_nodes_cutoff = max(12, int(quality_floor["min_nodes"] * 0.55))
+        very_limited_paths_cutoff = max(3, int(quality_floor["min_paths"] * 0.6))
+        if (
+            result["node_count"] < very_limited_nodes_cutoff
+            or effective_path_count < very_limited_paths_cutoff
+        ):
             warnings.append(
                 "Map detail is very limited for this selection. For a fuller line pattern, try a nearby Best Match with medium/high geometry before purchase."
             )
