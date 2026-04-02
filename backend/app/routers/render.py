@@ -46,6 +46,7 @@ async def create_job(
         dpi=req.dpi,
         color_theme="classic",  # print SVG already themed
         outputs=[fmt.value for fmt in req.formats],
+        use_maptiler=req.engine_profile == RenderEngineProfile.professional_print,
         profile=req.engine_profile.value,
     )
     return RenderJobCreateResponse(

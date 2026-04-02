@@ -57,6 +57,7 @@ class Settings:
     # MapTiler key for browser-side map preview.
     # Supports both MAPTILER_KEY and VITE_MAPTILER_KEY for deployment flexibility.
     MAPTILER_KEY: str = os.getenv("MAPTILER_KEY", os.getenv("VITE_MAPTILER_KEY", ""))
+    MAPTILER_STATIC_STYLE: str = os.getenv("MAPTILER_STATIC_STYLE", "streets-v2")
 
     # Redis (optional caching layer)
     REDIS_URL: str = os.getenv("REDIS_URL", "")

@@ -15,6 +15,7 @@ from typing import Any
 
 from app.logging_config import log
 from app.services.file_storage import store_file
+from app.services.maptiler_renderer import render_maptiler_print_png, render_png_bytes_to_pdf
 from app.services.thumbnail_generator import generate_print_image, generate_print_pdf
 
 
@@ -181,26 +182,41 @@ async def _run_render_job(
     await _set_job_state(job_id, status="running")
     result: dict[str, str] = {}
     try:
-        if "png" in outputs:
-            png = generate_print_image(
-                svg,
-                skip_remap=True,
+        use_maptiler_engine = str((await get_render_job(job_id) or {}).get("engine", "")) == "maptiler_static_v1"
+        maptiler_png: bytes | None = None
+        if use_maptiler_engine:
+            maptiler_png = await render_maptiler_print_png(
+                svg=svg,
                 board_size=board_size,
                 dpi=dpi,
-                color_theme=color_theme,
             )
+
+        if "png" in outputs:
+            if maptiler_png is not None:
+                png = maptiler_png
+            else:
+                png = generate_print_image(
+                    svg,
+                    skip_remap=True,
+                    board_size=board_size,
+                    dpi=dpi,
+                    color_theme=color_theme,
+                )
             png_key = f"render_jobs/{file_id}/{job_id}_print_{dpi}dpi.png"
             await store_file(png_key, png, content_type="image/png")
             result["png_key"] = png_key
 
         if "pdf" in outputs:
-            pdf = generate_print_pdf(
-                svg,
-                board_size=board_size,
-                dpi=dpi,
-                color_theme=color_theme,
-                skip_remap=True,
-            )
+            if maptiler_png is not None:
+                pdf = render_png_bytes_to_pdf(maptiler_png)
+            else:
+                pdf = generate_print_pdf(
+                    svg,
+                    board_size=board_size,
+                    dpi=dpi,
+                    color_theme=color_theme,
+                    skip_remap=True,
+                )
             pdf_key = f"render_jobs/{file_id}/{job_id}_print_{dpi}dpi.pdf"
             await store_file(pdf_key, pdf, content_type="application/pdf")
             result["pdf_key"] = pdf_key
