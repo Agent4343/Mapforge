@@ -202,3 +202,45 @@ async def test_generate_preview_skip_overlay_warning_does_not_force_repick(db_se
 
     assert any("fast preview mode" in w.lower() for w in resp.warnings)
     assert resp.needs_location_repick is False
+
+
+@pytest.mark.asyncio
+async def test_generate_rejects_administrative_boundary_like_city_output(db_session):
+    req = GenerateRequest(
+        osm_id=993333,
+        osm_type="relation",
+        product_type=ProductType.city,
+        board_size=BoardSize.medium,
+        style=CutStyle.filled,
+        text="Boundaryville",
+        include_streets=True,
+        include_contours=False,
+        print_dpi=300,
+    )
+
+    # Normal city geometry, but only boundary-class street fallback arrives.
+    base_geom = Point(-60.2, 46.1).buffer(0.07, resolution=24)
+
+    async def _mock_fetch_geometry(*_args, **_kwargs):
+        return base_geom
+
+    async def _mock_fetch_streets(*_args, **_kwargs):
+        return {
+            "major_roads": [(
+                [(-60.25, 46.00), (-60.15, 46.20)],
+                "boundary",
+                0.9,
+                "Boundary",
+            )],
+            "minor_roads": [],
+        }
+
+    with (
+        patch("app.routers.generate.fetch_geometry", side_effect=_mock_fetch_geometry),
+        patch("app.routers.generate.fetch_streets", side_effect=_mock_fetch_streets),
+    ):
+        resp = await _do_generate(req, user=None, db=db_session)
+
+    assert resp.needs_location_repick is True
+    joined = " ".join(resp.warnings).lower()
+    assert "boundary-only linework" in joined

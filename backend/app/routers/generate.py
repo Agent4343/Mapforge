@@ -27,6 +27,8 @@ from app.services.auth import get_current_user, get_optional_user
 from app.services.dxf_generator import generate_dxf
 from app.services.stl_generator import generate_stl
 from app.services.geo_fetch import fetch_area_around_point, fetch_fallback_geometry, fetch_geometry
+from app.services.geo_search import search_location
+from app.services.geo_search import search_location
 from app.services.geometry_processor import process_geometry, transform_wgs84_to_board
 from app.services.svg_generator import generate_svg
 from app.services.street_fetcher import fetch_streets
@@ -80,6 +82,51 @@ def _synthesize_boundary_streets(processed: dict) -> dict | None:
     if not major_roads:
         return None
     return {"major_roads": major_roads, "minor_roads": []}
+
+
+def _looks_admin_heavy_city_result(
+    req: GenerateRequest,
+    location_name: str,
+    selected_result: dict | None = None,
+) -> bool:
+    """Detect city/community selections that are likely admin-boundary relations.
+
+    These often render as blocky district polygons and look unprofessional
+    for Etsy art. We warn early so users can re-pick a better city result.
+    """
+    if req.product_type.value not in {"city", "community"}:
+        return False
+
+    # Strong signal from frontend search result metadata.
+    if selected_result:
+        cls = str(selected_result.get("class") or "").lower()
+        typ = str(selected_result.get("type") or "").lower()
+        if cls == "boundary" and typ == "administrative":
+            return True
+
+    # Fallback heuristic from display text.
+    name = (location_name or "").lower()
+    noisy_tokens = ("ward", "district", "subdivision", "borough", "municipality of")
+    return any(tok in name for tok in noisy_tokens)
+
+
+async def _resolve_display_center(location_name: str, osm_id: int, osm_type: str) -> tuple[float, float] | None:
+    """Try to re-center city/community renders on a place node/way, not admin relation centroid."""
+    query = (location_name or "").strip()
+    if not query:
+        return None
+    try:
+        candidates = await search_location(query=query, country="", limit=5)
+    except Exception:
+        return None
+
+    for cand in candidates:
+        # Skip the same relation candidate; prefer place node/way alternatives.
+        if int(cand.osm_id) == int(osm_id) and str(cand.osm_type) == str(osm_type):
+            continue
+        if cand.feature_type in {"city", "community"} and cand.osm_type in {"node", "way"}:
+            return (cand.lat, cand.lon)
+    return None
 
 
 async def _maybe_reset_monthly_counter(user: User, db: AsyncSession):
@@ -164,6 +211,15 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         log.error(f"Geometry processing error for {req.osm_type}/{req.osm_id}: {type(e).__name__}: {e}")
         raise HTTPException(status_code=422, detail="Geometry processing failed. This location may not have sufficient map data. Please try a different location.")
 
+    # Administrative boundary relations can produce technical-looking blocky posters
+    # for city/community art. If available, prefer a nearby place node/way center
+    # for cleaner street-map extraction.
+    display_latlon: tuple[float, float] | None = processed.get("center_latlon")
+    if req.product_type.value in {"city", "community"}:
+        nudged = await _resolve_display_center(req.text or "", req.osm_id, req.osm_type)
+        if nudged:
+            display_latlon = nudged
+
     # Fetch streets and water concurrently for faster generation
     streets_data = None
     water_data = None
@@ -220,6 +276,14 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     # Cities always get full street grid.
     include_minor_streets = not is_medium_area and not (is_province and not req.include_streets)
 
+    # City/community relation boundaries are often administrative and produce
+    # clipped/boxy street texture. Use bbox mode there for cleaner poster context.
+    street_query_osm_id = req.osm_id
+    street_query_osm_type = req.osm_type
+    if req.product_type.value in {"city", "community"} and req.osm_type == "relation":
+        street_query_osm_id = None
+        street_query_osm_type = None
+
     async def _get_streets():
         cache_key = _bbox_cache_key("streets", bbox)
         if cache_key in _overpass_cache:
@@ -228,8 +292,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         result = await fetch_streets(
             bbox=bbox,
             include_minor=include_minor_streets,
-            osm_id=req.osm_id,
-            osm_type=req.osm_type,
+            osm_id=street_query_osm_id,
+            osm_type=street_query_osm_type,
             fast_mode=is_preview_request,
         )
         has_data = result and (result.get("major_roads") or result.get("minor_roads"))
@@ -402,6 +466,21 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     if geometry_fallback_used:
         needs_location_repick = True
     overlay_unavailable = (need_streets and not streets_data) or (need_water and not water_data)
+    relation_only_linework = (
+        req.product_type.value in ("city", "community")
+        and bool(streets_data)
+        and all(str(rc).lower() == "boundary" for _c, rc, _w, _n in (streets_data.get("major_roads") or []))
+        and not (streets_data.get("minor_roads") or [])
+    )
+    major_roads_current = (streets_data or {}).get("major_roads", []) if streets_data else []
+    minor_roads_current = (streets_data or {}).get("minor_roads", []) if streets_data else []
+    boundary_major_count = sum(1 for _coords, cls, _w, _n in major_roads_current if cls == "boundary")
+    boundary_only_street_artifacts = (
+        req.product_type.value in ("city", "community")
+        and bool(major_roads_current)
+        and boundary_major_count == len(major_roads_current)
+        and not minor_roads_current
+    )
     effective_path_count = max(result["path_count"], base_path_count)
     product_quality_thresholds = {
         "city": {"min_nodes": 45, "min_paths": 10},
@@ -436,6 +515,11 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             warnings.append(
                 "Map detail is lighter for this selection. For a fuller line pattern, try a nearby Best Match with medium/high geometry before purchase."
             )
+        needs_location_repick = True
+    if relation_only_linework:
+        warnings.append(
+            "This location returned boundary-only linework (administrative outlines). Pick a place/town result for professional street-map art."
+        )
         needs_location_repick = True
     warnings = list(dict.fromkeys(warnings))
 
