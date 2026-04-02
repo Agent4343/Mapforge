@@ -92,7 +92,7 @@ async def test_generate_uses_single_recovery_warning_when_street_fallback_succee
     req = GenerateRequest(
         osm_id=999777,
         osm_type="relation",
-        product_type=ProductType.city,
+        product_type=ProductType.province,
         board_size=BoardSize.medium,
         style=CutStyle.filled,
         text="Little Narrows",
@@ -125,3 +125,44 @@ async def test_generate_uses_single_recovery_warning_when_street_fallback_succee
     joined = " ".join(resp.warnings).lower()
     assert "boundary linework fallback" in joined
     assert "street data unavailable — the overpass api may be busy" not in joined
+
+
+@pytest.mark.asyncio
+async def test_generate_consolidates_sparse_detail_guidance(db_session):
+    req = GenerateRequest(
+        osm_id=991234,
+        osm_type="relation",
+        product_type=ProductType.city,
+        board_size=BoardSize.medium,
+        style=CutStyle.filled,
+        text="Sparseville",
+        include_streets=True,
+        include_contours=False,
+        print_dpi=300,
+    )
+
+    base_geom = Polygon([
+        (-60.25, 46.05),
+        (-60.15, 46.05),
+        (-60.15, 46.15),
+        (-60.25, 46.15),
+        (-60.25, 46.05),
+    ])
+
+    async def _mock_fetch_geometry(*_args, **_kwargs):
+        return base_geom
+
+    async def _mock_fetch_streets(*_args, **_kwargs):
+        return {"major_roads": [], "minor_roads": []}
+
+    with (
+        patch("app.routers.generate.fetch_geometry", side_effect=_mock_fetch_geometry),
+        patch("app.routers.generate.fetch_streets", side_effect=_mock_fetch_streets),
+    ):
+        resp = await _do_generate(req, user=None, db=db_session)
+
+    sparse_messages = [
+        w for w in resp.warnings
+        if "fuller line pattern" in w.lower() or "nearby best match" in w.lower()
+    ]
+    assert len(sparse_messages) == 1

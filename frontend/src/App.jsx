@@ -224,6 +224,7 @@ export default function App() {
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState(null);
   const [qualityWarning, setQualityWarning] = useState(null);
+  const [blockCheckoutForQuality, setBlockCheckoutForQuality] = useState(false);
   const [country, setCountry] = useState("ca");
   const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [pinCoords, setPinCoords] = useState(null); // {lat, lon} for name_sign pin drop
@@ -268,6 +269,7 @@ export default function App() {
     setResult(null);
     setError(null);
     setQualityWarning(null);
+    setBlockCheckoutForQuality(false);
     if (showToast) {
       addToast(
         draft.design_ref ? `Restored your Etsy design (${draft.design_ref}).` : "Restored your Etsy design.",
@@ -481,6 +483,7 @@ export default function App() {
     setSvgContent(null);
     setResult(null);
     setError(null);
+    setBlockCheckoutForQuality(false);
 
     // Check geometry quality and search confidence before generation.
     if (!item.has_geometry && item.fallback_available) {
@@ -599,17 +602,10 @@ export default function App() {
 
       setSvgContent(data.svg);
       setResult(data);
+      setBlockCheckoutForQuality(Boolean(data.needs_location_repick));
 
       // Quality/generation warnings
       const allWarnings = [...(data.warnings || [])];
-      if (data.node_count < 20) {
-        allWarnings.push("Low detail: This location has very few data points. The map may appear rough or oversimplified.");
-      }
-      if (data.needs_location_repick) {
-        allWarnings.push(
-          "Tip: if you want a denser look, try another Best Match result with medium/high geometry."
-        );
-      }
       setQualityWarning(allWarnings.length > 0 ? allWarnings.join(" ") : null);
     } catch (err) {
       setError(err.message);
@@ -1078,6 +1074,10 @@ export default function App() {
             printDPI={config.printDPI}
             etsyShopUrl={etsyShopUrl}
             onStartEtsyCheckout={handleStartEtsyCheckout}
+            checkoutBlockedReason={blockCheckoutForQuality
+              ? "This preview has limited map detail. Pick a nearby Best Match for a stronger print, or continue anyway."
+              : null}
+            onOverrideCheckoutBlock={() => setBlockCheckoutForQuality(false)}
           />
         </div>
         <div className="panel-right">

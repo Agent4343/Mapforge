@@ -315,7 +315,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     # If Overpass street data is unavailable, synthesize outline linework so the poster
     # still renders with a clean silhouette instead of looking broken/sparse.
     street_fallback_used = False
-    if need_streets and not streets_data:
+    allow_boundary_line_fallback = req.product_type.value == "province"
+    if need_streets and not streets_data and allow_boundary_line_fallback:
         synthesized = _synthesize_boundary_streets(processed)
         if synthesized:
             streets_data = synthesized
@@ -393,25 +394,20 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     base_path_count = sum(1 + len(holes) for _, holes in (processed.get("polygons") or []))
     if geometry_fallback_used:
         needs_location_repick = True
-    if result["node_count"] < 20:
-        warnings.append(
-            "Very low map detail detected. Try another search result (ideally Best Match) for a cleaner poster."
-        )
-        needs_location_repick = True
-    elif result["node_count"] < 45:
-        warnings.append(
-            "Map detail is lighter for this selection. If you want a fuller line pattern, try a nearby city/community result."
-        )
-        needs_location_repick = True
     overlay_unavailable = (need_streets and not streets_data) or (need_water and not water_data)
     effective_path_count = max(result["path_count"], base_path_count)
-    if effective_path_count < 8:
-        warnings.append(
-            "Low path count detected. This location may not render a strong map silhouette; consider a different match."
-        )
-        # Do not force re-pick when low path count is caused by temporary overlay outages.
-        if not overlay_unavailable and overpass_missing_count == 0:
-            needs_location_repick = True
+    low_node_detail = result["node_count"] < 45
+    low_path_quality = effective_path_count < 8 and not overlay_unavailable and overpass_missing_count == 0
+    if low_node_detail or low_path_quality:
+        if result["node_count"] < 20:
+            warnings.append(
+                "Map detail is very limited for this selection. For a fuller line pattern, try a nearby Best Match with medium/high geometry before purchase."
+            )
+        else:
+            warnings.append(
+                "Map detail is lighter for this selection. For a fuller line pattern, try a nearby Best Match with medium/high geometry before purchase."
+            )
+        needs_location_repick = True
     warnings = list(dict.fromkeys(warnings))
 
     # Store files + generate derivatives (only for authenticated users)

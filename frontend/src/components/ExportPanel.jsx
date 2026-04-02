@@ -19,6 +19,8 @@ export default function ExportPanel({
   printDPI,
   etsyShopUrl,
   onStartEtsyCheckout,
+  checkoutBlockedReason,
+  onOverrideCheckoutBlock,
 }) {
   const [showListForm, setShowListForm] = useState(false);
   const [listTitle, setListTitle] = useState("");
@@ -383,11 +385,20 @@ export default function ExportPanel({
           <div className="etsy-cta-card">
             <h3>Love your design?</h3>
             <p>Get your print-ready files — high-resolution PNG, SVG source, and mockup image.</p>
+            {checkoutBlockedReason && (
+              <div
+                className="error-message"
+                style={{ marginBottom: "10px", fontSize: "12px" }}
+              >
+                {checkoutBlockedReason}
+              </div>
+            )}
             {typeof onStartEtsyCheckout === "function" ? (
               <button
                 type="button"
                 className="btn btn-etsy btn-full etsy-buy-btn"
                 onClick={onStartEtsyCheckout}
+                disabled={!!checkoutBlockedReason}
               >
                 Continue to Etsy Checkout
               </button>
@@ -400,6 +411,16 @@ export default function ExportPanel({
               >
                 Buy on Etsy — Get Your Files
               </a>
+            )}
+            {checkoutBlockedReason && typeof onOverrideCheckoutBlock === "function" && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-full"
+                style={{ marginTop: "8px" }}
+                onClick={onOverrideCheckoutBlock}
+              >
+                Continue Anyway
+              </button>
             )}
             <p className="etsy-cta-note">
               {typeof onStartEtsyCheckout === "function"

@@ -1106,9 +1106,10 @@ def _generate_vintage_map_svg(
             entry for entry in major_roads
             if _path_length(entry[0]) >= min_render_len
         ]
-    # For sparse non-fallback maps, drop very short detail segments that add noise.
+    # For sparse non-fallback maps, keep more short segments so small towns
+    # still get a fuller, more connected street texture.
     elif minor_roads:
-        min_minor_len = max(1.2, min(map_w, map_h) * 0.008)
+        min_minor_len = max(0.8, min(map_w, map_h) * 0.005)
         minor_roads = [
             entry for entry in minor_roads
             if _path_length(entry[0]) >= min_minor_len
@@ -1119,7 +1120,7 @@ def _generate_vintage_map_svg(
     boundary_fallback_only = bool(major_roads) and boundary_major_count == len(major_roads) and not minor_roads
     # Sparse fallback and small-town maps benefit from extra structure so the output
     # still reads as intentional premium artwork instead of an unfinished draft.
-    is_sparse = total_roads < 120
+    is_sparse = total_roads < 160
     geography_fill = "#dfcfad" if boundary_fallback_only else "#e4d5b7"
     geography_stroke_w = 0.8 if boundary_fallback_only else 0.42
     use_land_hatch = boundary_fallback_only or total_roads < 40
