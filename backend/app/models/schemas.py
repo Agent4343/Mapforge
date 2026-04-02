@@ -253,6 +253,7 @@ class PinGenerateRequest(BaseModel):
 
 class GenerateResponse(BaseModel):
     svg: Optional[str] = None
+    preview_png_b64: Optional[str] = None
     thumbnail_available: bool = False
     print_png_available: bool = False
     etsy_listing_available: bool = False

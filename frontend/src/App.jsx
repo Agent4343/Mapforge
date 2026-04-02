@@ -221,6 +221,7 @@ export default function App() {
   const [selectedResult, setSelectedResult] = useState(null);
   const [config, setConfig] = useState(loadSavedConfig);
   const [svgContent, setSvgContent] = useState(null);
+  const [previewPngB64, setPreviewPngB64] = useState(null);
   const [result, setResult] = useState(null);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState(null);
@@ -269,6 +270,7 @@ export default function App() {
     setPinCoords(draft.pinCoords || null);
     setMarkers(Array.isArray(draft.markers) ? draft.markers : []);
     setSvgContent(null);
+    setPreviewPngB64(null);
     setResult(null);
     setError(null);
     setQualityWarning(null);
@@ -484,6 +486,7 @@ export default function App() {
       productType: item.feature_type || config.productType,
     });
     setSvgContent(null);
+    setPreviewPngB64(null);
     setResult(null);
     setError(null);
     setBlockCheckoutForQuality(false);
@@ -640,7 +643,15 @@ export default function App() {
         data = await generateSVG(params);
       }
 
-      setSvgContent(data.svg);
+      // Prefer backend-provided MapTiler preview PNG when available.
+      if (data.preview_png_b64) {
+        setSvgContent(
+          `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 2000"><image href="data:image/png;base64,${data.preview_png_b64}" x="0" y="0" width="1600" height="2000" preserveAspectRatio="xMidYMid meet"/></svg>`
+        );
+      } else {
+        setSvgContent(data.svg);
+      }
+      setPreviewPngB64(data.preview_png_b64 || null);
       setResult(data);
       setBlockCheckoutForQuality(Boolean(data.needs_location_repick));
       if (data.needs_location_repick && selectedResult) {
@@ -1167,6 +1178,7 @@ export default function App() {
         <div className="panel-right">
           <SVGPreview
             svgContent={svgContent}
+            previewPngB64={previewPngB64}
             loading={generating}
             error={error}
             colorTheme={config.colorTheme}

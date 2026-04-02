@@ -1,6 +1,7 @@
 """Print/poster map generation API router — with persistence, auth, and all product types."""
 
 import asyncio
+import base64
 import io
 import zipfile
 from datetime import datetime, timezone
@@ -39,7 +40,6 @@ from app.services.thumbnail_generator import (
     remap_poster_theme,
     COLOR_THEMES, MOCKUP_STYLES, PRINT_SIZE_PIXELS,
 )
-from app.services.maptiler_renderer import render_maptiler_print_png, render_png_bytes_to_pdf
 from app.services.app_settings import get_maptiler_key
 
 router = APIRouter(prefix="/api/v1", tags=["generate"])
@@ -369,6 +369,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
 
     # Generate print poster SVG (the primary and only output)
     location_name = req.text or f"Location {req.osm_id}"
+    preview_png_b64 = None
     result = generate_svg(
         processed=processed,
         location_name=location_name,
@@ -437,6 +438,31 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             )
         needs_location_repick = True
     warnings = list(dict.fromkeys(warnings))
+
+    # Optional fast preview image rendered via MapTiler so users can immediately
+    # see the new map-development style in-app (not only after download/export).
+    preview_png_b64 = None
+    if is_preview_request:
+        try:
+            maptiler_key = await get_maptiler_key(db)
+            if maptiler_key:
+                preview_png = await render_maptiler_print_png(
+                    svg=result["svg"],
+                    board_size=req.board_size.value,
+                    dpi=min(300, req.print_dpi),
+                    maptiler_key=maptiler_key,
+                    center_latlon=processed.get("center_latlon"),
+                    bounds_latlon=bbox,
+                    product_type=req.product_type.value,
+                    max_output_dimension=1100,
+                    title_override=location_name,
+                )
+                if preview_png:
+                    import base64
+
+                    preview_png_b64 = base64.b64encode(preview_png).decode("ascii")
+        except Exception as e:
+            log.warning(f"MapTiler preview render failed (non-fatal): {e}")
 
     # Store files + generate derivatives (only for authenticated users)
     # Visitors just get the SVG preview — no file storage needed
@@ -597,6 +623,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
 
     return GenerateResponse(
         svg=result["svg"],
+        preview_png_b64=preview_png_b64,
         thumbnail_available=thumbnail_key is not None,
         print_png_available=print_png_key is not None,
         etsy_listing_available=etsy_key is not None,
@@ -826,6 +853,7 @@ async def generate_pin(
 
     return GenerateResponse(
         svg=result["svg"],
+        preview_png_b64=preview_png_b64,
         thumbnail_available=thumbnail_key is not None,
         print_png_available=print_png_key is not None,
         etsy_listing_available=etsy_key is not None,

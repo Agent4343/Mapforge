@@ -94,7 +94,7 @@ function sanitizeSvg(svg) {
   return cleaned;
 }
 
-export default function SVGPreview({ svgContent, loading, error, colorTheme }) {
+export default function SVGPreview({ svgContent, previewPngB64 = null, loading, error, colorTheme }) {
   const [zoom, setZoom] = useState(100);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
@@ -128,6 +128,11 @@ export default function SVGPreview({ svgContent, loading, error, colorTheme }) {
     // Fallback: apply client-side color remap for older SVGs
     return applyPrintColors(svg, colorTheme || "classic");
   }, [svgContent, isPrint, colorTheme]);
+
+  const displayRasterPreview = useMemo(() => {
+    if (!previewPngB64 || typeof previewPngB64 !== "string") return null;
+    return `data:image/png;base64,${previewPngB64}`;
+  }, [previewPngB64]);
 
   const handleMouseDown = useCallback(
     (e) => {
@@ -243,14 +248,31 @@ export default function SVGPreview({ svgContent, loading, error, colorTheme }) {
         background: isPrint ? theme.bg : undefined,
       }}
     >
-      <div
-        style={{
-          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom / 100})`,
-          transformOrigin: "center center",
-          transition: isPanning ? "none" : "transform 0.15s ease",
-        }}
-        dangerouslySetInnerHTML={{ __html: displaySvg }}
-      />
+      {displayRasterPreview ? (
+        <img
+          src={displayRasterPreview}
+          alt="Map preview"
+          style={{
+            width: "100%",
+            height: "auto",
+            display: "block",
+            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom / 100})`,
+            transformOrigin: "center center",
+            transition: isPanning ? "none" : "transform 0.15s ease",
+            userSelect: "none",
+            pointerEvents: "none",
+          }}
+        />
+      ) : (
+        <div
+          style={{
+            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom / 100})`,
+            transformOrigin: "center center",
+            transition: isPanning ? "none" : "transform 0.15s ease",
+          }}
+          dangerouslySetInnerHTML={{ __html: displaySvg }}
+        />
+      )}
       {/* Toolbar - positioned above the preview */}
       <div className="preview-toolbar">
         <button

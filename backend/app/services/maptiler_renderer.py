@@ -187,6 +187,7 @@ async def render_maptiler_print_png(
     center_latlon: tuple[float, float] | None = None,
     bounds_latlon: tuple[float, float, float, float] | None = None,
     product_type: str | None = None,
+    max_output_dimension: int | None = None,
 ) -> bytes | None:
     """Render print-ready PNG via MapTiler static endpoint.
 
@@ -210,6 +211,14 @@ async def render_maptiler_print_png(
     scale = dpi / PRINT_DPI_STANDARD
     out_w = int(base[0] * scale)
     out_h = int(base[1] * scale)
+    if max_output_dimension and max_output_dimension > 0:
+        downscale = min(
+            1.0,
+            float(max_output_dimension) / float(max(out_w, 1)),
+            float(max_output_dimension) / float(max(out_h, 1)),
+        )
+        out_w = max(512, int(out_w * downscale))
+        out_h = max(640, int(out_h * downscale))
 
     # Reserve bottom typography band similar to vintage layout.
     text_band_h = max(220, int(out_h * 0.14))
