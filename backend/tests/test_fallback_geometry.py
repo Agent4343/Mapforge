@@ -244,3 +244,32 @@ async def test_generate_rejects_administrative_boundary_like_city_output(db_sess
     assert resp.needs_location_repick is True
     joined = " ".join(resp.warnings).lower()
     assert "boundary-only linework" in joined
+
+
+@pytest.mark.asyncio
+async def test_generate_maptiler_only_mode_skips_overpass_outage_warnings(db_session):
+    req = GenerateRequest(
+        osm_id=994444,
+        osm_type="relation",
+        product_type=ProductType.city,
+        board_size=BoardSize.medium,
+        style=CutStyle.filled,
+        text="MapTilerOnly",
+        include_streets=True,
+        include_contours=False,
+        print_dpi=300,
+    )
+
+    base_geom = Point(-60.2, 46.1).buffer(0.08, resolution=24)
+
+    async def _mock_fetch_geometry(*_args, **_kwargs):
+        return base_geom
+
+    with (
+        patch("app.routers.generate.fetch_geometry", side_effect=_mock_fetch_geometry),
+        patch("app.routers.generate.settings.MAPFORGE_MAPTILER_ONLY_MODE", True),
+    ):
+        resp = await _do_generate(req, user=None, db=db_session)
+
+    joined = " ".join(resp.warnings).lower()
+    assert "overpass api may be busy" not in joined

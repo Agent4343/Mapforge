@@ -58,6 +58,11 @@ class Settings:
     # Supports both MAPTILER_KEY and VITE_MAPTILER_KEY for deployment flexibility.
     MAPTILER_KEY: str = os.getenv("MAPTILER_KEY", os.getenv("VITE_MAPTILER_KEY", ""))
     MAPTILER_STATIC_STYLE: str = os.getenv("MAPTILER_STATIC_STYLE", "streets-v2")
+    # When enabled, customer generation skips Overpass overlays and uses
+    # MapTiler-only preview/export composition to avoid Overpass instability.
+    MAPFORGE_MAPTILER_ONLY_MODE: bool = os.getenv("MAPFORGE_MAPTILER_ONLY_MODE", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
 
     # Redis (optional caching layer)
     REDIS_URL: str = os.getenv("REDIS_URL", "")

@@ -129,6 +129,12 @@ async def _resolve_display_center(location_name: str, osm_id: int, osm_type: str
     return None
 
 
+def _is_maptiler_only_mode() -> bool:
+    """Production toggle: bypass Overpass overlays for reliability."""
+    raw = str(getattr(settings, "MAPTILER_ONLY_MODE", "false") or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 async def _maybe_reset_monthly_counter(user: User, db: AsyncSession):
     """Reset generation counter if a new month has started."""
     now = datetime.now(timezone.utc)
@@ -155,6 +161,10 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     warnings: list[str] = []
     is_preview_request = user is None
     preview_overlays_intentionally_skipped = False
+    maptiler_only_mode = bool(
+        settings.MAPFORGE_MAPTILER_ONLY_MODE
+        and req.product_type.value in {"city", "community", "name_sign"}
+    )
 
     # Resolve board dimensions
     if req.board_width_inches and req.board_height_inches:
@@ -215,7 +225,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     # for city/community art. If available, prefer a nearby place node/way center
     # for cleaner street-map extraction.
     display_latlon: tuple[float, float] | None = processed.get("center_latlon")
-    if req.product_type.value in {"city", "community"}:
+    if req.product_type.value in {"city", "community"} and not maptiler_only_mode:
         nudged = await _resolve_display_center(req.text or "", req.osm_id, req.osm_type)
         if nudged:
             display_latlon = nudged
@@ -230,8 +240,13 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     # Always fetch water for provinces — lakes/rivers give the shape character
     need_water = req.product_type.value in water_types or req.product_type.value == "province"
 
+    # Strict production mode: rely on MapTiler rendering path, not Overpass overlays.
+    if maptiler_only_mode:
+        need_streets = False
+        need_water = False
+
     # Preview mode prioritizes speed: default auto overlays off unless explicitly enabled.
-    if is_preview_request:
+    if is_preview_request and not maptiler_only_mode:
         if not req.include_streets and auto_streets:
             need_streets = False
             preview_overlays_intentionally_skipped = True
@@ -250,7 +265,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     # Always fetch major highways for provinces — with cased road styling
     # they look professional and give the map structure
     is_province = req.product_type.value == "province"
-    if is_province and not need_streets:
+    if is_province and not need_streets and not maptiler_only_mode:
         need_streets = True
 
     bounds = geom.bounds  # minx, miny, maxx, maxy
