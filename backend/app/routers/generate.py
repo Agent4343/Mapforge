@@ -32,12 +32,15 @@ from app.services.street_fetcher import fetch_streets
 from app.services.water_fetcher import fetch_water_features
 from app.services.contour_fetcher import fetch_contour_lines, generate_depth_bands
 from app.services.file_storage import store_file, retrieve_file
+from app.services.maptiler_renderer import render_maptiler_print_png, render_png_bytes_to_pdf
 from app.services.thumbnail_generator import (
     generate_thumbnail, generate_print_image, generate_print_pdf, generate_etsy_listing_image,
     generate_watermarked_preview, generate_wall_mockup, calculate_print_pixels,
     remap_poster_theme,
     COLOR_THEMES, MOCKUP_STYLES, PRINT_SIZE_PIXELS,
 )
+from app.services.maptiler_renderer import render_maptiler_print_png, render_png_bytes_to_pdf
+from app.services.app_settings import get_maptiler_key
 
 router = APIRouter(prefix="/api/v1", tags=["generate"])
 limiter = Limiter(key_func=get_remote_address)
@@ -804,6 +807,7 @@ async def generate_pin(
             dxf_storage_key=None,
             thumbnail_key=thumbnail_key,
             print_png_key=print_png_key,
+            print_pdf_key=print_pdf_key,
             lat=req.lat,
             lon=req.lon,
         )

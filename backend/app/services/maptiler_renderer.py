@@ -160,6 +160,21 @@ def _zoom_to_fit_bbox(
     return max(4.0, min(15.5, zoom))
 
 
+def _apply_product_zoom_bias(zoom: float, product_type: str | None) -> float:
+    """Nudge zoom by product type for better visual composition."""
+    pt = (product_type or "").strip().lower()
+    # Regions need to zoom out slightly; city/name_sign can zoom in.
+    bias = {
+        "province": -0.8,
+        "park": -0.45,
+        "lake": -0.25,
+        "community": 0.15,
+        "city": 0.35,
+        "name_sign": 0.55,
+    }.get(pt, 0.0)
+    return max(4.0, min(15.5, zoom + bias))
+
+
 async def render_maptiler_print_png(
     *,
     svg: str,
@@ -171,6 +186,7 @@ async def render_maptiler_print_png(
     title_override: str | None = None,
     center_latlon: tuple[float, float] | None = None,
     bounds_latlon: tuple[float, float, float, float] | None = None,
+    product_type: str | None = None,
 ) -> bytes | None:
     """Render print-ready PNG via MapTiler static endpoint.
 
@@ -215,6 +231,7 @@ async def render_maptiler_print_png(
             zoom = 11.7
         elif board_size in {"print_8x10", "print_11x14"}:
             zoom = 12.6
+    zoom = _apply_product_zoom_bias(zoom, product_type)
 
     # MapTiler static endpoint has practical image-size limits; fetch at capped
     # size, then upscale for print resolution.
@@ -222,7 +239,7 @@ async def render_maptiler_print_png(
     fetch_w = max(512, int(out_w * fetch_scale))
     fetch_h = max(512, int(map_h * fetch_scale))
 
-    style = (style_id or settings.MAPTILER_STYLE_ID or "streets-v2").strip()
+    style = (style_id or settings.MAPTILER_STATIC_STYLE or "streets-v2").strip()
     static_url = (
         f"https://api.maptiler.com/maps/{style}/static/"
         f"{lon:.6f},{lat:.6f},{zoom:.2f}/{fetch_w}x{fetch_h}.png?key={key}"

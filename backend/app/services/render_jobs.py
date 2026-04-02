@@ -58,6 +58,10 @@ async def create_render_job(
     outputs: list[str],
     engine: str = "svg_v1",
     profile: str = "professional_print",
+    center_latlon: tuple[float, float] | None = None,
+    bounds_latlon: tuple[float, float, float, float] | None = None,
+    product_type: str = "city",
+    maptiler_key: str | None = None,
 ) -> str:
     """Queue a high-resolution render job and return its ID."""
     now = _utc_iso()
@@ -93,6 +97,11 @@ async def create_render_job(
             dpi=dpi,
             color_theme=color_theme,
             outputs=outputs,
+            engine=engine,
+            center_latlon=center_latlon,
+            bounds_latlon=bounds_latlon,
+            product_type=product_type,
+            maptiler_key=maptiler_key,
         )
     )
     return job.id
@@ -129,6 +138,10 @@ async def enqueue_render_job(
     outputs: list[str],
     engine: str = "svg_v1",
     profile: str = "professional_print",
+    center_latlon: tuple[float, float] | None = None,
+    bounds_latlon: tuple[float, float, float, float] | None = None,
+    product_type: str = "city",
+    maptiler_key: str | None = None,
 ) -> str:
     """Public API alias for queuing a render job."""
     return await create_render_job(
@@ -140,6 +153,10 @@ async def enqueue_render_job(
         outputs=outputs,
         engine=engine,
         profile=profile,
+        center_latlon=center_latlon,
+        bounds_latlon=bounds_latlon,
+        product_type=product_type,
+        maptiler_key=maptiler_key,
     )
 
 
@@ -178,17 +195,26 @@ async def _run_render_job(
     dpi: int,
     color_theme: str,
     outputs: list[str],
+    engine: str = "svg_v1",
+    center_latlon: tuple[float, float] | None = None,
+    bounds_latlon: tuple[float, float, float, float] | None = None,
+    product_type: str = "city",
+    maptiler_key: str | None = None,
 ) -> None:
     await _set_job_state(job_id, status="running")
     result: dict[str, str] = {}
     try:
-        use_maptiler_engine = str((await get_render_job(job_id) or {}).get("engine", "")) == "maptiler_static_v1"
+        use_maptiler_engine = engine == "maptiler_static_v1"
         maptiler_png: bytes | None = None
         if use_maptiler_engine:
             maptiler_png = await render_maptiler_print_png(
                 svg=svg,
                 board_size=board_size,
                 dpi=dpi,
+                maptiler_key=maptiler_key,
+                center_latlon=center_latlon,
+                bounds_latlon=bounds_latlon,
+                product_type=product_type,
             )
 
         if "png" in outputs:
