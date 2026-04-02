@@ -1161,8 +1161,8 @@ export default function App() {
               ? "This preview has limited map detail. Pick a nearby Best Match for a stronger print, or continue anyway."
               : null}
             onOverrideCheckoutBlock={() => setBlockCheckoutForQuality(false)}
-            nearbyQualitySuggestions={nearbyQualitySuggestions}
-            onPickNearbySuggestion={handlePickNearbySuggestion}
+            nearbyQualitySuggestions={qualitySuggestions}
+            onPickNearbySuggestion={handleSelect}
           />
         </div>
         <div className="panel-right">

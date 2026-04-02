@@ -21,6 +21,8 @@ export default function ExportPanel({
   onStartEtsyCheckout,
   checkoutBlockedReason,
   onOverrideCheckoutBlock,
+  nearbyQualitySuggestions = [],
+  onPickNearbySuggestion,
 }) {
   const [showListForm, setShowListForm] = useState(false);
   const [listTitle, setListTitle] = useState("");
@@ -391,6 +393,26 @@ export default function ExportPanel({
                 style={{ marginBottom: "10px", fontSize: "12px" }}
               >
                 {checkoutBlockedReason}
+              </div>
+            )}
+            {Array.isArray(nearbyQualitySuggestions) && nearbyQualitySuggestions.length > 0 && (
+              <div style={{ display: "grid", gap: "6px", marginBottom: "10px" }}>
+                {nearbyQualitySuggestions.map((s) => (
+                  <button
+                    key={`${s.osm_type}-${s.osm_id}`}
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ textAlign: "left", fontSize: "11px", padding: "6px 8px" }}
+                    onClick={() => {
+                      if (typeof onPickNearbySuggestion === "function") onPickNearbySuggestion(s);
+                    }}
+                  >
+                    <strong>{String(s.display_name || "").split(",")[0]}</strong>
+                    {" · "}
+                    {s.geometry_quality || "unknown"} geometry
+                    {s.is_recommended ? " · Best Match" : ""}
+                  </button>
+                ))}
               </div>
             )}
             {typeof onStartEtsyCheckout === "function" ? (
