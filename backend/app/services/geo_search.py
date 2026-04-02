@@ -382,6 +382,12 @@ async def search_location(query: str, country: str = "ca", limit: int = 10) -> l
             country_code=country_code,
             admin_region=admin_region or None,
             fallback_available=fallback_available,
+            # Hard-block city/community picks that are administrative boundaries,
+            # as they often produce blocky, non-professional poster linework.
+            is_admin_boundary=(
+                str(item.get("class", "")).lower() == "boundary"
+                and str(item.get("type", "")).lower() == "administrative"
+            ),
         ))
 
     # Sort by computed relevance so the best candidate appears first.

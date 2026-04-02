@@ -114,6 +114,7 @@ class SearchResult(BaseModel):
     admin_region: Optional[str] = None
     is_recommended: bool = False
     fallback_available: bool = False
+    is_admin_boundary: bool = False
 
 
 class SearchResponse(BaseModel):

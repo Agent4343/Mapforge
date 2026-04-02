@@ -166,3 +166,63 @@ async def test_search_parses_country_hint_without_commas():
     assert len(results) == 2
     assert results[0].country_code == "au"
     assert "australia" in results[0].display_name.lower()
+
+
+@pytest.mark.asyncio
+async def test_search_flags_admin_boundary_city_result():
+    mocked_payload = [
+        {
+            "osm_id": 4001,
+            "osm_type": "relation",
+            "display_name": "Sydney District, Example Region, Canada",
+            "lat": "46.1382",
+            "lon": "-60.1942",
+            "class": "boundary",
+            "type": "administrative",
+            "place_rank": 16,
+            "importance": 0.55,
+            "address": {"country_code": "ca", "state": "Nova Scotia"},
+            "extratags": {"admin_level": "9"},
+            "boundingbox": ["45.9", "46.3", "-60.5", "-59.9"],
+            "geojson": {
+                "type": "Polygon",
+                "coordinates": [[
+                    [-60.2, 46.1], [-60.15, 46.1], [-60.15, 46.2], [-60.2, 46.2], [-60.2, 46.1]
+                ]],
+            },
+        }
+    ]
+
+    async def _cache_miss(*_args, **_kwargs):
+        return None
+
+    async def _cache_noop(*_args, **_kwargs):
+        return True
+
+    class _MockResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    class _MockClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, *_args, **_kwargs):
+            return _MockResponse(mocked_payload)
+
+    with patch("app.services.geo_search.cache_get", side_effect=_cache_miss), \
+         patch("app.services.geo_search.cache_set", side_effect=_cache_noop), \
+         patch("app.services.geo_search.httpx.AsyncClient", return_value=_MockClient()):
+        results = await search_location("Sydney NS", country="ca", limit=5)
+
+    assert len(results) == 1
+    assert results[0].is_admin_boundary is True

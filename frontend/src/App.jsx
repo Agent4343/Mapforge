@@ -925,6 +925,7 @@ export default function App() {
             selectedResult={selectedResult}
             country={country}
             maptilerKey={maptilerKey}
+            productType={config.productType}
           />
 
           {/* Pin Drop for Name Sign — mark a home or special location */}

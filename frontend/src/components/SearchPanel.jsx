@@ -11,7 +11,13 @@ const TYPE_LABELS = {
   name_sign: "Name Sign",
 };
 
-export default function SearchPanel({ onSelect, selectedResult, country, maptilerKey = "" }) {
+export default function SearchPanel({
+  onSelect,
+  selectedResult,
+  country,
+  productType = "city",
+  maptilerKey = "",
+}) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -36,7 +42,16 @@ export default function SearchPanel({ onSelect, selectedResult, country, maptile
       setError(null);
       try {
         const data = await searchLocations(val.trim(), country);
-        setResults(data.results || []);
+        const rawResults = data.results || [];
+        const filtered = rawResults.filter((r) => {
+          // Hard block: for city/community products, hide known administrative
+          // boundary artifacts from the picker to avoid boxy non-professional output.
+          if (productType === "city" || productType === "community") {
+            return !r.is_admin_boundary_candidate;
+          }
+          return true;
+        });
+        setResults(filtered);
       } catch (err) {
         setError(err.message);
         setResults([]);
@@ -85,7 +100,14 @@ export default function SearchPanel({ onSelect, selectedResult, country, maptile
 
       {results.length > 0 && (
         <div className="search-results">
-          <div className="search-results-count">{results.length} results</div>
+          <div className="search-results-count">
+            {results.length} results
+            {(productType === "city" || productType === "community") && (
+              <span style={{ marginLeft: "6px", color: "var(--text-muted)" }}>
+                (administrative boundary picks hidden)
+              </span>
+            )}
+          </div>
           {results.map((r) => (
             <div
               key={`${r.osm_type}-${r.osm_id}`}
