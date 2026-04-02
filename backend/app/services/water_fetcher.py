@@ -7,6 +7,7 @@ Uses sequential endpoint fallback with proper identification headers.
 
 import asyncio
 import time
+import math
 
 import httpx
 
@@ -19,6 +20,43 @@ OVERPASS_ENDPOINTS = [
     "https://overpass.openstreetmap.fr/api/interpreter",
     "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
 ]
+
+
+def _polygon_area_wgs84(coords: list[tuple[float, float]]) -> float:
+    """Approximate polygon area in degree² using planar shoelace."""
+    if len(coords) < 4:
+        return 0.0
+    area = 0.0
+    pts = coords
+    if pts[0] != pts[-1]:
+        pts = pts + [pts[0]]
+    for i in range(len(pts) - 1):
+        x1, y1 = pts[i]
+        x2, y2 = pts[i + 1]
+        area += (x1 * y2) - (x2 * y1)
+    return abs(area) * 0.5
+
+
+def _is_reasonable_relation_water_polygon(
+    ring: list[tuple[float, float]],
+    bbox_area_deg2: float,
+) -> bool:
+    """Drop obviously malformed relation polygons that engulf the whole bbox.
+
+    Overpass multipolygon relations can occasionally include unmerged/incomplete
+    outers that produce giant envelopes around the target region. Those are not
+    real water bodies and look like the artifact in user screenshots.
+    """
+    if len(ring) < 4:
+        return False
+    area = _polygon_area_wgs84(ring)
+    if area <= 0:
+        return False
+    # Ignore polygons that are too large relative to the request bbox.
+    # Real lakes/coastal insets should be materially smaller than province bbox.
+    if bbox_area_deg2 > 0 and area > bbox_area_deg2 * 0.35:
+        return False
+    return True
 
 REQUEST_HEADERS = {
     "User-Agent": "MapForgeCNC/1.0 (https://mapforge-production.up.railway.app; mapforge map generator)",
@@ -137,6 +175,7 @@ async def fetch_water_features(
         as lists of (coords_list, water_type, name) tuples
     """
     south, west, north, east = bbox
+    bbox_area_deg2 = max(0.0, (north - south) * (east - west))
 
     # Simplified query — combine water selectors to reduce Overpass load.
     # Using a shorter timeout (30s instead of 45s) to fail faster and try
@@ -227,7 +266,8 @@ async def fetch_water_features(
             if len(ring) >= 4:
                 if ring[0] != ring[-1]:
                     ring.append(ring[0])
-                water_polygons.append((ring, water_type, name))
+                if _is_reasonable_relation_water_polygon(ring, bbox_area_deg2):
+                    water_polygons.append((ring, water_type, name))
 
     log.info(f"Fetched {len(water_polygons)} water polygons, {len(waterways)} waterways")
     return {"water_polygons": water_polygons, "waterways": waterways}
