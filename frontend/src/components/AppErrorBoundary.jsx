@@ -26,7 +26,7 @@ export default class AppErrorBoundary extends React.Component {
 
   render() {
     if (this.state.hasError) {
-      return <AppCrashFallback errorMessage={this.state.errorMessage} />;
+      return <AppCrashFallback error={this.state.errorMessage} />;
     }
     return this.props.children;
   }

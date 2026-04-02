@@ -1,5 +1,9 @@
-export default function AppCrashFallback({ error }) {
-  const message = error?.message ? String(error.message) : "Unknown startup error";
+export default function AppCrashFallback({ errorMessage, error }) {
+  const message = (
+    (typeof errorMessage === "string" && errorMessage.trim()) ||
+    (error?.message ? String(error.message) : "") ||
+    "Unknown startup error"
+  );
   return (
     <div
       style={{
