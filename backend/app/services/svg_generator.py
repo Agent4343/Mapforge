@@ -405,6 +405,7 @@ def _generate_print_svg(
             include_bleed=include_bleed,
             include_crop_marks=include_crop_marks,
             show_compass=show_compass,
+            product_type=product_type,
             style_variant=color_theme,
         )
 
@@ -997,6 +998,7 @@ def _generate_vintage_map_svg(
     include_bleed: bool = False,
     include_crop_marks: bool = False,
     show_compass: bool = False,
+    product_type: str = "lake",
     style_variant: str = "vintage_map",
 ) -> dict:
     """Generate a vintage parchment-style map with monochrome line art.
@@ -1123,6 +1125,14 @@ def _generate_vintage_map_svg(
     is_sparse = total_roads < 160
     geography_fill = "#dfcfad" if boundary_fallback_only else "#e4d5b7"
     geography_stroke_w = 0.8 if boundary_fallback_only else 0.42
+    # City/community relations often contain many administrative segments that
+    # look technical (boxy) when stroked. Keep fill, but suppress those strokes
+    # so the poster reads as art instead of GIS boundaries.
+    suppress_internal_geo_strokes = (
+        product_type in ("city", "community")
+        and not boundary_fallback_only
+        and total_roads > 0
+    )
     use_land_hatch = boundary_fallback_only or total_roads < 40
 
     lines = []
@@ -1226,9 +1236,11 @@ def _generate_vintage_map_svg(
         path_d = _coords_to_path(exterior)
         for hole in holes:
             path_d += " " + _coords_to_path(hole)
+        stroke_color = "none" if suppress_internal_geo_strokes else ink_light
+        stroke_width = 0 if suppress_internal_geo_strokes else geography_stroke_w
         lines.append(
             f'      <path d="{path_d}"'
-            f' fill="{geography_fill}" stroke="{ink_light}" stroke-width="{geography_stroke_w}"'
+            f' fill="{geography_fill}" stroke="{stroke_color}" stroke-width="{stroke_width}"'
             f' fill-rule="evenodd" stroke-linejoin="round"/>'
         )
         path_count += 1
@@ -1308,8 +1320,15 @@ def _generate_vintage_map_svg(
         keep_major_classes = {"motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link", "secondary"}
 
         # Draw roads with subtle contrast separation.
+        drop_minor_classes: set[str] = {"track", "steps", "bridleway"}
+        if product_type in ("city", "community") and not is_sparse:
+            # In denser urban maps, suppress pedestrian micro-lines that add
+            # noise without improving print readability.
+            drop_minor_classes.update({"service", "path", "footway", "cycleway", "pedestrian"})
         for coords, road_class, _width, name in minor_roads:
             if is_large_region and road_class not in keep_minor_classes:
+                continue
+            if road_class in drop_minor_classes:
                 continue
             if len(coords) < 2:
                 continue
