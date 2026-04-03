@@ -1,7 +1,7 @@
 """Tests for geometry fallback generation and acceptance checks."""
 
 import math
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from shapely.geometry import Point, Polygon
@@ -381,3 +381,87 @@ async def test_generate_maptiler_only_mode_suppresses_low_detail_repick_guidance
     assert "map detail is very limited" not in joined
     assert "map detail is lighter" not in joined
     assert resp.needs_location_repick is False
+
+
+@pytest.mark.asyncio
+async def test_generate_maptiler_only_mode_warns_when_static_render_fails(db_session):
+    req = GenerateRequest(
+        osm_id=998888,
+        osm_type="relation",
+        product_type=ProductType.province,
+        board_size=BoardSize.medium,
+        style=CutStyle.filled,
+        text="MapTilerStaticFail",
+        include_streets=False,
+        include_contours=False,
+        print_dpi=300,
+    )
+
+    base_geom = Point(-60.2, 46.1).buffer(0.08, resolution=24)
+
+    async def _mock_fetch_geometry(*_args, **_kwargs):
+        return base_geom
+
+    async def _mock_maptiler_png(*_args, **_kwargs):
+        return None
+
+    from app.services.app_settings import set_setting
+    await set_setting(db_session, "MAPFORGE_MAPTILER_ONLY_MODE", "1")
+    await set_setting(db_session, "MAPTILER_KEY", "fake-key")
+
+    with (
+        patch("app.routers.generate.fetch_geometry", side_effect=_mock_fetch_geometry),
+        patch("app.routers.generate.render_maptiler_print_png", side_effect=_mock_maptiler_png),
+    ):
+        resp = await _do_generate(req, user=None, db=db_session)
+
+    joined = " ".join(resp.warnings).lower()
+    assert "maptiler static map render failed" in joined
+
+
+@pytest.mark.asyncio
+async def test_generate_maptiler_only_mode_uses_maptiler_render_for_stored_outputs(db_session):
+    req = GenerateRequest(
+        osm_id=999111,
+        osm_type="relation",
+        product_type=ProductType.province,
+        board_size=BoardSize.medium,
+        style=CutStyle.filled,
+        text="MapTilerOutput",
+        include_streets=False,
+        include_contours=False,
+        print_dpi=300,
+    )
+
+    base_geom = Point(-60.2, 46.1).buffer(0.08, resolution=24)
+
+    async def _mock_fetch_geometry(*_args, **_kwargs):
+        return base_geom
+
+    async def _mock_maptiler_png(*_args, **_kwargs):
+        return b"\x89PNG\r\n\x1a\nfake"
+
+    from app.services.app_settings import set_setting
+    await set_setting(db_session, "MAPFORGE_MAPTILER_ONLY_MODE", "1")
+    await set_setting(db_session, "MAPTILER_KEY", "fake-key")
+
+    class _DummyUser:
+        id = "u1"
+        tier = "admin"
+        generation_count_this_month = 0
+        month_reset_date = None
+
+    with (
+        patch("app.routers.generate.fetch_geometry", side_effect=_mock_fetch_geometry),
+        patch("app.routers.generate.render_maptiler_print_png", side_effect=_mock_maptiler_png),
+        patch("app.routers.generate.store_file", new=AsyncMock()),
+        patch("app.routers.generate.generate_print_image", side_effect=AssertionError("should not use SVG print engine in maptiler-only mode")),
+        patch("app.routers.generate.generate_print_pdf", side_effect=AssertionError("should not use SVG pdf engine in maptiler-only mode")),
+        patch("app.routers.generate.render_png_bytes_to_pdf", return_value=b"%PDF-1.4 fake"),
+        patch("app.routers.generate.generate_thumbnail", return_value=b"thumb"),
+        patch("app.routers.generate.generate_etsy_listing_image", return_value=b"etsy"),
+        patch("app.routers.generate.generate_dxf", return_value=b"dxf"),
+    ):
+        resp = await _do_generate(req, user=_DummyUser(), db=db_session)
+
+    assert resp.print_png_available is True

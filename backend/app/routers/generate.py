@@ -54,6 +54,39 @@ _overpass_cache: dict[str, dict] = {}
 _OVERPASS_CACHE_MAX = 200
 
 
+async def _render_maptiler_poster_png(
+    *,
+    db: AsyncSession,
+    req: GenerateRequest,
+    result_svg: str,
+    location_name: str,
+    center_latlon: tuple[float, float] | None,
+    bbox: tuple[float, float, float, float],
+    maptiler_key: str | None = None,
+    max_output_dimension: int | None = None,
+) -> bytes | None:
+    """Try MapTiler static renderer for poster output.
+
+    Returns PNG bytes on success, otherwise None (non-fatal fallback).
+    """
+    resolved_key = (maptiler_key or "").strip()
+    if not resolved_key:
+        resolved_key = (await get_maptiler_key(db) or "").strip()
+    if not resolved_key:
+        return None
+    return await render_maptiler_print_png(
+        svg=result_svg,
+        board_size=req.board_size.value,
+        dpi=req.print_dpi,
+        maptiler_key=resolved_key,
+        center_latlon=center_latlon,
+        bounds_latlon=bbox,
+        product_type=req.product_type.value,
+        max_output_dimension=max_output_dimension,
+        title_override=location_name,
+    )
+
+
 def _bbox_cache_key(prefix: str, bbox: tuple) -> str:
     """Create a cache key for Overpass results based on bbox."""
     return f"{prefix}:{bbox[0]:.4f},{bbox[1]:.4f},{bbox[2]:.4f},{bbox[3]:.4f}"
@@ -548,30 +581,46 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         needs_location_repick = True
     warnings = list(dict.fromkeys(warnings))
 
+    maptiler_static_failed = False
+    maptiler_key_runtime = ""
+    if maptiler_only_mode or is_preview_request:
+        try:
+            maptiler_key_runtime = (await get_maptiler_key(db) or "").strip()
+        except Exception as e:
+            log.warning(f"MapTiler key lookup failed in generate flow: {e}")
+            maptiler_key_runtime = ""
+    if maptiler_only_mode and not maptiler_key_runtime:
+        warnings.append(
+            "MapTiler-only mode is enabled but no valid MapTiler key is configured. "
+            "Showing fallback boundary art."
+        )
+
     # Optional fast preview image rendered via MapTiler so users can immediately
     # see the new map-development style in-app (not only after download/export).
     preview_png_b64 = None
-    if is_preview_request:
+    if is_preview_request or maptiler_only_mode:
         try:
-            maptiler_key = await get_maptiler_key(db)
-            if maptiler_key:
-                preview_png = await render_maptiler_print_png(
-                    svg=result["svg"],
-                    board_size=req.board_size.value,
-                    dpi=min(300, req.print_dpi),
-                    maptiler_key=maptiler_key,
+            if maptiler_key_runtime:
+                preview_png = await _render_maptiler_poster_png(
+                    db=db,
+                    req=req,
+                    result_svg=result["svg"],
+                    location_name=location_name,
                     center_latlon=processed.get("center_latlon"),
-                    bounds_latlon=bbox,
-                    product_type=req.product_type.value,
+                    bbox=bbox,
+                    maptiler_key=maptiler_key_runtime,
                     max_output_dimension=1100,
-                    title_override=location_name,
                 )
                 if preview_png:
                     import base64
 
                     preview_png_b64 = base64.b64encode(preview_png).decode("ascii")
+                elif maptiler_only_mode:
+                    maptiler_static_failed = True
         except Exception as e:
             log.warning(f"MapTiler preview render failed (non-fatal): {e}")
+            if maptiler_only_mode and maptiler_key_runtime:
+                maptiler_static_failed = True
 
     # Store files + generate derivatives (only for authenticated users)
     # Visitors just get the SVG preview — no file storage needed
@@ -591,6 +640,24 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         except Exception as e:
             log.error(f"Failed to store SVG: {e}")
             raise HTTPException(status_code=500, detail="Failed to save generated file. Please try again.")
+
+        maptiler_print_png: bytes | None = None
+        if maptiler_only_mode and maptiler_key_runtime:
+            try:
+                maptiler_print_png = await _render_maptiler_poster_png(
+                    db=db,
+                    req=req,
+                    result_svg=result["svg"],
+                    location_name=location_name,
+                    center_latlon=processed.get("center_latlon"),
+                    bbox=bbox,
+                    maptiler_key=maptiler_key_runtime,
+                )
+            except Exception as e:
+                log.warning(f"MapTiler print render failed (non-fatal): {e}")
+                maptiler_print_png = None
+            if maptiler_print_png is None:
+                maptiler_static_failed = True
 
         # Generate DXF (CNC-ready vector) alongside SVG
         try:
@@ -634,13 +701,16 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
 
         # Generate high-res print PNG from poster SVG (themed, with proper layout)
         try:
-            print_bytes = generate_print_image(
-                result["svg"],
-                color_theme=req.color_theme,
-                skip_remap=True,
-                board_size=req.board_size.value,
-                dpi=req.print_dpi,
-            )
+            if maptiler_print_png is not None:
+                print_bytes = maptiler_print_png
+            else:
+                print_bytes = generate_print_image(
+                    result["svg"],
+                    color_theme=req.color_theme,
+                    skip_remap=True,
+                    board_size=req.board_size.value,
+                    dpi=req.print_dpi,
+                )
             print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
             await store_file(print_png_key, print_bytes, content_type="image/png")
         except Exception as e:
@@ -649,13 +719,16 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
 
         # Generate vector print PDF for pro print workflow.
         try:
-            pdf_bytes = generate_print_pdf(
-                result["svg"],
-                board_size=req.board_size.value,
-                dpi=req.print_dpi,
-                color_theme=req.color_theme,
-                skip_remap=True,
-            )
+            if maptiler_print_png is not None:
+                pdf_bytes = render_png_bytes_to_pdf(maptiler_print_png)
+            else:
+                pdf_bytes = generate_print_pdf(
+                    result["svg"],
+                    board_size=req.board_size.value,
+                    dpi=req.print_dpi,
+                    color_theme=req.color_theme,
+                    skip_remap=True,
+                )
             print_pdf_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.pdf")
             await store_file(print_pdf_key, pdf_bytes, content_type="application/pdf")
         except Exception as e:
@@ -669,6 +742,13 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             await store_file(etsy_key, etsy_bytes, content_type="image/png")
         except Exception as e:
             log.warning(f"Etsy listing image generation failed (non-fatal): {e}")
+
+    if maptiler_only_mode and maptiler_key_runtime and maptiler_static_failed:
+        warnings.append(
+            "MapTiler static map render failed for this request, so MapForge showed fallback boundary art. "
+            "Check your MapTiler key restrictions (Allowed HTTP Origins should include '?' for server requests)."
+        )
+    warnings = list(dict.fromkeys(warnings))
 
     # Calculate print pixel dimensions for the response
     print_pixels = None
