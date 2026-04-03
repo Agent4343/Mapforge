@@ -17,8 +17,12 @@ def test_normalize_style_id_rejects_full_url_or_json():
 def test_normalize_style_id_keeps_valid_compact_ids():
     assert _normalize_style_id("backdrop") == "backdrop"
     assert _normalize_style_id("basic-v2") == "basic-v2"
-    assert _normalize_style_id("toner-v2") == "toner-v2"
+    assert _normalize_style_id("toner-v2") == "basic-v2"
 
 
 def test_normalize_style_id_maps_streets_to_art_default():
     assert _normalize_style_id("streets-v2") == "backdrop"
+
+
+def test_normalize_style_id_maps_toner_to_clean_road_style():
+    assert _normalize_style_id("toner-v2") == "basic-v2"

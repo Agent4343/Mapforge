@@ -227,6 +227,20 @@ def _normalize_style_id(style_id: str | None) -> str:
         return "backdrop"
     if style == "streets-v2":
         return "backdrop"
+    if style == "toner-v2":
+        return "basic-v2"
+    # Satellite/hybrid and topo/terrain styles tend to embed non-road texture
+    # that looks like generic GIS tiles instead of clean printable line art.
+    blocked_tokens = (
+        "satellite",
+        "hybrid",
+        "topo",
+        "terrain",
+        "outdoor",
+        "aerial",
+    )
+    if any(tok in style for tok in blocked_tokens):
+        return "basic-v2"
     if style.startswith("http://") or style.startswith("https://"):
         return "backdrop"
     if style.startswith("{") or style.endswith(".json"):
