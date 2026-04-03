@@ -16,6 +16,15 @@ def _fixup_db_url(url: str) -> str:
     return url
 
 
+def _parse_env_bool(raw: str | None) -> bool:
+    """Parse env boolean values, tolerating common quoted forms."""
+    normalized = str(raw or "").strip()
+    if normalized.startswith(("'", '"')) and normalized.endswith(("'", '"')) and len(normalized) >= 2:
+        normalized = normalized[1:-1].strip()
+    normalized = normalized.lower()
+    return normalized in {"1", "true", "yes", "on", "enabled"}
+
+
 class Settings:
     # Database
     DATABASE_URL: str = _fixup_db_url(os.getenv("DATABASE_URL", "sqlite+aiosqlite:////tmp/mapforge.db"))
@@ -61,12 +70,9 @@ class Settings:
     # When enabled, customer generation skips Overpass overlays and uses
     # MapTiler-only preview/export composition to avoid Overpass instability.
     # Backward-compatible with older MAPTILER_ONLY_MODE naming.
-    MAPFORGE_MAPTILER_ONLY_MODE: bool = os.getenv(
-        "MAPFORGE_MAPTILER_ONLY_MODE",
-        os.getenv("MAPTILER_ONLY_MODE", ""),
-    ).strip().lower() in {
-        "1", "true", "yes", "on",
-    }
+    MAPFORGE_MAPTILER_ONLY_MODE: bool = _parse_env_bool(
+        os.getenv("MAPFORGE_MAPTILER_ONLY_MODE", os.getenv("MAPTILER_ONLY_MODE", ""))
+    )
 
     # Redis (optional caching layer)
     REDIS_URL: str = os.getenv("REDIS_URL", "")

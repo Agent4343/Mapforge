@@ -40,6 +40,13 @@ async def test_public_config_exposes_runtime_settings(client):
     assert "maptiler_only_mode" in data
 
 
+def test_maptiler_mode_parser_accepts_quoted_truthy(monkeypatch):
+    monkeypatch.setenv("MAPFORGE_MAPTILER_ONLY_MODE", '"true"')
+    monkeypatch.delenv("MAPTILER_ONLY_MODE", raising=False)
+    from app.config import _parse_env_bool  # local import to avoid module-order side effects
+    assert _parse_env_bool('"true"') is True
+
+
 @pytest.mark.asyncio
 async def test_library_requires_auth(client):
     resp = await client.get("/api/v1/library")
