@@ -64,6 +64,28 @@ def _title_from_svg(svg: str) -> str:
     return "MAPFORGE"
 
 
+def _extract_poster_subtitle(svg: str) -> str:
+    """Extract subtitle text from poster_text group if present."""
+    marker = 'id="poster_text"'
+    idx = svg.find(marker)
+    if idx == -1:
+        return ""
+    snippet = svg[idx : idx + 2200]
+    texts: list[str] = []
+    for line in snippet.splitlines():
+        if "<text" in line and "</text>" in line:
+            a = line.find(">")
+            b = line.rfind("</text>")
+            if a != -1 and b != -1 and b > a:
+                t = line[a + 1 : b].strip()
+                if t:
+                    texts.append(t)
+    # Typical order: title, subtitle, coordinates.
+    if len(texts) >= 3:
+        return texts[1]
+    return ""
+
+
 def _extract_viewbox(svg: str) -> tuple[float, float]:
     marker = 'viewBox="'
     i = svg.find(marker)
@@ -212,10 +234,8 @@ def _normalize_style_id(style_id: str | None) -> str:
 
 def _pick_art_style(style: str, product_type: str | None) -> str:
     """Choose art-friendly style variants by product type."""
-    pt = (product_type or "").strip().lower()
-    # Toner is strong for dense city/community street posters.
-    if pt in {"city", "community", "name_sign"} and style in {"backdrop", "basic-v2"}:
-        return "toner-v2"
+    # Keep configured style exactly as selected by admin/user.
+    # No implicit switching by product type.
     return style
 
 
