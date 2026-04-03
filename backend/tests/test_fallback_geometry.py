@@ -522,10 +522,10 @@ async def test_generate_maptiler_only_mode_warns_when_static_render_fails(db_ses
     req = GenerateRequest(
         osm_id=998888,
         osm_type="relation",
-        product_type=ProductType.province,
+        product_type=ProductType.name_sign,
         board_size=BoardSize.medium,
         style=CutStyle.filled,
-        text="MapTilerStaticFail",
+        text="MapTilerStaticFailNameSign",
         include_streets=False,
         include_contours=False,
         print_dpi=300,
@@ -558,10 +558,10 @@ async def test_generate_maptiler_only_mode_uses_maptiler_render_for_stored_outpu
     req = GenerateRequest(
         osm_id=999111,
         osm_type="relation",
-        product_type=ProductType.province,
+        product_type=ProductType.name_sign,
         board_size=BoardSize.medium,
         style=CutStyle.filled,
-        text="MapTilerOutput",
+        text="MapTilerNameSign",
         include_streets=False,
         include_contours=False,
         print_dpi=300,
@@ -592,6 +592,50 @@ async def test_generate_maptiler_only_mode_uses_maptiler_render_for_stored_outpu
         patch("app.routers.generate.generate_print_image", side_effect=AssertionError("should not use SVG print engine in maptiler-only mode")),
         patch("app.routers.generate.generate_print_pdf", side_effect=AssertionError("should not use SVG pdf engine in maptiler-only mode")),
         patch("app.routers.generate.render_png_bytes_to_pdf", return_value=b"%PDF-1.4 fake"),
+        patch("app.routers.generate.generate_thumbnail", return_value=b"thumb"),
+        patch("app.routers.generate.generate_etsy_listing_image", return_value=b"etsy"),
+        patch("app.routers.generate.generate_dxf", return_value=b"dxf"),
+    ):
+        resp = await _do_generate(req, user=_DummyUser(), db=db_session)
+
+    assert resp.print_png_available is True
+
+
+@pytest.mark.asyncio
+async def test_generate_maptiler_only_mode_keeps_province_on_svg_art_pipeline(db_session):
+    req = GenerateRequest(
+        osm_id=999112,
+        osm_type="relation",
+        product_type=ProductType.province,
+        board_size=BoardSize.medium,
+        style=CutStyle.filled,
+        text="MapTilerProvinceSvgArt",
+        include_streets=False,
+        include_contours=False,
+        print_dpi=300,
+    )
+
+    base_geom = Point(-60.2, 46.1).buffer(0.08, resolution=24)
+
+    async def _mock_fetch_geometry(*_args, **_kwargs):
+        return base_geom
+
+    from app.services.app_settings import set_setting
+    await set_setting(db_session, "MAPFORGE_MAPTILER_ONLY_MODE", "1")
+    await set_setting(db_session, "MAPTILER_KEY", "fake-key")
+
+    class _DummyUser:
+        id = "u1"
+        tier = "admin"
+        generation_count_this_month = 0
+        month_reset_date = None
+
+    with (
+        patch("app.routers.generate.fetch_geometry", side_effect=_mock_fetch_geometry),
+        patch("app.routers.generate.render_maptiler_print_png", side_effect=AssertionError("province should not use maptiler raster renderer")),
+        patch("app.routers.generate.store_file", new=AsyncMock()),
+        patch("app.routers.generate.generate_print_image", return_value=b"\x89PNG\r\n\x1a\nsvg"),
+        patch("app.routers.generate.generate_print_pdf", return_value=b"%PDF-1.4 svg"),
         patch("app.routers.generate.generate_thumbnail", return_value=b"thumb"),
         patch("app.routers.generate.generate_etsy_listing_image", return_value=b"etsy"),
         patch("app.routers.generate.generate_dxf", return_value=b"dxf"),

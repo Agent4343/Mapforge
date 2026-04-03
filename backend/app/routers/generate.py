@@ -272,6 +272,9 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     city_vector_road_art_mode = bool(
         maptiler_only_mode and req.product_type.value in {"city", "community"}
     )
+    # Province posters should use the native SVG art renderer (not raster tiles)
+    # so the output doesn't look like a screenshot with tiny label artifacts.
+    province_svg_art_mode = req.product_type.value == "province"
 
     # Resolve board dimensions
     if req.board_width_inches and req.board_height_inches:
@@ -683,7 +686,11 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
 
     maptiler_static_failed = False
     maptiler_key_runtime = ""
-    maptiler_raster_enabled = (maptiler_only_mode or is_preview_request) and not city_vector_road_art_mode
+    maptiler_raster_enabled = (
+        (maptiler_only_mode or is_preview_request)
+        and not city_vector_road_art_mode
+        and not province_svg_art_mode
+    )
     if maptiler_raster_enabled:
         try:
             maptiler_key_runtime = (await get_maptiler_key(db) or "").strip()
@@ -745,7 +752,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             raise HTTPException(status_code=500, detail="Failed to save generated file. Please try again.")
 
         maptiler_print_png: bytes | None = None
-        if maptiler_only_mode and maptiler_key_runtime and not city_vector_road_art_mode:
+        if maptiler_only_mode and maptiler_key_runtime and not city_vector_road_art_mode and not province_svg_art_mode:
             try:
                 maptiler_print_png = await _render_maptiler_poster_png(
                     db=db,
