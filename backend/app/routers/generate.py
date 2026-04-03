@@ -131,7 +131,7 @@ async def _resolve_display_center(location_name: str, osm_id: int, osm_type: str
 
 def _is_maptiler_only_mode() -> bool:
     """Production toggle: bypass Overpass overlays for reliability."""
-    raw = str(getattr(settings, "MAPTILER_ONLY_MODE", "false") or "").strip().lower()
+    raw = str(getattr(settings, "MAPFORGE_MAPTILER_ONLY_MODE", "false") or "").strip().lower()
     return raw in {"1", "true", "yes", "on"}
 
 
@@ -163,7 +163,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     preview_overlays_intentionally_skipped = False
     maptiler_only_mode = bool(
         settings.MAPFORGE_MAPTILER_ONLY_MODE
-        and req.product_type.value in {"city", "community", "name_sign"}
+        and req.product_type.value in {"city", "community", "name_sign", "province"}
     )
 
     # Resolve board dimensions
@@ -357,7 +357,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         tasks.append(("streets", _get_streets_staggered()))
     if need_water:
         tasks.append(("water", _get_water_staggered()))
-    if req.include_contours:
+    if req.include_contours and not maptiler_only_mode:
         tasks.append(("contours", _get_contours()))
 
     overpass_missing_count = 0

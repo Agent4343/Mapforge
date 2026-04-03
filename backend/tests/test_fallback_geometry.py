@@ -273,3 +273,38 @@ async def test_generate_maptiler_only_mode_skips_overpass_outage_warnings(db_ses
 
     joined = " ".join(resp.warnings).lower()
     assert "overpass api may be busy" not in joined
+
+
+@pytest.mark.asyncio
+async def test_generate_maptiler_only_mode_applies_to_province_and_skips_overlays(db_session):
+    req = GenerateRequest(
+        osm_id=995555,
+        osm_type="relation",
+        product_type=ProductType.province,
+        board_size=BoardSize.medium,
+        style=CutStyle.filled,
+        text="MapTilerProvince",
+        include_streets=True,
+        include_contours=True,
+        print_dpi=300,
+    )
+
+    base_geom = Point(-60.2, 46.1).buffer(0.08, resolution=24)
+
+    async def _mock_fetch_geometry(*_args, **_kwargs):
+        return base_geom
+
+    async def _raise_if_called(*_args, **_kwargs):
+        raise AssertionError("Overpass overlay fetch should not run in MapTiler-only mode")
+
+    with (
+        patch("app.routers.generate.fetch_geometry", side_effect=_mock_fetch_geometry),
+        patch("app.routers.generate.fetch_streets", side_effect=_raise_if_called),
+        patch("app.routers.generate.fetch_water_features", side_effect=_raise_if_called),
+        patch("app.routers.generate.fetch_contour_lines", side_effect=_raise_if_called),
+        patch("app.routers.generate.settings.MAPFORGE_MAPTILER_ONLY_MODE", True),
+    ):
+        resp = await _do_generate(req, user=None, db=db_session)
+
+    joined = " ".join(resp.warnings).lower()
+    assert "overpass api may be busy" not in joined
