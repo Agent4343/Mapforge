@@ -6,6 +6,7 @@ from shapely.geometry import Polygon
 from app.models.schemas import CutStyle, ProductType
 from app.services.geometry_processor import process_geometry
 from app.services.svg_generator import generate_svg
+from app.services.thumbnail_generator import normalize_color_theme
 
 
 def _make_processed():
@@ -252,3 +253,25 @@ def test_vintage_map_suppresses_short_fallback_segments():
     # each retained major road draws one casing path (opacity 0.58) and one ink path.
     # Only one of the two fallback boundary segments should remain after filtering.
     assert svg.count('opacity="0.58"') == 1
+
+
+def test_normalize_color_theme_accepts_human_readable_and_legacy_aliases():
+    assert normalize_color_theme("Vintage Map") == "vintage_map"
+    assert normalize_color_theme("vintage_sepia") == "vintage_map"
+    assert normalize_color_theme("Midnight Blue") == "midnight"
+    assert normalize_color_theme("ocean_depths") == "ocean"
+
+
+def test_generate_svg_accepts_vintage_map_alias_and_uses_vintage_renderer():
+    processed = _make_processed()
+    result = generate_svg(
+        processed=processed,
+        location_name="Halifax",
+        style=CutStyle.filled,
+        show_coordinates=True,
+        font_size_mm=14,
+        color_theme="Vintage Map",
+        product_type="city",
+        output_mode="print",
+    )
+    assert "MapForge Vintage Map v1.0" in result["svg"]

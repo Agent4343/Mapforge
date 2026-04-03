@@ -39,6 +39,7 @@ from app.services.maptiler_renderer import render_maptiler_print_png, render_png
 from app.services.thumbnail_generator import (
     generate_thumbnail, generate_print_image, generate_print_pdf, generate_etsy_listing_image,
     generate_watermarked_preview, generate_wall_mockup, calculate_print_pixels,
+    normalize_color_theme,
     remap_poster_theme,
     COLOR_THEMES, MOCKUP_STYLES, PRINT_SIZE_PIXELS,
 )
@@ -577,6 +578,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             if heart_coords:
                 heart_mm = heart_coords[0]
 
+    resolved_color_theme = normalize_color_theme(req.color_theme)
+
     # Generate print poster SVG (the primary and only output)
     location_name = req.text or f"Location {req.osm_id}"
     preview_png_b64 = None
@@ -595,7 +598,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         border_style=req.border_style.value,
         heart_location=heart_mm,
         output_mode="print",
-        color_theme=req.color_theme,
+        color_theme=resolved_color_theme,
         product_type=req.product_type.value,
         include_bleed=req.include_bleed,
         include_crop_marks=req.include_crop_marks,
@@ -802,7 +805,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             else:
                 print_bytes = generate_print_image(
                     result["svg"],
-                    color_theme=req.color_theme,
+                    color_theme=resolved_color_theme,
                     skip_remap=True,
                     board_size=req.board_size.value,
                     dpi=req.print_dpi,
@@ -822,7 +825,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                     result["svg"],
                     board_size=req.board_size.value,
                     dpi=req.print_dpi,
-                    color_theme=req.color_theme,
+                    color_theme=resolved_color_theme,
                     skip_remap=True,
                 )
             print_pdf_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.pdf")
@@ -1015,6 +1018,8 @@ async def generate_pin(
     except Exception as e:
         log.warning(f"Water feature fetch failed (non-fatal): {e}")
 
+    resolved_color_theme = normalize_color_theme(req.color_theme)
+
     # Generate print poster SVG (the primary and only output)
     location_name = req.label
     result = generate_svg(
@@ -1031,7 +1036,7 @@ async def generate_pin(
         font_family=req.font_family.value,
         border_style=req.border_style.value,
         output_mode="print",
-        color_theme=req.color_theme,
+        color_theme=resolved_color_theme,
         product_type="name_sign",
         include_bleed=req.include_bleed,
         include_crop_marks=req.include_crop_marks,
@@ -1069,7 +1074,7 @@ async def generate_pin(
         try:
             print_bytes = generate_print_image(
                 result["svg"],
-                color_theme=req.color_theme,
+                color_theme=resolved_color_theme,
                 skip_remap=True,
                 board_size=req.board_size.value,
                 dpi=req.print_dpi,
@@ -1520,17 +1525,18 @@ async def generate_theme_variants(
         raise HTTPException(status_code=404, detail="SVG file not found in storage.")
 
     source_svg = svg_bytes.decode("utf-8")
-    source_theme = req.source_theme
+    source_theme = normalize_color_theme(req.source_theme)
     variants: list[ThemeVariantResult] = []
     succeeded = 0
     failed = 0
 
-    for theme_key in req.themes:
+    for requested_theme in req.themes:
+        theme_key = normalize_color_theme(requested_theme)
         if theme_key not in COLOR_THEMES:
             variants.append(ThemeVariantResult(
-                theme=theme_key,
-                label=theme_key,
-                error=f"Unknown theme: {theme_key}",
+                theme=requested_theme,
+                label=requested_theme,
+                error=f"Unknown theme: {requested_theme}",
             ))
             failed += 1
             continue

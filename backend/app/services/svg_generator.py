@@ -430,9 +430,13 @@ def _generate_print_svg(
     renderer with SVG paper texture for an aged parchment look.
     Professional map elements: compass rose, scale bar, gradient water, land shadow.
     """
+    from app.services.thumbnail_generator import get_poster_theme, normalize_color_theme
+
+    resolved_theme = normalize_color_theme(color_theme)
+
     # Vintage-style map: monochrome line art on aged parchment — completely
     # different rendering path from the standard colored poster themes.
-    if color_theme in {"vintage_map", "gallery_premium"}:
+    if resolved_theme in {"vintage_map", "gallery_premium"}:
         return _generate_vintage_map_svg(
             processed=processed,
             location_name=location_name,
@@ -446,12 +450,10 @@ def _generate_print_svg(
             include_crop_marks=include_crop_marks,
             show_compass=show_compass,
             product_type=product_type,
-            style_variant=color_theme,
+            style_variant=resolved_theme,
         )
 
-    from app.services.thumbnail_generator import get_poster_theme
-
-    theme = get_poster_theme(color_theme)
+    theme = get_poster_theme(resolved_theme)
     board_w, board_h = processed["board_mm"]
     polygons = processed["polygons"]
     latlon = center_latlon or processed.get("center_latlon", (0, 0))
@@ -591,7 +593,7 @@ def _generate_print_svg(
     lines.append(svg_attrs)
 
     # Metadata
-    lines.append(f"  <!-- MapForge Print Poster v1.0 | Theme: {color_theme} -->")
+    lines.append(f"  <!-- MapForge Print Poster v1.0 | Theme: {resolved_theme} -->")
     lines.append(f"  <!-- Location: {_escape_xml(location_name)} -->")
     lines.append("  <!-- Geographic data: © OpenStreetMap contributors (ODbL) -->")
     if include_bleed:
