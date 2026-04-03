@@ -37,6 +37,7 @@ async def test_public_config_exposes_runtime_settings(client):
     data = resp.json()
     assert "etsy_shop_url" in data
     assert "maptiler_key" in data
+    assert "maptiler_only_mode" in data
 
 
 @pytest.mark.asyncio

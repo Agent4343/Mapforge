@@ -60,7 +60,11 @@ class Settings:
     MAPTILER_STATIC_STYLE: str = os.getenv("MAPTILER_STATIC_STYLE", "streets-v2")
     # When enabled, customer generation skips Overpass overlays and uses
     # MapTiler-only preview/export composition to avoid Overpass instability.
-    MAPFORGE_MAPTILER_ONLY_MODE: bool = os.getenv("MAPFORGE_MAPTILER_ONLY_MODE", "").strip().lower() in {
+    # Backward-compatible with older MAPTILER_ONLY_MODE naming.
+    MAPFORGE_MAPTILER_ONLY_MODE: bool = os.getenv(
+        "MAPFORGE_MAPTILER_ONLY_MODE",
+        os.getenv("MAPTILER_ONLY_MODE", ""),
+    ).strip().lower() in {
         "1", "true", "yes", "on",
     }
 

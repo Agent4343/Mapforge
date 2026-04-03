@@ -127,6 +127,7 @@ async def get_public_config(db: AsyncSession = Depends(get_db)):
     return {
         "etsy_shop_url": settings.ETSY_SHOP_URL or None,
         "maptiler_key": maptiler_key or None,
+        "maptiler_only_mode": bool(settings.MAPFORGE_MAPTILER_ONLY_MODE),
     }
 
 
