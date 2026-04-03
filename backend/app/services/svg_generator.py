@@ -1375,10 +1375,16 @@ def _generate_vintage_map_svg(
         # Province/state prints can look busy quickly; filter micro roads.
         is_large_region = (
             (product_type == "province" and total_roads > 220)
-            or (product_type in ("city", "community") and total_roads > 620)
-            or total_roads > 780
+            or (product_type in ("city", "community") and total_roads > 1400)
+            or total_roads > 2200
         )
-        keep_minor_classes = {"tertiary", "tertiary_link", "residential", "secondary_link", "unclassified"}
+        keep_minor_classes = {
+            "tertiary", "tertiary_link", "residential", "secondary_link", "unclassified"
+        }
+        if product_type in ("city", "community"):
+            # Keep service/living streets in dense urban outputs so downtown grids
+            # feel complete, while micro pedestrian classes remain filtered below.
+            keep_minor_classes.update({"service", "living_street"})
         keep_major_classes = {"motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link", "secondary"}
 
         # Draw roads with subtle contrast separation.

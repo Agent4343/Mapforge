@@ -70,6 +70,9 @@ def test_derive_city_context_bbox_tightens_large_relation_bbox():
     assert tight_lon_span < raw_lon_span
     assert tight[0] < center[0] < tight[2]
     assert tight[1] < center[1] < tight[3]
+    # Keep enough urban context so dense city renders don't look under-populated.
+    assert tight_lat_span >= 0.07
+    assert tight_lon_span >= 0.10
 
 
 @pytest.mark.asyncio

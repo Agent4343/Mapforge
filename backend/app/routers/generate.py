@@ -206,8 +206,10 @@ def _derive_city_context_bbox(
     lat, lon = center_latlon
     lat_span_raw = max(0.0001, north - south)
     lon_span_raw = max(0.0001, east - west)
-    lat_span = max(0.035, min(0.14, lat_span_raw * 0.42))
-    lon_span = max(0.05, min(0.22, lon_span_raw * 0.42))
+    # Keep context tighter than full administrative relations, but wide enough
+    # to include a fuller urban street network for city poster art.
+    lat_span = max(0.05, min(0.2, lat_span_raw * 0.62))
+    lon_span = max(0.08, min(0.3, lon_span_raw * 0.62))
     half_lat = lat_span / 2.0
     half_lon = lon_span / 2.0
     return (

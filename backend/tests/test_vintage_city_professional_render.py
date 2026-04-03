@@ -98,6 +98,38 @@ def test_vintage_city_keeps_service_roads_even_in_dense_mode():
     assert 'd="M40,70 L160,70"' not in svg
 
 
+def test_vintage_city_dense_mode_keeps_residential_and_tertiary_when_very_dense():
+    streets = {
+        "major_roads": [
+            ([(25, 25), (175, 145)], "primary", 0.9, "Main St"),
+        ] * 900,
+        "minor_roads": (
+            [([(30, 60), (170, 60)], "residential", 0.3, "Res A")] * 600
+            + [([(30, 70), (170, 70)], "tertiary", 0.5, "Ter B")] * 300
+            + [([(30, 80), (170, 80)], "service", 0.2, "Svc C")] * 300
+            + [([(30, 90), (170, 90)], "footway", 0.1, "Foot D")] * 200
+        ),
+    }
+    svg = generate_svg(
+        processed=_base_processed(),
+        location_name="Halifax",
+        style=CutStyle.filled,
+        show_coordinates=True,
+        font_size_mm=14,
+        streets_data=streets,
+        water_data=None,
+        color_theme="vintage_map",
+        product_type="city",
+        output_mode="print",
+    )["svg"]
+
+    # Very-dense city mode should preserve residential + tertiary structure,
+    # while still filtering footway micro-detail.
+    assert 'd="M30,60 L170,60"' in svg
+    assert 'd="M30,70 L170,70"' in svg
+    assert 'd="M30,90 L170,90"' not in svg
+
+
 def test_vintage_province_drops_micro_roads_in_dense_mode():
     streets = {
         "major_roads": [
