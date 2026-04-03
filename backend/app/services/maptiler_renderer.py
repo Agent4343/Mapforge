@@ -201,10 +201,21 @@ def _normalize_style_id(style_id: str | None) -> str:
     style = (style_id or "").strip().lower()
     if not style:
         return "backdrop"
+    if style == "streets-v2":
+        return "backdrop"
     if style.startswith("http://") or style.startswith("https://"):
         return "backdrop"
     if style.startswith("{") or style.endswith(".json"):
         return "backdrop"
+    return style
+
+
+def _pick_art_style(style: str, product_type: str | None) -> str:
+    """Choose art-friendly style variants by product type."""
+    pt = (product_type or "").strip().lower()
+    # Toner is strong for dense city/community street posters.
+    if pt in {"city", "community", "name_sign"} and style in {"backdrop", "basic-v2"}:
+        return "toner-v2"
     return style
 
 
@@ -282,6 +293,7 @@ async def render_maptiler_print_png(
     fetch_h = max(512, int(map_h * fetch_scale))
 
     style = await _resolve_style_id(db, style_id=style_id)
+    style = _pick_art_style(style, product_type)
     static_url = (
         f"https://api.maptiler.com/maps/{style}/static/"
         f"{lon:.6f},{lat:.6f},{zoom:.2f}/{fetch_w}x{fetch_h}.png?key={key}"
@@ -311,9 +323,10 @@ async def render_maptiler_print_png(
     y0 = map_h + max(28, int(text_band_h * 0.18))
     draw.text((title_x, y0), title, fill="#1f1a14", font=title_font)
 
-    subtitle = "MapForge"
+    subtitle = ""
     sb = draw.textbbox((0, 0), subtitle, font=sub_font)
-    draw.text(((out_w - (sb[2] - sb[0])) // 2, y0 + int((sb[3] - sb[1]) * 1.8)), subtitle, fill="#4f4230", font=sub_font)
+    if subtitle:
+        draw.text(((out_w - (sb[2] - sb[0])) // 2, y0 + int((sb[3] - sb[1]) * 1.8)), subtitle, fill="#4f4230", font=sub_font)
 
     coord_text = f"{abs(lat):.4f}°{'N' if lat >= 0 else 'S'} • {abs(lon):.4f}°{'E' if lon >= 0 else 'W'}"
     cb = draw.textbbox((0, 0), coord_text, font=coord_font)
