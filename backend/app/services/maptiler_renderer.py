@@ -17,6 +17,8 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from app.config import settings
 from app.logging_config import log
 
+_CITY_ART_PRODUCT_TYPES = {"city", "community", "name_sign"}
+
 
 def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     """Best-effort font loader with robust fallbacks."""
@@ -263,6 +265,51 @@ def _pick_art_style(style: str, product_type: str | None) -> str:
     return style
 
 
+def _line_ink_ratio(map_img: Image.Image) -> float:
+    """Estimate visible line density to catch near-blank map outputs."""
+    sample = map_img.convert("L").resize((220, 220), Image.Resampling.BILINEAR)
+    px = sample.getdata()
+    total = len(px) or 1
+    # "Ink" means visibly dark linework, not off-white paper/background.
+    ink = sum(1 for v in px if v < 185)
+    return float(ink) / float(total)
+
+
+def _should_recover_from_blank_art(raw_img: Image.Image, styled_img: Image.Image, product_type: str | None) -> bool:
+    """Detect aggressive post-processing that erased most visible linework."""
+    if (product_type or "").strip().lower() not in _CITY_ART_PRODUCT_TYPES:
+        return False
+    raw_ratio = _line_ink_ratio(raw_img)
+    styled_ratio = _line_ink_ratio(styled_img)
+    # Very sparse styled result plus large drop from the source tile means the
+    # art transform was too aggressive for this viewport/style.
+    return styled_ratio < 0.003 and raw_ratio > max(styled_ratio * 2.0, 0.006)
+
+
+async def _fetch_static_map_image(
+    *,
+    style: str,
+    lon: float,
+    lat: float,
+    zoom: float,
+    width: int,
+    height: int,
+    key: str,
+) -> Image.Image | None:
+    static_url = (
+        f"https://api.maptiler.com/maps/{style}/static/"
+        f"{lon:.6f},{lat:.6f},{zoom:.2f}/{width}x{height}.png?key={key}"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=25.0) as client:
+            resp = await client.get(static_url)
+            resp.raise_for_status()
+            return Image.open(io.BytesIO(resp.content)).convert("RGB")
+    except Exception as e:
+        log.warning(f"MapTiler static render failed ({style}): {type(e).__name__}: {e}")
+        return None
+
+
 async def render_maptiler_print_png(
     *,
     svg: str,
@@ -336,23 +383,40 @@ async def render_maptiler_print_png(
     fetch_w = max(512, int(out_w * fetch_scale))
     fetch_h = max(512, int(map_h * fetch_scale))
 
-    style = await _resolve_style_id(db, style_id=style_id)
+    style = _normalize_style_id(await _resolve_style_id(db, style_id=style_id))
     style = _pick_art_style(style, product_type)
-    static_url = (
-        f"https://api.maptiler.com/maps/{style}/static/"
-        f"{lon:.6f},{lat:.6f},{zoom:.2f}/{fetch_w}x{fetch_h}.png?key={key}"
+    map_img = await _fetch_static_map_image(
+        style=style,
+        lon=lon,
+        lat=lat,
+        zoom=zoom,
+        width=fetch_w,
+        height=fetch_h,
+        key=key,
     )
-
-    try:
-        async with httpx.AsyncClient(timeout=25.0) as client:
-            resp = await client.get(static_url)
-            resp.raise_for_status()
-            map_img = Image.open(io.BytesIO(resp.content)).convert("RGB")
-    except Exception as e:
-        log.warning(f"MapTiler static render failed: {type(e).__name__}: {e}")
+    if map_img is None:
         return None
 
-    map_img = _stylize_map_for_print_art(map_img, product_type)
+    raw_map_img = map_img
+    map_img = _stylize_map_for_print_art(raw_map_img, product_type)
+    if _should_recover_from_blank_art(raw_map_img, map_img, product_type):
+        fallback_style = "toner-v2" if style != "toner-v2" else "basic-v2"
+        alt_raw = await _fetch_static_map_image(
+            style=fallback_style,
+            lon=lon,
+            lat=lat,
+            zoom=zoom,
+            width=fetch_w,
+            height=fetch_h,
+            key=key,
+        )
+        if alt_raw is not None:
+            alt_styled = _stylize_map_for_print_art(alt_raw, product_type)
+            map_img = alt_styled if _line_ink_ratio(alt_styled) > _line_ink_ratio(map_img) else alt_raw
+            log.info(f"Recovered sparse map art using fallback style: {fallback_style}")
+        else:
+            map_img = raw_map_img
+            log.info("Recovered sparse map art by reverting to raw static tile image")
 
     poster = Image.new("RGB", (out_w, out_h), color="#f6f0e4")
     poster.paste(map_img.resize((out_w, map_h), Image.Resampling.LANCZOS), (0, 0))
@@ -369,7 +433,7 @@ async def render_maptiler_print_png(
     y0 = map_h + max(28, int(text_band_h * 0.18))
     draw.text((title_x, y0), title, fill="#1f1a14", font=title_font)
 
-    subtitle = ""
+    subtitle = _extract_poster_subtitle(svg).strip()
     sb = draw.textbbox((0, 0), subtitle, font=sub_font)
     if subtitle:
         draw.text(((out_w - (sb[2] - sb[0])) // 2, y0 + int((sb[3] - sb[1]) * 1.8)), subtitle, fill="#4f4230", font=sub_font)

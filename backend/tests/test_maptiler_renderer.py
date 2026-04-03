@@ -4,6 +4,7 @@ from PIL import Image
 from app.services.maptiler_renderer import (
     _extract_center_latlon,
     _extract_poster_subtitle,
+    _should_recover_from_blank_art,
     _stylize_map_for_print_art,
     _zoom_to_fit_bbox,
 )
@@ -65,3 +66,15 @@ def test_stylize_map_for_print_art_reduces_city_speckle_noise():
     # Speckle should be cleaned toward background; line should remain visible.
     assert sp[2, 2][0] > 180
     assert sp[16, 16][0] < 120
+
+
+def test_blank_art_recovery_triggers_for_city_when_styled_too_sparse():
+    raw = Image.new("RGB", (64, 64), color=(238, 238, 236))
+    raw_px = raw.load()
+    for x in range(8, 56):
+        raw_px[x, 20] = (40, 40, 40)
+        raw_px[x, 44] = (40, 40, 40)
+    styled = Image.new("RGB", (64, 64), color=(239, 239, 237))
+
+    assert _should_recover_from_blank_art(raw, styled, "city") is True
+    assert _should_recover_from_blank_art(raw, styled, "province") is False
