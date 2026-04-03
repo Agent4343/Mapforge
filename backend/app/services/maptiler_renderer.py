@@ -12,7 +12,7 @@ import re
 from typing import Any
 
 import httpx
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from app.config import settings
 from app.logging_config import log
@@ -232,6 +232,30 @@ def _normalize_style_id(style_id: str | None) -> str:
     return style
 
 
+def _stylize_map_for_print_art(map_img: Image.Image, product_type: str | None) -> Image.Image:
+    """Convert city-scale map tiles into cleaner monochrome poster linework."""
+    pt = (product_type or "").strip().lower()
+    if pt not in {"city", "community", "name_sign"}:
+        return map_img
+
+    gray = map_img.convert("L")
+
+    # Two-level line extraction: light network + bold primary routes.
+    minor_mask = gray.point(lambda p: 255 if p < 170 else 0, mode="L")
+    major_mask = gray.point(lambda p: 255 if p < 120 else 0, mode="L")
+
+    # Opening removes tiny label/building speckles while preserving longer roads.
+    minor_mask = minor_mask.filter(ImageFilter.MinFilter(3)).filter(ImageFilter.MaxFilter(3))
+    major_mask = major_mask.filter(ImageFilter.MinFilter(3)).filter(ImageFilter.MaxFilter(3))
+
+    art = Image.new("RGB", map_img.size, color="#efefed")
+    minor_layer = Image.new("RGB", map_img.size, color="#bdbdbd")
+    major_layer = Image.new("RGB", map_img.size, color="#4a4a4a")
+    art.paste(minor_layer, mask=minor_mask)
+    art.paste(major_layer, mask=major_mask)
+    return art
+
+
 def _pick_art_style(style: str, product_type: str | None) -> str:
     """Choose art-friendly style variants by product type."""
     # Keep configured style exactly as selected by admin/user.
@@ -327,6 +351,8 @@ async def render_maptiler_print_png(
     except Exception as e:
         log.warning(f"MapTiler static render failed: {type(e).__name__}: {e}")
         return None
+
+    map_img = _stylize_map_for_print_art(map_img, product_type)
 
     poster = Image.new("RGB", (out_w, out_h), color="#f6f0e4")
     poster.paste(map_img.resize((out_w, map_h), Image.Resampling.LANCZOS), (0, 0))
