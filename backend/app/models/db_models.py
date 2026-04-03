@@ -160,7 +160,7 @@ class DesignCredit(Base):
     price_cents = Column(Integer, nullable=True)
     # Redemption
     redeem_token = Column(String(64), nullable=False, unique=True, index=True)
-    status = Column(String(20), default="unused")  # unused, designing, generating, completed, expired
+    status = Column(String(20), default="unused")  # unused, designing, generating, completed, downloaded, expired
     # Design configuration (saved when customer finishes designing)
     design_config = Column(Text, nullable=True)
     location_name = Column(String(255), nullable=True)
@@ -168,10 +168,12 @@ class DesignCredit(Base):
     file_id = Column(String(16), ForeignKey("generated_files.id"), nullable=True)
     # Download tracking
     download_count = Column(Integer, default=0)
-    max_downloads = Column(Integer, default=5)
+    max_downloads = Column(Integer, default=1)
     created_at = Column(DateTime(timezone=True), default=_utcnow)
     redeemed_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+    downloaded_at = Column(DateTime(timezone=True), nullable=True)
 
     file = relationship("GeneratedFile", foreign_keys=[file_id])
     seller = relationship("User", foreign_keys=[seller_id])

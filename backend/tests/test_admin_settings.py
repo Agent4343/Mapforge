@@ -69,13 +69,36 @@ async def test_admin_maptiler_settings_roundtrip(client, db_session, monkeypatch
 
 @pytest.mark.asyncio
 async def test_admin_maptiler_settings_requires_admin(client, db_session):
-    # Register normal free-tier user.
+    from app.config import settings
+    settings.ADMIN_EMAILS = ["admin@mapforge.dev"]
+    # Self-registration is disabled for non-admin emails.
     resp = await client.post("/api/v1/auth/register", json={
         "email": "free@mapforge.dev",
         "username": "freeuser",
         "password": "FreePass123!",
     })
-    token = resp.json()["access_token"]
+    assert resp.status_code == 403
+
+    # Create a non-admin user directly to validate admin endpoint authz.
+    from app.services.auth import hash_password
+    free_user = User(
+        email="free@mapforge.dev",
+        username="freeuser",
+        hashed_password=hash_password("FreePass123!"),
+        tier="free",
+    )
+    db_session.add(free_user)
+    await db_session.commit()
+
+    login_resp = await client.post("/api/v1/auth/login", json={
+        "email": "free@mapforge.dev",
+        "password": "FreePass123!",
+    })
+    assert login_resp.status_code == 403
+
+    # Use a forged token path from the auth service for endpoint checks.
+    from app.services.auth import create_access_token
+    token = create_access_token(free_user.id)
     client.headers["Authorization"] = f"Bearer {token}"
 
     # Confirm tier is free in DB.

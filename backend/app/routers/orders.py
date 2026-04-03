@@ -14,18 +14,37 @@ No second payment — customer already paid on Etsy.
 
 import json
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.config import settings
 from app.database import async_session
 from app.logging_config import log
-from app.models.db_models import DesignCredit, GeneratedFile
+from app.models.db_models import DesignCredit, GeneratedFile, User
+from app.services.auth import get_current_user
 
 router = APIRouter(prefix="/api/v1/orders", tags=["orders"])
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _is_credit_expired(credit: DesignCredit) -> bool:
+    expires_at = getattr(credit, "expires_at", None)
+    return bool(expires_at and expires_at <= _utcnow())
+
+
+def _resolved_expiry_for_new_credit() -> datetime:
+    return _utcnow() + timedelta(days=30)
+
+
+def _resolved_download_limit() -> int:
+    """Always enforce one-time customer downloads for Etsy credits."""
+    return 1
 
 
 # ---------------------------------------------------------------------------
@@ -41,7 +60,7 @@ class RedeemResponse(BaseModel):
     location_name: str | None = None
     file_id: str | None = None
     download_count: int = 0
-    max_downloads: int = 5
+    max_downloads: int = 1
 
 
 class GenerateDesignRequest(BaseModel):
@@ -56,7 +75,7 @@ class CreditStatusResponse(BaseModel):
     product_type: str | None = None
     file_id: str | None = None
     download_count: int = 0
-    max_downloads: int = 5
+    max_downloads: int = 1
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +99,7 @@ async def redeem_credit(token: str):
     if not credit:
         raise HTTPException(status_code=404, detail="Invalid or expired design credit. Please check your Etsy purchase confirmation for the correct link.")
 
-    if credit.status == "expired":
+    if credit.status == "expired" or _is_credit_expired(credit):
         raise HTTPException(status_code=410, detail="This design credit has expired. Please contact the seller.")
 
     return RedeemResponse(
@@ -115,6 +134,8 @@ async def generate_design(token: str, req: GenerateDesignRequest):
         raise HTTPException(status_code=404, detail="Invalid design credit")
 
     if credit.status == "completed":
+        if credit.download_count >= _resolved_download_limit():
+            raise HTTPException(status_code=410, detail="This design has already been downloaded.")
         # Already generated — just return the existing result
         return CreditStatusResponse(
             token=credit.redeem_token,
@@ -170,6 +191,9 @@ async def get_credit_status(token: str):
     if not credit:
         raise HTTPException(status_code=404, detail="Credit not found")
 
+    if _is_credit_expired(credit):
+        raise HTTPException(status_code=410, detail="Credit has expired")
+
     return CreditStatusResponse(
         token=credit.redeem_token,
         status=credit.status,
@@ -196,14 +220,23 @@ async def download_files(token: str, format: str = Query("png")):
     if not credit:
         raise HTTPException(status_code=404, detail="Invalid credit token")
 
+    if credit.status == "downloaded":
+        raise HTTPException(status_code=410, detail="This design has already been downloaded.")
+
     if credit.status != "completed":
         raise HTTPException(status_code=400, detail=f"Files are not ready yet (status: {credit.status})")
 
     if not credit.file_id:
         raise HTTPException(status_code=400, detail="Files have not been generated yet")
 
-    if credit.download_count >= credit.max_downloads:
-        raise HTTPException(status_code=403, detail="Download limit reached. Contact the seller for help.")
+    if credit.status == "downloaded":
+        raise HTTPException(status_code=410, detail="This design has already been downloaded.")
+
+    if _is_credit_expired(credit):
+        raise HTTPException(status_code=410, detail="Credit has expired")
+
+    if credit.download_count >= _resolved_download_limit():
+        raise HTTPException(status_code=410, detail="This design has already been downloaded.")
 
     # Get the generated file record
     async with async_session() as db:
@@ -239,12 +272,71 @@ async def download_files(token: str, format: str = Query("png")):
     if not file_data:
         raise HTTPException(status_code=404, detail="File data not found in storage")
 
-    # Increment download count
+    # One-time download flow:
+    # 1) mark credit as consumed
+    # 2) remove generated assets and unlink DB references so file cannot be fetched again
     async with async_session() as db:
+        from app.services.file_storage import delete_file
+
+        # Lock the credit row to avoid concurrent double-downloads.
+        credit_result = await db.execute(
+            select(DesignCredit).where(DesignCredit.id == credit.id).with_for_update()
+        )
+        c = credit_result.scalar_one()
+        if c.download_count >= _resolved_download_limit():
+            raise HTTPException(status_code=410, detail="This design has already been downloaded.")
+        if c.status in {"downloaded", "expired"}:
+            raise HTTPException(status_code=410, detail="This design has already been downloaded.")
+
+        file_result = await db.execute(
+            select(GeneratedFile).where(GeneratedFile.id == c.file_id).with_for_update()
+        )
+        file_row = file_result.scalar_one_or_none()
+        keys_to_delete = []
+        if file_row:
+            keys_to_delete.extend(
+                [
+                    file_row.svg_storage_key,
+                    file_row.dxf_storage_key,
+                    file_row.thumbnail_key,
+                    file_row.print_png_key,
+                    file_row.print_pdf_key,
+                ]
+            )
+
+        # Mark the credit consumed before external deletes.
         result = await db.execute(select(DesignCredit).where(DesignCredit.id == credit.id))
         c = result.scalar_one()
         c.download_count += 1
+        c.status = "downloaded"
+        c.expires_at = _utcnow()
+        c.downloaded_at = _utcnow()
+        c.file_id = None
         await db.commit()
+
+        # Best-effort storage cleanup after commit.
+        for key_name in keys_to_delete:
+            if not key_name:
+                continue
+            try:
+                await delete_file(key_name)
+            except Exception as e:
+                log.warning(f"Failed deleting storage key {key_name}: {e}")
+
+        # Remove DB references so legacy/admin paths cannot re-download.
+        if file_row:
+            async with async_session() as cleanup_db:
+                cleanup_result = await cleanup_db.execute(
+                    select(GeneratedFile).where(GeneratedFile.id == file_row.id)
+                )
+                cleanup_file = cleanup_result.scalar_one_or_none()
+                if cleanup_file:
+                    cleanup_file.svg_storage_key = f"deleted/{cleanup_file.id}.svg"
+                    cleanup_file.dxf_storage_key = None
+                    cleanup_file.thumbnail_key = None
+                    cleanup_file.print_png_key = None
+                    cleanup_file.print_pdf_key = None
+                    await cleanup_db.commit()
 
     safe_name = (credit.location_name or "mapforge").replace(" ", "_").lower()[:50]
     return StreamingResponse(
@@ -290,12 +382,16 @@ async def create_credit_manually(
     product_type: str = "lake",
     product_tier: str = "standard",
     etsy_buyer_email: str | None = None,
-    max_downloads: int = 5,
+    max_downloads: int = 1,
+    user: User = Depends(get_current_user),
 ):
     """Manually create a design credit (admin/testing use).
 
     Returns the unique design link that you can share with a customer.
     """
+    if user.tier != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
     token = secrets.token_urlsafe(32)
     frontend_url = settings.FRONTEND_URL or "http://localhost:5173"
 
@@ -304,8 +400,10 @@ async def create_credit_manually(
             product_type=product_type,
             product_tier=product_tier,
             etsy_buyer_email=etsy_buyer_email,
+            seller_id=user.id,
             redeem_token=token,
-            max_downloads=max_downloads,
+            max_downloads=_resolved_download_limit(),
+            expires_at=_resolved_expiry_for_new_credit(),
         )
         db.add(credit)
         await db.commit()
@@ -343,7 +441,12 @@ async def _fulfill_credit(credit_id: str):
         req = GenerateRequest(**design)
 
         async with async_session() as db:
-            gen_response = await _do_generate(req, user=None, db=db)
+            # Credit fulfillment must persist generated assets, so run as seller/admin.
+            credit_row = await db.get(DesignCredit, credit_id)
+            seller_user = None
+            if credit_row and credit_row.seller_id:
+                seller_user = await db.get(User, credit_row.seller_id)
+            gen_response = await _do_generate(req, user=seller_user, db=db)
 
         async with async_session() as db:
             result = await db.execute(

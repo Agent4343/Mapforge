@@ -57,8 +57,11 @@ async def client(db_session):
 @pytest_asyncio.fixture
 async def auth_client(client, db_session):
     """Authenticated test client with a registered user."""
+    from app.config import settings
+    settings.ADMIN_EMAILS = ["admin@mapforge.dev"]
+
     resp = await client.post("/api/v1/auth/register", json={
-        "email": "test@mapforge.dev",
+        "email": "admin@mapforge.dev",
         "username": "testuser",
         "password": "TestPass123!",
     })
