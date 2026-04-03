@@ -2076,6 +2076,12 @@ body {
   border-radius: 8px;
 }
 
+.maptiler-settings-note {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .empty-state {
   font-family: var(--font-mono);
   font-size: 12px;

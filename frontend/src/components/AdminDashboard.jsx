@@ -1,5 +1,14 @@
 import { useState, useEffect } from "react";
-import { getAdminStats, getEtsySettings, saveEtsySettings, clearEtsySettings, getEtsyDebug } from "../services/api.js";
+import {
+  getAdminStats,
+  getEtsySettings,
+  saveEtsySettings,
+  clearEtsySettings,
+  getEtsyDebug,
+  getMapTilerSettings,
+  saveMapTilerSettings,
+  clearMapTilerSettings,
+} from "../services/api.js";
 
 export default function AdminDashboard({ onBack }) {
   const [stats, setStats] = useState(null);
@@ -16,6 +25,14 @@ export default function AdminDashboard({ onBack }) {
   const [showEtsyForm, setShowEtsyForm] = useState(false);
   const [etsyDebug, setEtsyDebug] = useState(null);
   const [etsyTesting, setEtsyTesting] = useState(false);
+  // MapTiler settings state
+  const [maptilerSettings, setMaptilerSettings] = useState(null);
+  const [maptilerApiKey, setMaptilerApiKey] = useState("");
+  const [maptilerStaticStyle, setMaptilerStaticStyle] = useState("streets-v2");
+  const [maptilerOnlyMode, setMaptilerOnlyMode] = useState(true);
+  const [maptilerSaving, setMaptilerSaving] = useState(false);
+  const [maptilerMsg, setMaptilerMsg] = useState(null);
+  const [showMapTilerForm, setShowMapTilerForm] = useState(false);
 
   async function handleTestEtsy() {
     setEtsyTesting(true);
@@ -42,12 +59,24 @@ export default function AdminDashboard({ onBack }) {
     }
     loadStats();
     loadEtsySettings();
+    loadMapTilerSettings();
   }, []);
 
   async function loadEtsySettings() {
     try {
       const s = await getEtsySettings();
       setEtsySettings(s);
+    } catch {
+      // Not critical
+    }
+  }
+
+  async function loadMapTilerSettings() {
+    try {
+      const s = await getMapTilerSettings();
+      setMaptilerSettings(s);
+      setMaptilerStaticStyle((s.static_style || "streets-v2").trim() || "streets-v2");
+      setMaptilerOnlyMode(Boolean(s.maptiler_only_mode));
     } catch {
       // Not critical
     }
@@ -78,6 +107,34 @@ export default function AdminDashboard({ onBack }) {
       setEtsyMsg({ type: "success", text: "Etsy credentials cleared." });
     } catch (err) {
       setEtsyMsg({ type: "error", text: err.message });
+    }
+  }
+
+  async function handleSaveMapTiler() {
+    setMaptilerSaving(true);
+    setMaptilerMsg(null);
+    try {
+      await saveMapTilerSettings(maptilerApiKey, maptilerStaticStyle, maptilerOnlyMode);
+      setMaptilerMsg({ type: "success", text: "MapTiler settings saved!" });
+      setMaptilerApiKey("");
+      await loadMapTilerSettings();
+    } catch (err) {
+      setMaptilerMsg({ type: "error", text: err.message });
+    } finally {
+      setMaptilerSaving(false);
+    }
+  }
+
+  async function handleClearMapTiler() {
+    if (!confirm("Clear all MapTiler settings from the database?")) return;
+    try {
+      await clearMapTilerSettings();
+      setMaptilerSettings(null);
+      setMaptilerStaticStyle("streets-v2");
+      setMaptilerOnlyMode(true);
+      setMaptilerMsg({ type: "success", text: "MapTiler settings cleared." });
+    } catch (err) {
+      setMaptilerMsg({ type: "error", text: err.message });
     }
   }
 
@@ -259,6 +316,94 @@ export default function AdminDashboard({ onBack }) {
               disabled={etsySaving || (!etsyApiKey && !etsyApiSecret && !etsyRedirectUri)}
             >
               {etsySaving ? "Saving..." : "Save Etsy Credentials"}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* MapTiler API Settings */}
+      <div className="admin-section">
+        <h3>MapTiler API Settings</h3>
+        {maptilerSettings?.configured ? (
+          <div className="etsy-settings-status">
+            <div className="etsy-settings-connected">
+              <span className="etsy-badge">MapTiler Configured</span>
+              <div className="etsy-settings-detail">
+                <span className="etsy-settings-label">API Key:</span>
+                <span className="etsy-settings-value">{maptilerSettings.api_key}</span>
+              </div>
+              <div className="etsy-settings-detail">
+                <span className="etsy-settings-label">Style:</span>
+                <span className="etsy-settings-value">{maptilerSettings.static_style || "streets-v2"}</span>
+              </div>
+              <div className="etsy-settings-detail">
+                <span className="etsy-settings-label">Only Mode:</span>
+                <span className="etsy-settings-value">
+                  {maptilerSettings.maptiler_only_mode ? "Enabled" : "Disabled"}
+                </span>
+              </div>
+            </div>
+            <div className="etsy-settings-actions">
+              <button className="btn btn-secondary btn-sm" onClick={() => setShowMapTilerForm(!showMapTilerForm)}>
+                {showMapTilerForm ? "Cancel" : "Update MapTiler"}
+              </button>
+              <button className="btn btn-secondary btn-sm" onClick={handleClearMapTiler}>
+                Clear MapTiler Settings
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="etsy-settings-status">
+            <p className="etsy-settings-unconfigured">MapTiler not configured. Add your key and rendering mode below.</p>
+            {!showMapTilerForm && (
+              <button className="btn btn-primary" onClick={() => setShowMapTilerForm(true)}>
+                Configure MapTiler
+              </button>
+            )}
+          </div>
+        )}
+
+        {showMapTilerForm && (
+          <div className="etsy-settings-form">
+            <div className="control-group">
+              <label>MapTiler API Key</label>
+              <input
+                type="text"
+                value={maptilerApiKey}
+                onChange={(e) => setMaptilerApiKey(e.target.value)}
+                placeholder="Paste your MapTiler key"
+              />
+            </div>
+            <div className="control-group">
+              <label>Static Style ID</label>
+              <input
+                type="text"
+                value={maptilerStaticStyle}
+                onChange={(e) => setMaptilerStaticStyle(e.target.value)}
+                placeholder="streets-v2"
+              />
+            </div>
+            <div className="control-group">
+              <label style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <input
+                  type="checkbox"
+                  checked={maptilerOnlyMode}
+                  onChange={(e) => setMaptilerOnlyMode(e.target.checked)}
+                />
+                Enable MapTiler-only mode (skip Overpass overlays)
+              </label>
+            </div>
+            {maptilerMsg && (
+              <div className={maptilerMsg.type === "error" ? "error-message" : "success-message"}>
+                {maptilerMsg.text}
+              </div>
+            )}
+            <button
+              className="btn btn-primary btn-full"
+              onClick={handleSaveMapTiler}
+              disabled={maptilerSaving || (!maptilerApiKey && !maptilerStaticStyle)}
+            >
+              {maptilerSaving ? "Saving..." : "Save MapTiler Settings"}
             </button>
           </div>
         )}

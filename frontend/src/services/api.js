@@ -684,6 +684,45 @@ async function clearEtsySettings() {
   return resp.json();
 }
 
+// --- Admin MapTiler Settings ---
+
+async function getMapTilerSettings() {
+  const resp = await fetchWithTimeout(`${API_BASE}/admin/maptiler-settings`);
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Failed to load MapTiler settings"));
+  }
+  return resp.json();
+}
+
+async function saveMapTilerSettings(apiKey, staticStyle, maptilerOnlyMode) {
+  const resp = await fetchWithTimeout(`${API_BASE}/admin/maptiler-settings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      api_key: apiKey,
+      static_style: staticStyle,
+      maptiler_only_mode: Boolean(maptilerOnlyMode),
+    }),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Failed to save MapTiler settings"));
+  }
+  return resp.json();
+}
+
+async function clearMapTilerSettings() {
+  const resp = await fetchWithTimeout(`${API_BASE}/admin/maptiler-settings`, {
+    method: "DELETE",
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Failed to clear MapTiler settings"));
+  }
+  return resp.json();
+}
+
 // --- Design Credits (Etsy-paid customers) ---
 
 async function redeemCredit(token) {
@@ -740,5 +779,6 @@ export {
   getEtsyStatus, connectEtsy, disconnectEtsy, publishToEtsy,
   getShowcaseCities, showcasePublish,
   getEtsyDebug, getAdminStats, getEtsySettings, saveEtsySettings, clearEtsySettings,
+  getMapTilerSettings, saveMapTilerSettings, clearMapTilerSettings,
   redeemCredit, generateForCredit, getCreditStatus, downloadCreditFile,
 };
