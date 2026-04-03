@@ -260,6 +260,11 @@ def _stylize_map_for_print_art(map_img: Image.Image, product_type: str | None) -
         return map_img
 
     gray = map_img.convert("L").filter(ImageFilter.GaussianBlur(0.9))
+    # Road-first mask: keep dark, elongated linework and avoid parcel/lot grids.
+    road_seed = gray.point(lambda p: 255 if p < 100 else 0, mode="L")
+    road_lines = road_seed.filter(ImageFilter.MaxFilter(3)).filter(ImageFilter.MinFilter(3))
+    road_density = road_lines.filter(ImageFilter.BoxBlur(1.6))
+    road_sparse = ImageChops.subtract(road_lines, road_density.point(lambda p: 255 if p > 145 else 0, mode="L"))
 
     # Edge-first extraction avoids giant dark fill blocks from water/land polygons.
     edges = gray.filter(ImageFilter.FIND_EDGES)
@@ -298,6 +303,9 @@ def _stylize_map_for_print_art(map_img: Image.Image, product_type: str | None) -
     arterial_blob = arterial_seed.filter(ImageFilter.MinFilter(11))
     arterial_lines = ImageChops.subtract(arterial_seed, arterial_blob).filter(ImageFilter.MaxFilter(3))
     major_mask = ImageChops.lighter(major_mask, arterial_lines)
+    # Hard clamp: emphasize sparse road network and suppress cadastral textures.
+    major_mask = ImageChops.lighter(major_mask, road_sparse)
+    minor_mask = ImageChops.subtract(minor_mask, road_density.point(lambda p: 255 if p > 130 else 0, mode="L"))
 
     art = Image.new("RGB", map_img.size, color="#efefed")
     minor_layer = Image.new("RGB", map_img.size, color="#b8b8b8")
