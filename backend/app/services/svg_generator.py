@@ -426,17 +426,17 @@ def _generate_print_svg(
     and clean typography matching premium city map wall art.
 
     Supports 5 poster layouts: classic, minimal, editorial, bold, vintage.
-    When color_theme is "vintage_map", uses a special monochrome line-art
-    renderer with SVG paper texture for an aged parchment look.
+    The Gallery Premium theme uses a dedicated monochrome line-art renderer
+    with SVG paper texture for an aged parchment look.
     Professional map elements: compass rose, scale bar, gradient water, land shadow.
     """
     from app.services.thumbnail_generator import get_poster_theme, normalize_color_theme
 
     resolved_theme = normalize_color_theme(color_theme)
 
-    # Vintage-style map: monochrome line art on aged parchment — completely
-    # different rendering path from the standard colored poster themes.
-    if resolved_theme in {"vintage_map", "gallery_premium"}:
+    # Gallery Premium uses the dedicated vintage renderer. Vintage Map now
+    # stays on the standard print renderer so detail density matches Classic.
+    if resolved_theme in {"gallery_premium"}:
         return _generate_vintage_map_svg(
             processed=processed,
             location_name=location_name,

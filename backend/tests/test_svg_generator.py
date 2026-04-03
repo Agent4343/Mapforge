@@ -182,7 +182,7 @@ def test_svg_node_count():
     assert result["layer_count"] >= 3
 
 
-def test_vintage_map_fallback_streets_include_land_boundary_and_texture():
+def test_gallery_premium_fallback_streets_include_land_boundary_and_texture():
     processed = _make_processed()
     fallback_streets = {
         "major_roads": [(
@@ -200,7 +200,7 @@ def test_vintage_map_fallback_streets_include_land_boundary_and_texture():
         show_coordinates=True,
         font_size_mm=14,
         streets_data=fallback_streets,
-        color_theme="vintage_map",
+        color_theme="gallery_premium",
         product_type="city",
         subtitle="No Forever & Always",
         show_compass=True,
@@ -211,7 +211,7 @@ def test_vintage_map_fallback_streets_include_land_boundary_and_texture():
     assert "terrain_hatch" in svg
 
 
-def test_vintage_map_hides_placeholder_subtitle_no():
+def test_gallery_premium_hides_placeholder_subtitle_no():
     processed = _make_processed()
     result = generate_svg(
         processed=processed,
@@ -219,7 +219,7 @@ def test_vintage_map_hides_placeholder_subtitle_no():
         style=CutStyle.filled,
         show_coordinates=True,
         font_size_mm=14,
-        color_theme="vintage_map",
+        color_theme="gallery_premium",
         product_type="province",
         subtitle="No",
         output_mode="print",
@@ -228,7 +228,7 @@ def test_vintage_map_hides_placeholder_subtitle_no():
     assert ">No<" not in svg
 
 
-def test_vintage_map_suppresses_short_fallback_segments():
+def test_gallery_premium_suppresses_short_fallback_segments():
     processed = _make_processed()
     fallback_streets = {
         "major_roads": [
@@ -244,7 +244,7 @@ def test_vintage_map_suppresses_short_fallback_segments():
         show_coordinates=True,
         font_size_mm=14,
         streets_data=fallback_streets,
-        color_theme="vintage_map",
+        color_theme="gallery_premium",
         product_type="city",
         output_mode="print",
     )
@@ -262,7 +262,7 @@ def test_normalize_color_theme_accepts_human_readable_and_legacy_aliases():
     assert normalize_color_theme("ocean_depths") == "ocean"
 
 
-def test_generate_svg_accepts_vintage_map_alias_and_uses_vintage_renderer():
+def test_generate_svg_accepts_gallery_alias_and_uses_vintage_renderer():
     processed = _make_processed()
     result = generate_svg(
         processed=processed,
@@ -270,8 +270,25 @@ def test_generate_svg_accepts_vintage_map_alias_and_uses_vintage_renderer():
         style=CutStyle.filled,
         show_coordinates=True,
         font_size_mm=14,
-        color_theme="Vintage Map",
+        color_theme="Gallery Premium",
         product_type="city",
         output_mode="print",
     )
     assert "MapForge Vintage Map v1.0" in result["svg"]
+
+
+def test_generate_svg_vintage_map_uses_standard_theme_renderer():
+    processed = _make_processed()
+    result = generate_svg(
+        processed=processed,
+        location_name="Halifax",
+        style=CutStyle.filled,
+        show_coordinates=True,
+        font_size_mm=14,
+        color_theme="vintage_map",
+        product_type="city",
+        output_mode="print",
+    )
+    svg = result["svg"]
+    assert "MapForge Print Poster v1.0 | Theme: vintage_map" in svg
+    assert "MapForge Vintage Map v1.0" not in svg

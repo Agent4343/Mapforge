@@ -13,7 +13,7 @@ def _base_processed():
     }
 
 
-def test_vintage_city_suppresses_polygon_stroke_with_real_streets():
+def test_gallery_city_suppresses_polygon_stroke_with_real_streets():
     streets = {
         "major_roads": [
             ([(30, 30), (170, 140)], "primary", 0.9, "Main St"),
@@ -30,7 +30,7 @@ def test_vintage_city_suppresses_polygon_stroke_with_real_streets():
         font_size_mm=14,
         streets_data=streets,
         water_data=None,
-        color_theme="vintage_map",
+        color_theme="gallery_premium",
         product_type="city",
         output_mode="print",
     )["svg"]
@@ -40,7 +40,7 @@ def test_vintage_city_suppresses_polygon_stroke_with_real_streets():
     assert 'stroke="#5a4a38" stroke-width="0"' in svg or 'stroke-width="0"' in svg
 
 
-def test_vintage_city_filters_micro_detail_classes_in_sparse_mode():
+def test_gallery_city_filters_micro_detail_classes_in_sparse_mode():
     streets = {
         "major_roads": [
             ([(25, 25), (175, 145)], "primary", 0.9, "Main St"),
@@ -59,7 +59,7 @@ def test_vintage_city_filters_micro_detail_classes_in_sparse_mode():
         font_size_mm=14,
         streets_data=streets,
         water_data=None,
-        color_theme="vintage_map",
+        color_theme="gallery_premium",
         product_type="city",
         output_mode="print",
     )["svg"]
@@ -69,7 +69,7 @@ def test_vintage_city_filters_micro_detail_classes_in_sparse_mode():
     assert "Trail 2" not in svg
 
 
-def test_vintage_city_keeps_service_roads_even_in_dense_mode():
+def test_gallery_city_keeps_service_roads_even_in_dense_mode():
     streets = {
         "major_roads": [
             ([(25, 25), (175, 145)], "primary", 0.9, "Main St"),
@@ -87,7 +87,7 @@ def test_vintage_city_keeps_service_roads_even_in_dense_mode():
         font_size_mm=14,
         streets_data=streets,
         water_data=None,
-        color_theme="vintage_map",
+        color_theme="gallery_premium",
         product_type="city",
         output_mode="print",
     )["svg"]
@@ -98,7 +98,7 @@ def test_vintage_city_keeps_service_roads_even_in_dense_mode():
     assert 'd="M40,70 L160,70"' not in svg
 
 
-def test_vintage_city_dense_mode_keeps_residential_and_tertiary_when_very_dense():
+def test_gallery_city_dense_mode_keeps_residential_and_tertiary_when_very_dense():
     streets = {
         "major_roads": [
             ([(25, 25), (175, 145)], "primary", 0.9, "Main St"),
@@ -118,7 +118,7 @@ def test_vintage_city_dense_mode_keeps_residential_and_tertiary_when_very_dense(
         font_size_mm=14,
         streets_data=streets,
         water_data=None,
-        color_theme="vintage_map",
+        color_theme="gallery_premium",
         product_type="city",
         output_mode="print",
     )["svg"]
@@ -130,7 +130,7 @@ def test_vintage_city_dense_mode_keeps_residential_and_tertiary_when_very_dense(
     assert 'd="M30,90 L170,90"' not in svg
 
 
-def test_vintage_province_drops_micro_roads_in_dense_mode():
+def test_gallery_province_drops_micro_roads_in_dense_mode():
     streets = {
         "major_roads": [
             ([(25, 25), (175, 145)], "primary", 0.9, "Main Hwy"),
@@ -149,7 +149,7 @@ def test_vintage_province_drops_micro_roads_in_dense_mode():
         font_size_mm=14,
         streets_data=streets,
         water_data=None,
-        color_theme="vintage_map",
+        color_theme="gallery_premium",
         product_type="province",
         output_mode="print",
     )["svg"]
