@@ -224,6 +224,12 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         maptiler_only_global
         and req.product_type.value in {"city", "community", "name_sign", "province"}
     )
+    # Hard quality mode for Etsy-ready city/community output:
+    # even in MapTiler-only mode, render from vector road classes (not raster tiles)
+    # to avoid parcel/cadastral texture artifacts.
+    city_vector_road_art_mode = bool(
+        maptiler_only_mode and req.product_type.value in {"city", "community"}
+    )
 
     # Resolve board dimensions
     if req.board_width_inches and req.board_height_inches:
@@ -302,6 +308,9 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     # Strict production mode: rely on MapTiler rendering path, not Overpass overlays.
     if maptiler_only_mode:
         need_streets = False
+        need_water = False
+    if city_vector_road_art_mode:
+        need_streets = True
         need_water = False
 
     # Preview mode prioritizes speed: default auto overlays off unless explicitly enabled.
@@ -615,13 +624,14 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
 
     maptiler_static_failed = False
     maptiler_key_runtime = ""
-    if maptiler_only_mode or is_preview_request:
+    maptiler_raster_enabled = (maptiler_only_mode or is_preview_request) and not city_vector_road_art_mode
+    if maptiler_raster_enabled:
         try:
             maptiler_key_runtime = (await get_maptiler_key(db) or "").strip()
         except Exception as e:
             log.warning(f"MapTiler key lookup failed in generate flow: {e}")
             maptiler_key_runtime = ""
-    if maptiler_only_mode and not maptiler_key_runtime:
+    if maptiler_raster_enabled and maptiler_only_mode and not maptiler_key_runtime:
         warnings.append(
             "MapTiler-only mode is enabled but no valid MapTiler key is configured. "
             "Showing fallback boundary art."
@@ -630,7 +640,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     # Optional fast preview image rendered via MapTiler so users can immediately
     # see the new map-development style in-app (not only after download/export).
     preview_png_b64 = None
-    if is_preview_request or maptiler_only_mode:
+    if maptiler_raster_enabled:
         try:
             if maptiler_key_runtime:
                 preview_png = await _render_maptiler_poster_png(
@@ -653,6 +663,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             log.warning(f"MapTiler preview render failed (non-fatal): {e}")
             if maptiler_only_mode and maptiler_key_runtime:
                 maptiler_static_failed = True
+    elif city_vector_road_art_mode:
+        warnings.append("Using vector road-only city render for cleaner map-art output.")
 
     # Store files + generate derivatives (only for authenticated users)
     # Visitors just get the SVG preview — no file storage needed
@@ -674,7 +686,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             raise HTTPException(status_code=500, detail="Failed to save generated file. Please try again.")
 
         maptiler_print_png: bytes | None = None
-        if maptiler_only_mode and maptiler_key_runtime:
+        if maptiler_only_mode and maptiler_key_runtime and not city_vector_road_art_mode:
             try:
                 maptiler_print_png = await _render_maptiler_poster_png(
                     db=db,
@@ -775,7 +787,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         except Exception as e:
             log.warning(f"Etsy listing image generation failed (non-fatal): {e}")
 
-    if maptiler_only_mode and maptiler_key_runtime and maptiler_static_failed:
+    if maptiler_only_mode and maptiler_key_runtime and maptiler_static_failed and not city_vector_road_art_mode:
         warnings.append(
             "MapTiler static map render failed for this request, so MapForge showed fallback boundary art. "
             "Check your MapTiler key restrictions (Allowed HTTP Origins should include '?' for server requests)."
