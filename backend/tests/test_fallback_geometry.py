@@ -7,7 +7,12 @@ import pytest
 from shapely.geometry import Point, Polygon
 
 from app.models.schemas import BoardSize, CutStyle, GenerateRequest, ProductType
-from app.routers.generate import _derive_city_context_bbox, _do_generate, _is_maptiler_only_mode
+from app.routers.generate import (
+    _derive_city_context_bbox,
+    _do_generate,
+    _is_maptiler_only_mode,
+    _resolve_display_center,
+)
 from app.services.geo_fetch import fetch_fallback_geometry
 
 
@@ -65,6 +70,43 @@ def test_derive_city_context_bbox_tightens_large_relation_bbox():
     assert tight_lon_span < raw_lon_span
     assert tight[0] < center[0] < tight[2]
     assert tight[1] < center[1] < tight[3]
+
+
+@pytest.mark.asyncio
+async def test_resolve_display_center_ignores_faraway_name_collisions():
+    # Halifax relation bbox-ish context (Nova Scotia)
+    bounds_hint = (44.58, -63.72, 44.71, -63.54)
+
+    class _Cand:
+        def __init__(self, osm_id, osm_type, feature_type, lat, lon):
+            self.osm_id = osm_id
+            self.osm_type = osm_type
+            self.feature_type = feature_type
+            self.lat = lat
+            self.lon = lon
+
+    # Candidate list includes a faraway "Halifax" that should be rejected,
+    # and a local one that should be accepted.
+    async def _mock_search_location(*_args, **_kwargs):
+        return [
+            _Cand(9092218, "relation", "community", 44.6486, -63.5859),  # original selected relation
+            _Cand(12345, "node", "community", 45.0, -70.0),              # far away mismatch
+            _Cand(67890, "node", "community", 44.6510, -63.6100),        # local acceptable
+        ]
+
+    with patch("app.routers.generate.search_location", side_effect=_mock_search_location):
+        center = await _resolve_display_center(
+            "Halifax",
+            9092218,
+            "relation",
+            source_bbox=bounds_hint,
+        )
+
+    assert center is not None
+    lat, lon = center
+    # Ensure we selected the local candidate, not far-away collision.
+    assert lat == pytest.approx(44.6510)
+    assert lon == pytest.approx(-63.6100)
 
 
 @pytest.mark.asyncio

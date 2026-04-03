@@ -143,7 +143,12 @@ def _looks_admin_heavy_city_result(
     return any(tok in name for tok in noisy_tokens)
 
 
-async def _resolve_display_center(location_name: str, osm_id: int, osm_type: str) -> tuple[float, float] | None:
+async def _resolve_display_center(
+    location_name: str,
+    osm_id: int,
+    osm_type: str,
+    source_bbox: tuple[float, float, float, float] | None = None,
+) -> tuple[float, float] | None:
     """Try to re-center city/community renders on a place node/way, not admin relation centroid."""
     query = (location_name or "").strip()
     if not query:
@@ -157,9 +162,39 @@ async def _resolve_display_center(location_name: str, osm_id: int, osm_type: str
         # Skip the same relation candidate; prefer place node/way alternatives.
         if int(cand.osm_id) == int(osm_id) and str(cand.osm_type) == str(osm_type):
             continue
-        if cand.feature_type in {"city", "community"} and cand.osm_type in {"node", "way"}:
+        if (
+            cand.feature_type in {"city", "community"}
+            and cand.osm_type in {"node", "way"}
+            and (
+                source_bbox is None
+                or _is_point_in_or_near_bbox(cand.lat, cand.lon, source_bbox)
+            )
+        ):
             return (cand.lat, cand.lon)
     return None
+
+
+def _is_point_in_or_near_bbox(
+    lat: float,
+    lon: float,
+    bbox: tuple[float, float, float, float],
+    *,
+    margin_ratio: float = 0.12,
+) -> bool:
+    """Return True if point lies inside bbox with a small margin.
+
+    This prevents global search recentering from selecting same-name places in
+    other countries (e.g., Halifax, UK) when the selected OSM relation is in CA.
+    """
+    south, west, north, east = bbox
+    lat_span = max(0.0001, north - south)
+    lon_span = max(0.0001, east - west)
+    lat_pad = lat_span * margin_ratio
+    lon_pad = lon_span * margin_ratio
+    return (
+        (south - lat_pad) <= lat <= (north + lat_pad)
+        and (west - lon_pad) <= lon <= (east + lon_pad)
+    )
 
 
 def _derive_city_context_bbox(
@@ -286,15 +321,6 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         log.error(f"Geometry processing error for {req.osm_type}/{req.osm_id}: {type(e).__name__}: {e}")
         raise HTTPException(status_code=422, detail="Geometry processing failed. This location may not have sufficient map data. Please try a different location.")
 
-    # Administrative boundary relations can produce technical-looking blocky posters
-    # for city/community art. If available, prefer a nearby place node/way center
-    # for cleaner street-map extraction.
-    display_latlon: tuple[float, float] | None = processed.get("center_latlon")
-    if req.product_type.value in {"city", "community"}:
-        nudged = await _resolve_display_center(req.text or "", req.osm_id, req.osm_type)
-        if nudged:
-            display_latlon = nudged
-
     # Fetch streets and water concurrently for faster generation
     streets_data = None
     water_data = None
@@ -338,6 +364,19 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
 
     bounds = geom.bounds  # minx, miny, maxx, maxy
     bbox = (bounds[1], bounds[0], bounds[3], bounds[2])
+    # Administrative boundary relations can produce technical-looking blocky posters
+    # for city/community art. If available, prefer a nearby place node/way center
+    # for cleaner street-map extraction.
+    display_latlon: tuple[float, float] | None = processed.get("center_latlon")
+    if req.product_type.value in {"city", "community"}:
+        nudged = await _resolve_display_center(
+            req.text or "",
+            req.osm_id,
+            req.osm_type,
+            source_bbox=bbox,
+        )
+        if nudged:
+            display_latlon = nudged
     maptiler_render_bbox = bbox
     if (
         maptiler_only_mode
