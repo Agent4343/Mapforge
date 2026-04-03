@@ -110,11 +110,11 @@ def _get_vintage_density_profile(product_type: str, total_roads: int) -> dict[st
     # Minimum segment-length filter for minor roads (in mm).
     # Sparse maps keep shorter segments for extra texture.
     if band == "sparse":
-        min_minor_len_factor = 0.004
+        min_minor_len_factor = 0.0032 if product_type in {"city", "community"} else 0.004
     elif band == "dense":
-        min_minor_len_factor = 0.009
+        min_minor_len_factor = 0.0068 if product_type in {"city", "community"} else 0.009
     else:
-        min_minor_len_factor = 0.006
+        min_minor_len_factor = 0.0048 if product_type in {"city", "community"} else 0.006
 
     return {
         "band": band,
@@ -1388,7 +1388,7 @@ def _generate_vintage_map_svg(
         elif product_type in ("city", "community") and is_dense:
             # In denser urban maps, suppress pedestrian micro-lines that add
             # noise without improving print readability.
-            drop_minor_classes.update({"service", "path", "footway", "cycleway", "pedestrian"})
+            drop_minor_classes.update({"path", "footway", "cycleway", "pedestrian"})
         elif product_type in ("city", "community"):
             # Balanced urban maps keep service roads but remove footway clutter.
             drop_minor_classes.update({"path", "footway", "cycleway", "pedestrian"})

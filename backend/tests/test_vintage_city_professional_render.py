@@ -69,6 +69,35 @@ def test_vintage_city_filters_micro_detail_classes_in_sparse_mode():
     assert "Trail 2" not in svg
 
 
+def test_vintage_city_keeps_service_roads_even_in_dense_mode():
+    streets = {
+        "major_roads": [
+            ([(25, 25), (175, 145)], "primary", 0.9, "Main St"),
+        ] * 540,
+        "minor_roads": [
+            ([(40, 60), (160, 60)], "service", 0.2, "Service Rd"),
+            ([(40, 70), (160, 70)], "footway", 0.1, "Trail"),
+        ],
+    }
+    svg = generate_svg(
+        processed=_base_processed(),
+        location_name="Halifax",
+        style=CutStyle.filled,
+        show_coordinates=True,
+        font_size_mm=14,
+        streets_data=streets,
+        water_data=None,
+        color_theme="vintage_map",
+        product_type="city",
+        output_mode="print",
+    )["svg"]
+
+    # Dense city mode should keep service roads for fuller grids,
+    # but still remove footway micro detail.
+    assert 'd="M40,60 L160,60"' in svg
+    assert 'd="M40,70 L160,70"' not in svg
+
+
 def test_vintage_province_drops_micro_roads_in_dense_mode():
     streets = {
         "major_roads": [

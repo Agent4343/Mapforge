@@ -378,6 +378,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         if nudged:
             display_latlon = nudged
     maptiler_render_bbox = bbox
+    street_fetch_bbox = bbox
     if (
         maptiler_only_mode
         and req.product_type.value in {"city", "community"}
@@ -385,6 +386,10 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         and display_latlon is not None
     ):
         maptiler_render_bbox = _derive_city_context_bbox(bbox, display_latlon)
+        if city_vector_road_art_mode:
+            # Keep vector-street extraction aligned with the tighter city context
+            # so relation-sprawl does not downgrade to major-only roads.
+            street_fetch_bbox = maptiler_render_bbox
         warnings.append(
             "Using city-center context for cleaner map composition."
         )
@@ -394,7 +399,11 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     #   Small provinces (1-30 deg²): full streets — PEI, Nova Scotia, New Brunswick
     #   Medium provinces (30-80 deg²): major roads only — Saskatchewan, Manitoba
     #   Very large provinces (>80 deg²): skip streets — Ontario, Quebec, BC, Alberta
-    bbox_area_deg2 = (bounds[2] - bounds[0]) * (bounds[3] - bounds[1])
+    active_street_bbox = street_fetch_bbox if city_vector_road_art_mode else bbox
+    bbox_area_deg2 = (
+        (active_street_bbox[3] - active_street_bbox[1])
+        * (active_street_bbox[2] - active_street_bbox[0])
+    )
     is_medium_area = bbox_area_deg2 > 30.0
     is_very_large_area = bbox_area_deg2 > 80.0
 
@@ -408,6 +417,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     # Provinces get major roads only (highways) unless user explicitly enabled streets.
     # Cities always get full street grid.
     include_minor_streets = not is_medium_area and not (is_province and not req.include_streets)
+    if req.product_type.value in {"city", "community"}:
+        include_minor_streets = True
 
     # City/community relation boundaries are often administrative and produce
     # clipped/boxy street texture. Use bbox mode there for cleaner poster context.
@@ -418,12 +429,12 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         street_query_osm_type = None
 
     async def _get_streets():
-        cache_key = _bbox_cache_key("streets", bbox)
+        cache_key = _bbox_cache_key("streets", street_fetch_bbox)
         if cache_key in _overpass_cache:
             log.info("Using cached street data")
             return _overpass_cache[cache_key]
         result = await fetch_streets(
-            bbox=bbox,
+            bbox=street_fetch_bbox,
             include_minor=include_minor_streets,
             osm_id=street_query_osm_id,
             osm_type=street_query_osm_type,

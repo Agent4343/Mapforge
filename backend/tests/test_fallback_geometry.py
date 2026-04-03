@@ -73,6 +73,70 @@ def test_derive_city_context_bbox_tightens_large_relation_bbox():
 
 
 @pytest.mark.asyncio
+async def test_generate_city_vector_mode_uses_tight_bbox_for_street_fetch(db_session):
+    req = GenerateRequest(
+        osm_id=9092218,
+        osm_type="relation",
+        product_type=ProductType.city,
+        board_size=BoardSize.medium,
+        style=CutStyle.filled,
+        text="Halifax",
+        include_streets=True,
+        include_contours=False,
+        print_dpi=300,
+    )
+
+    # Simulate a broad administrative relation shape.
+    broad_geom = Polygon([
+        (-63.72, 44.58),
+        (-63.54, 44.58),
+        (-63.54, 44.71),
+        (-63.72, 44.71),
+        (-63.72, 44.58),
+    ])
+
+    async def _mock_fetch_geometry(*_args, **_kwargs):
+        return broad_geom
+
+    async def _mock_search_location(*_args, **_kwargs):
+        class _Cand:
+            def __init__(self, osm_id, osm_type, feature_type, lat, lon):
+                self.osm_id = osm_id
+                self.osm_type = osm_type
+                self.feature_type = feature_type
+                self.lat = lat
+                self.lon = lon
+        return [
+            _Cand(9092218, "relation", "city", 44.6486, -63.5859),
+            _Cand(12345, "node", "city", 44.6488, -63.5752),
+        ]
+
+    async def _mock_fetch_streets(*_args, **_kwargs):
+        # Keep some data so the quality gate does not force repick for this test.
+        return {
+            "major_roads": [([(-63.60, 44.63), (-63.56, 44.66)], "primary", 0.9, "Main")],
+            "minor_roads": [([(-63.59, 44.64), (-63.58, 44.65)], "residential", 0.3, "Local")],
+        }
+
+    with (
+        patch("app.routers.generate.fetch_geometry", side_effect=_mock_fetch_geometry),
+        patch("app.routers.generate.search_location", side_effect=_mock_search_location),
+        patch("app.routers.generate.fetch_streets", side_effect=_mock_fetch_streets) as fetch_streets_mock,
+        patch("app.routers.generate.settings.MAPFORGE_MAPTILER_ONLY_MODE", True),
+    ):
+        await _do_generate(req, user=None, db=db_session)
+
+    assert fetch_streets_mock.call_count == 1
+    called_bbox = fetch_streets_mock.call_args.kwargs["bbox"]
+    relation_bbox = (44.58, -63.72, 44.71, -63.54)
+    # Tight city bbox should be smaller than the broad relation bbox.
+    assert (called_bbox[2] - called_bbox[0]) < (relation_bbox[2] - relation_bbox[0])
+    assert (called_bbox[3] - called_bbox[1]) < (relation_bbox[3] - relation_bbox[1])
+    # City vector mode should keep minor streets enabled.
+    assert fetch_streets_mock.call_args.kwargs["include_minor"] is True
+
+
+@pytest.mark.asyncio
 async def test_resolve_display_center_ignores_faraway_name_collisions():
     # Halifax relation bbox-ish context (Nova Scotia)
     bounds_hint = (44.58, -63.72, 44.71, -63.54)
