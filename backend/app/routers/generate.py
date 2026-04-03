@@ -162,6 +162,27 @@ async def _resolve_display_center(location_name: str, osm_id: int, osm_type: str
     return None
 
 
+def _derive_city_context_bbox(
+    bbox: tuple[float, float, float, float],
+    center_latlon: tuple[float, float],
+) -> tuple[float, float, float, float]:
+    """Build a tighter city context bbox around center to avoid admin-relation sprawl."""
+    south, west, north, east = bbox
+    lat, lon = center_latlon
+    lat_span_raw = max(0.0001, north - south)
+    lon_span_raw = max(0.0001, east - west)
+    lat_span = max(0.035, min(0.14, lat_span_raw * 0.42))
+    lon_span = max(0.05, min(0.22, lon_span_raw * 0.42))
+    half_lat = lat_span / 2.0
+    half_lon = lon_span / 2.0
+    return (
+        max(-89.9, lat - half_lat),
+        max(-179.9, lon - half_lon),
+        min(89.9, lat + half_lat),
+        min(179.9, lon + half_lon),
+    )
+
+
 async def _is_maptiler_only_mode(db: AsyncSession | None = None) -> bool:
     """Production toggle: bypass Overpass overlays for reliability.
 
@@ -263,7 +284,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     # for city/community art. If available, prefer a nearby place node/way center
     # for cleaner street-map extraction.
     display_latlon: tuple[float, float] | None = processed.get("center_latlon")
-    if req.product_type.value in {"city", "community"} and not maptiler_only_mode:
+    if req.product_type.value in {"city", "community"}:
         nudged = await _resolve_display_center(req.text or "", req.osm_id, req.osm_type)
         if nudged:
             display_latlon = nudged
@@ -308,6 +329,17 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
 
     bounds = geom.bounds  # minx, miny, maxx, maxy
     bbox = (bounds[1], bounds[0], bounds[3], bounds[2])
+    maptiler_render_bbox = bbox
+    if (
+        maptiler_only_mode
+        and req.product_type.value in {"city", "community"}
+        and req.osm_type == "relation"
+        and display_latlon is not None
+    ):
+        maptiler_render_bbox = _derive_city_context_bbox(bbox, display_latlon)
+        warnings.append(
+            "Using city-center context for cleaner map composition."
+        )
 
     # Size thresholds for street fetching:
     #   Cities (<1 deg²): full streets with all road types
@@ -606,8 +638,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                     req=req,
                     result_svg=result["svg"],
                     location_name=location_name,
-                    center_latlon=processed.get("center_latlon"),
-                    bbox=bbox,
+                    center_latlon=display_latlon or processed.get("center_latlon"),
+                    bbox=maptiler_render_bbox,
                     maptiler_key=maptiler_key_runtime,
                     max_output_dimension=1100,
                 )
@@ -649,8 +681,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                     req=req,
                     result_svg=result["svg"],
                     location_name=location_name,
-                    center_latlon=processed.get("center_latlon"),
-                    bbox=bbox,
+                    center_latlon=display_latlon or processed.get("center_latlon"),
+                    bbox=maptiler_render_bbox,
                     maptiler_key=maptiler_key_runtime,
                 )
             except Exception as e:

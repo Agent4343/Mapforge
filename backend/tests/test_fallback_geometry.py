@@ -7,7 +7,7 @@ import pytest
 from shapely.geometry import Point, Polygon
 
 from app.models.schemas import BoardSize, CutStyle, GenerateRequest, ProductType
-from app.routers.generate import _do_generate, _is_maptiler_only_mode
+from app.routers.generate import _derive_city_context_bbox, _do_generate, _is_maptiler_only_mode
 from app.services.geo_fetch import fetch_fallback_geometry
 
 
@@ -49,6 +49,22 @@ async def test_fetch_fallback_geometry_from_bbox_uses_ellipse():
     # Should still be centered near input bounds center.
     assert geom.centroid.y == pytest.approx(46.1, abs=0.1)
     assert geom.centroid.x == pytest.approx(-60.2, abs=0.2)
+
+
+def test_derive_city_context_bbox_tightens_large_relation_bbox():
+    relation_bbox = (44.58, -63.72, 44.71, -63.54)
+    center = (44.6486, -63.5860)
+    tight = _derive_city_context_bbox(relation_bbox, center)
+
+    raw_lat_span = relation_bbox[2] - relation_bbox[0]
+    raw_lon_span = relation_bbox[3] - relation_bbox[1]
+    tight_lat_span = tight[2] - tight[0]
+    tight_lon_span = tight[3] - tight[1]
+
+    assert tight_lat_span < raw_lat_span
+    assert tight_lon_span < raw_lon_span
+    assert tight[0] < center[0] < tight[2]
+    assert tight[1] < center[1] < tight[3]
 
 
 @pytest.mark.asyncio
