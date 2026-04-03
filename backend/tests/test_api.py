@@ -40,6 +40,15 @@ async def test_public_config_exposes_runtime_settings(client):
     assert "maptiler_only_mode" in data
 
 
+@pytest.mark.asyncio
+async def test_public_config_maptiler_mode_can_be_enabled_from_db(client, db_session):
+    await set_setting(db_session, "MAPFORGE_MAPTILER_ONLY_MODE", "1")
+    resp = await client.get("/api/v1/config")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["maptiler_only_mode"] is True
+
+
 def test_maptiler_mode_parser_accepts_quoted_truthy(monkeypatch):
     monkeypatch.setenv("MAPFORGE_MAPTILER_ONLY_MODE", '"true"')
     monkeypatch.delenv("MAPTILER_ONLY_MODE", raising=False)

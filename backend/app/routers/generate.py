@@ -42,7 +42,7 @@ from app.services.thumbnail_generator import (
     remap_poster_theme,
     COLOR_THEMES, MOCKUP_STYLES, PRINT_SIZE_PIXELS,
 )
-from app.services.app_settings import get_maptiler_key
+from app.services.app_settings import get_maptiler_key, get_maptiler_only_mode
 
 router = APIRouter(prefix="/api/v1", tags=["generate"])
 limiter = Limiter(key_func=get_remote_address)
@@ -129,10 +129,14 @@ async def _resolve_display_center(location_name: str, osm_id: int, osm_type: str
     return None
 
 
-def _is_maptiler_only_mode() -> bool:
-    """Production toggle: bypass Overpass overlays for reliability."""
-    raw = str(getattr(settings, "MAPFORGE_MAPTILER_ONLY_MODE", "false") or "").strip().lower()
-    return raw in {"1", "true", "yes", "on"}
+async def _is_maptiler_only_mode(db: AsyncSession | None = None) -> bool:
+    """Production toggle: bypass Overpass overlays for reliability.
+
+    Prefer DB/app_settings override when a DB session is available.
+    """
+    if db is not None:
+        return await get_maptiler_only_mode(db)
+    return bool(settings.MAPFORGE_MAPTILER_ONLY_MODE)
 
 
 async def _maybe_reset_monthly_counter(user: User, db: AsyncSession):
@@ -161,8 +165,9 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     warnings: list[str] = []
     is_preview_request = user is None
     preview_overlays_intentionally_skipped = False
+    maptiler_only_global = await get_maptiler_only_mode(db)
     maptiler_only_mode = bool(
-        settings.MAPFORGE_MAPTILER_ONLY_MODE
+        maptiler_only_global
         and req.product_type.value in {"city", "community", "name_sign", "province"}
     )
 

@@ -7,7 +7,7 @@ import pytest
 from shapely.geometry import Point, Polygon
 
 from app.models.schemas import BoardSize, CutStyle, GenerateRequest, ProductType
-from app.routers.generate import _do_generate
+from app.routers.generate import _do_generate, _is_maptiler_only_mode
 from app.services.geo_fetch import fetch_fallback_geometry
 
 
@@ -303,6 +303,46 @@ async def test_generate_maptiler_only_mode_applies_to_province_and_skips_overlay
         patch("app.routers.generate.fetch_water_features", side_effect=_raise_if_called),
         patch("app.routers.generate.fetch_contour_lines", side_effect=_raise_if_called),
         patch("app.routers.generate.settings.MAPFORGE_MAPTILER_ONLY_MODE", True),
+    ):
+        resp = await _do_generate(req, user=None, db=db_session)
+
+    joined = " ".join(resp.warnings).lower()
+    assert "overpass api may be busy" not in joined
+
+
+@pytest.mark.asyncio
+async def test_generate_maptiler_only_mode_from_db_setting(db_session):
+    req = GenerateRequest(
+        osm_id=996666,
+        osm_type="relation",
+        product_type=ProductType.city,
+        board_size=BoardSize.medium,
+        style=CutStyle.filled,
+        text="MapTilerOnlyDB",
+        include_streets=True,
+        include_contours=False,
+        print_dpi=300,
+    )
+
+    base_geom = Point(-60.2, 46.1).buffer(0.08, resolution=24)
+
+    async def _mock_fetch_geometry(*_args, **_kwargs):
+        return base_geom
+
+    async def _raise_if_called(*_args, **_kwargs):
+        raise AssertionError("Overpass overlay fetch should not run when DB mode override is true")
+
+    # Validate helper override directly.
+    assert await _is_maptiler_only_mode(db_session) is False
+    from app.services.app_settings import set_setting
+    await set_setting(db_session, "MAPFORGE_MAPTILER_ONLY_MODE", "1")
+    assert await _is_maptiler_only_mode(db_session) is True
+
+    with (
+        patch("app.routers.generate.fetch_geometry", side_effect=_mock_fetch_geometry),
+        patch("app.routers.generate.fetch_streets", side_effect=_raise_if_called),
+        patch("app.routers.generate.fetch_water_features", side_effect=_raise_if_called),
+        patch("app.routers.generate.settings.MAPFORGE_MAPTILER_ONLY_MODE", False),
     ):
         resp = await _do_generate(req, user=None, db=db_session)
 

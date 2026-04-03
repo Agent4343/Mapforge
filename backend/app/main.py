@@ -111,6 +111,7 @@ app.include_router(webhooks.router)
 async def get_public_config(db: AsyncSession = Depends(get_db)):
     """Public config for the frontend (no auth required)."""
     maptiler_key = (settings.MAPTILER_KEY or "").strip()
+    maptiler_only_mode = bool(settings.MAPFORGE_MAPTILER_ONLY_MODE)
     try:
         from app.services.app_settings import get_setting
 
@@ -121,13 +122,17 @@ async def get_public_config(db: AsyncSession = Depends(get_db)):
             or maptiler_key
             or ""
         ).strip()
+        mode_raw = (await get_setting(db, "MAPFORGE_MAPTILER_ONLY_MODE")) or (await get_setting(db, "MAPTILER_ONLY_MODE"))
+        if mode_raw is not None and str(mode_raw).strip() != "":
+            from app.config import _parse_env_bool
+            maptiler_only_mode = _parse_env_bool(mode_raw)
     except Exception as e:
         log.warning(f"Failed loading MAPTILER_KEY from app_settings: {e}")
 
     return {
         "etsy_shop_url": settings.ETSY_SHOP_URL or None,
         "maptiler_key": maptiler_key or None,
-        "maptiler_only_mode": bool(settings.MAPFORGE_MAPTILER_ONLY_MODE),
+        "maptiler_only_mode": maptiler_only_mode,
     }
 
 
