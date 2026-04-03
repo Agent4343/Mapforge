@@ -26,3 +26,7 @@ def test_normalize_style_id_maps_streets_to_art_default():
 
 def test_normalize_style_id_maps_toner_to_clean_road_style():
     assert _normalize_style_id("toner-v2") == "basic-v2"
+
+
+def test_normalize_style_id_maps_legacy_vector_to_art_default():
+    assert _normalize_style_id("vector") == "backdrop"

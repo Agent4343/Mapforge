@@ -232,6 +232,8 @@ def _normalize_style_id(style_id: str | None) -> str:
         return "backdrop"
     if style == "streets-v2":
         return "backdrop"
+    if style in {"vector", "default", "standard"}:
+        return "backdrop"
     if style == "toner-v2":
         return "basic-v2"
     # Satellite/hybrid and topo/terrain styles tend to embed non-road texture
@@ -256,6 +258,20 @@ def _normalize_style_id(style_id: str | None) -> str:
 def _stylize_map_for_print_art(map_img: Image.Image, product_type: str | None) -> Image.Image:
     """Convert city-scale map tiles into cleaner monochrome poster linework."""
     pt = (product_type or "").strip().lower()
+    if pt == "province":
+        gray = map_img.convert("L").filter(ImageFilter.GaussianBlur(0.9))
+        edge_mask = gray.filter(ImageFilter.FIND_EDGES).point(lambda p: 255 if p > 34 else 0, mode="L")
+        edge_mask = edge_mask.filter(ImageFilter.MaxFilter(3)).filter(ImageFilter.MinFilter(3))
+        # Remove dense tiny clusters (usually labels/symbol clutter) while
+        # preserving larger geographic line structures.
+        clutter_density = edge_mask.filter(ImageFilter.BoxBlur(1.9))
+        clutter_mask = clutter_density.point(lambda p: 255 if p > 170 else 0, mode="L")
+        edge_mask = ImageChops.subtract(edge_mask, clutter_mask)
+        art = Image.new("RGB", map_img.size, color="#ecebe8")
+        line_layer = Image.new("RGB", map_img.size, color="#6f6f6f")
+        art.paste(line_layer, mask=edge_mask)
+        return art
+
     if pt not in {"city", "community", "name_sign"}:
         return map_img
 
@@ -322,6 +338,10 @@ def _pick_art_style(style: str, product_type: str | None) -> str:
     # use the clean road-focused style to suppress parcel-like texture.
     if pt in _CITY_ART_PRODUCT_TYPES:
         return "basic-v2"
+    if pt == "province":
+        # Province posters look cleaner in the backdrop family and avoid dense
+        # label-heavy static styles that resemble screenshot tiles.
+        return "backdrop"
     return style
 
 

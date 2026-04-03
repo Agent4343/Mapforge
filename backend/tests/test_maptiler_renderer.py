@@ -8,6 +8,7 @@ from app.services.maptiler_renderer import (
     _extract_poster_subtitle,
     _should_recover_from_blank_art,
     _stylize_map_for_print_art,
+    _normalize_style_id,
     _zoom_to_fit_bbox,
 )
 
@@ -53,6 +54,11 @@ def test_pick_art_style_forces_basic_for_city_products():
     assert _pick_art_style("basic-v2", "name_sign") == "basic-v2"
     # Non-city products keep configured style.
     assert _pick_art_style("backdrop", "province") == "backdrop"
+
+
+def test_normalize_style_id_maps_vector_alias_to_clean_art_style():
+    assert _normalize_style_id("vector") == "backdrop"
+    assert _normalize_style_id("Vector") == "backdrop"
 
 
 def test_extract_poster_subtitle_from_svg_text_group():
