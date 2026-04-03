@@ -348,3 +348,36 @@ async def test_generate_maptiler_only_mode_from_db_setting(db_session):
 
     joined = " ".join(resp.warnings).lower()
     assert "overpass api may be busy" not in joined
+
+
+@pytest.mark.asyncio
+async def test_generate_maptiler_only_mode_suppresses_low_detail_repick_guidance(db_session):
+    req = GenerateRequest(
+        osm_id=997777,
+        osm_type="relation",
+        product_type=ProductType.city,
+        board_size=BoardSize.medium,
+        style=CutStyle.filled,
+        text="MapTilerPaid",
+        include_streets=True,
+        include_contours=False,
+        print_dpi=300,
+    )
+
+    # Tiny geometry that would normally trigger sparse-detail guidance.
+    tiny_geom = Point(-60.2, 46.1).buffer(0.005, resolution=8)
+
+    async def _mock_fetch_geometry(*_args, **_kwargs):
+        return tiny_geom
+
+    from app.services.app_settings import set_setting
+    await set_setting(db_session, "MAPFORGE_MAPTILER_ONLY_MODE", "1")
+
+    with patch("app.routers.generate.fetch_geometry", side_effect=_mock_fetch_geometry):
+        resp = await _do_generate(req, user=None, db=db_session)
+
+    joined = " ".join(resp.warnings).lower()
+    assert "fuller line pattern" not in joined
+    assert "map detail is very limited" not in joined
+    assert "map detail is lighter" not in joined
+    assert resp.needs_location_repick is False

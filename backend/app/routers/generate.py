@@ -514,9 +514,14 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         req.product_type.value,
         {"min_nodes": 24, "min_paths": 6},
     )
-    low_node_detail = result["node_count"] < quality_floor["min_nodes"]
+    # In MapTiler-only mode, final linework/detail comes from MapTiler tiles,
+    # so OSM polygon node count should not trigger sparse-detail repick warnings.
+    low_node_detail = result["node_count"] < quality_floor["min_nodes"] and not maptiler_only_mode
+    # In MapTiler-only mode, line detail is rendered from MapTiler raster tiles,
+    # so Overpass-derived path density should not drive sparse-detail warnings.
     low_path_quality = (
         effective_path_count < quality_floor["min_paths"]
+        and not maptiler_only_mode
         and not overlay_unavailable
         and overpass_missing_count == 0
         and not preview_overlays_intentionally_skipped
