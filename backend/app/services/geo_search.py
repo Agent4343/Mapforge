@@ -13,6 +13,11 @@ from app.models.schemas import SearchResult
 from app.services.cache import cache_get, cache_set, make_search_key
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+NOMINATIM_FALLBACK_URLS = (
+    NOMINATIM_URL,
+    # Backup Nominatim-compatible endpoint to reduce user-facing search outages.
+    "https://nominatim.geocoding.ai/search",
+)
 NOMINATIM_HEADERS = {"User-Agent": "MapForgeCNC/1.0 (mapforge-cnc-app)"}
 
 # Nominatim usage policy: max 1 request per second.
@@ -326,19 +331,43 @@ async def search_location(query: str, country: str = "ca", limit: int = 10) -> l
     if country:
         params["countrycodes"] = country
 
+    data: list[dict] | None = None
     try:
-        # Enforce Nominatim rate limit: max 1 request per second
+        # Enforce global provider rate-limit and fail over to backup endpoint(s)
+        # when the primary host is unreachable or temporarily rate-limited.
         global _nominatim_last_request
         async with _nominatim_lock:
-            elapsed = time.monotonic() - _nominatim_last_request
-            if elapsed < settings.NOMINATIM_RATE_LIMIT:
-                await asyncio.sleep(settings.NOMINATIM_RATE_LIMIT - elapsed)
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(NOMINATIM_URL, params=params, headers=NOMINATIM_HEADERS)
-                _nominatim_last_request = time.monotonic()
-                resp.raise_for_status()
-                data = resp.json()
-    except (httpx.HTTPError, httpx.ProxyError) as e:
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+                last_error: Exception | None = None
+                for idx, endpoint in enumerate(NOMINATIM_FALLBACK_URLS):
+                    # Keep outbound calls compliant with configured request pacing.
+                    elapsed = time.monotonic() - _nominatim_last_request
+                    if elapsed < settings.NOMINATIM_RATE_LIMIT:
+                        await asyncio.sleep(settings.NOMINATIM_RATE_LIMIT - elapsed)
+                    try:
+                        resp = await client.get(endpoint, params=params, headers=NOMINATIM_HEADERS)
+                        _nominatim_last_request = time.monotonic()
+                        status_code = int(getattr(resp, "status_code", 200) or 200)
+                        if status_code == 429:
+                            headers = getattr(resp, "headers", {}) or {}
+                            retry_after = int(headers.get("retry-after", "1") or 1)
+                            await asyncio.sleep(max(1, min(3, retry_after)))
+                            continue
+                        resp.raise_for_status()
+                        payload = resp.json()
+                        if isinstance(payload, list):
+                            data = payload
+                            if idx > 0:
+                                log.warning(f"Search used fallback endpoint: {endpoint}")
+                            break
+                        last_error = ValueError("Unexpected Nominatim response shape")
+                    except (httpx.HTTPError, httpx.ProxyError, ValueError) as e:
+                        last_error = e
+                        log.warning(f"Nominatim search request failed via {endpoint}: {e}")
+                        continue
+                if data is None and last_error is not None:
+                    raise last_error
+    except (httpx.HTTPError, httpx.ProxyError, ValueError) as e:
         log.warning(f"Nominatim search request failed: {e}")
         raise HTTPException(
             status_code=502,

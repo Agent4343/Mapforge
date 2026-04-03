@@ -2,7 +2,9 @@
 
 from unittest.mock import patch
 
+import httpx
 import pytest
+from fastapi import HTTPException
 
 from app.services.geo_search import search_location
 
@@ -226,3 +228,95 @@ async def test_search_flags_admin_boundary_city_result():
 
     assert len(results) == 1
     assert results[0].is_admin_boundary is True
+
+
+@pytest.mark.asyncio
+async def test_search_uses_fallback_endpoint_when_primary_unreachable():
+    mocked_payload = [
+        {
+            "osm_id": 5001,
+            "osm_type": "relation",
+            "display_name": "Halifax, Nova Scotia, Canada",
+            "lat": "44.6488",
+            "lon": "-63.5752",
+            "class": "place",
+            "type": "city",
+            "place_rank": 16,
+            "importance": 0.8,
+            "address": {"country_code": "ca", "state": "Nova Scotia"},
+            "boundingbox": ["44.5", "44.8", "-63.8", "-63.3"],
+            "geojson": {
+                "type": "Polygon",
+                "coordinates": [[
+                    [-63.7, 44.6], [-63.5, 44.6], [-63.5, 44.7], [-63.7, 44.7], [-63.7, 44.6]
+                ]],
+            },
+        }
+    ]
+
+    async def _cache_miss(*_args, **_kwargs):
+        return None
+
+    async def _cache_noop(*_args, **_kwargs):
+        return True
+
+    class _MockResponse:
+        def __init__(self, payload):
+            self._payload = payload
+            self.status_code = 200
+            self.headers = {}
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    called_urls = []
+
+    class _MockClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url, *_args, **_kwargs):
+            called_urls.append(url)
+            if "openstreetmap.org" in url:
+                raise httpx.ConnectError("primary unavailable")
+            return _MockResponse(mocked_payload)
+
+    with patch("app.services.geo_search.cache_get", side_effect=_cache_miss), \
+         patch("app.services.geo_search.cache_set", side_effect=_cache_noop), \
+         patch("app.services.geo_search.httpx.AsyncClient", return_value=_MockClient()):
+        results = await search_location("Halifax", country="ca", limit=5)
+
+    assert len(results) == 1
+    assert any("openstreetmap.org" in url for url in called_urls)
+    assert any("geocoding.ai" in url for url in called_urls)
+    assert results[0].display_name.startswith("Halifax")
+
+
+@pytest.mark.asyncio
+async def test_search_returns_502_when_all_endpoints_fail():
+    async def _cache_miss(*_args, **_kwargs):
+        return None
+
+    class _MockClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, *_args, **_kwargs):
+            raise httpx.ConnectError("all endpoints unavailable")
+
+    with patch("app.services.geo_search.cache_get", side_effect=_cache_miss), \
+         patch("app.services.geo_search.httpx.AsyncClient", return_value=_MockClient()):
+        with pytest.raises(HTTPException) as exc:
+            await search_location("Halifax", country="ca", limit=5)
+
+    assert exc.value.status_code == 502
+    assert "Unable to reach search service" in str(exc.value.detail)
