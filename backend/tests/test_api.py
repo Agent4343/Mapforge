@@ -47,6 +47,13 @@ def test_maptiler_mode_parser_accepts_quoted_truthy(monkeypatch):
     assert _parse_env_bool('"true"') is True
 
 
+def test_first_non_empty_env_prefers_legacy_when_primary_blank(monkeypatch):
+    monkeypatch.setenv("MAPFORGE_MAPTILER_ONLY_MODE", " ")
+    monkeypatch.setenv("MAPTILER_ONLY_MODE", "1")
+    from app.config import _first_non_empty_env
+    assert _first_non_empty_env("MAPFORGE_MAPTILER_ONLY_MODE", "MAPTILER_ONLY_MODE") == "1"
+
+
 @pytest.mark.asyncio
 async def test_library_requires_auth(client):
     resp = await client.get("/api/v1/library")

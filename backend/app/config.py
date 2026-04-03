@@ -25,6 +25,15 @@ def _parse_env_bool(raw: str | None) -> bool:
     return normalized in {"1", "true", "yes", "on", "enabled"}
 
 
+def _first_non_empty_env(*keys: str) -> str:
+    """Return first non-empty env var value among provided keys."""
+    for key in keys:
+        value = os.getenv(key)
+        if value is not None and str(value).strip() != "":
+            return value
+    return ""
+
+
 class Settings:
     # Database
     DATABASE_URL: str = _fixup_db_url(os.getenv("DATABASE_URL", "sqlite+aiosqlite:////tmp/mapforge.db"))
@@ -71,7 +80,7 @@ class Settings:
     # MapTiler-only preview/export composition to avoid Overpass instability.
     # Backward-compatible with older MAPTILER_ONLY_MODE naming.
     MAPFORGE_MAPTILER_ONLY_MODE: bool = _parse_env_bool(
-        os.getenv("MAPFORGE_MAPTILER_ONLY_MODE", os.getenv("MAPTILER_ONLY_MODE", ""))
+        _first_non_empty_env("MAPFORGE_MAPTILER_ONLY_MODE", "MAPTILER_ONLY_MODE")
     )
 
     # Redis (optional caching layer)
