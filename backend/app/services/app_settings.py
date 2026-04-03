@@ -66,6 +66,17 @@ async def get_maptiler_key(db: AsyncSession) -> str:
     ).strip()
 
 
+async def get_maptiler_static_style(db: AsyncSession) -> str:
+    """Resolve MapTiler static style from DB settings with env fallback."""
+    from app.config import settings
+
+    return (
+        (await get_setting(db, "MAPTILER_STATIC_STYLE"))
+        or settings.MAPTILER_STATIC_STYLE
+        or "toner-v2"
+    ).strip()
+
+
 def _parse_bool(raw: str | None) -> bool:
     """Parse flexible truthy strings used in env/DB settings."""
     normalized = str(raw or "").strip()

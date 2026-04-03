@@ -192,7 +192,7 @@ async def get_maptiler_settings(
 
     return {
         "api_key": api_key[:8] + "..." if len(api_key) > 8 else api_key,
-        "static_style": static_style or "streets-v2",
+        "static_style": static_style or "basic-v2",
         "maptiler_only_mode": bool(maptiler_only_mode),
         "configured": bool(api_key),
     }

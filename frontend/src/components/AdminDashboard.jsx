@@ -28,7 +28,7 @@ export default function AdminDashboard({ onBack }) {
   // MapTiler settings state
   const [maptilerSettings, setMaptilerSettings] = useState(null);
   const [maptilerApiKey, setMaptilerApiKey] = useState("");
-  const [maptilerStaticStyle, setMaptilerStaticStyle] = useState("streets-v2");
+  const [maptilerStaticStyle, setMaptilerStaticStyle] = useState("backdrop");
   const [maptilerOnlyMode, setMaptilerOnlyMode] = useState(true);
   const [maptilerSaving, setMaptilerSaving] = useState(false);
   const [maptilerMsg, setMaptilerMsg] = useState(null);
@@ -75,7 +75,7 @@ export default function AdminDashboard({ onBack }) {
     try {
       const s = await getMapTilerSettings();
       setMaptilerSettings(s);
-      setMaptilerStaticStyle((s.static_style || "streets-v2").trim() || "streets-v2");
+      setMaptilerStaticStyle((s.static_style || "backdrop").trim() || "backdrop");
       setMaptilerOnlyMode(Boolean(s.maptiler_only_mode));
     } catch {
       // Not critical
@@ -130,7 +130,7 @@ export default function AdminDashboard({ onBack }) {
     try {
       await clearMapTilerSettings();
       setMaptilerSettings(null);
-      setMaptilerStaticStyle("streets-v2");
+      setMaptilerStaticStyle("backdrop");
       setMaptilerOnlyMode(true);
       setMaptilerMsg({ type: "success", text: "MapTiler settings cleared." });
     } catch (err) {
@@ -334,7 +334,7 @@ export default function AdminDashboard({ onBack }) {
               </div>
               <div className="etsy-settings-detail">
                 <span className="etsy-settings-label">Style:</span>
-                <span className="etsy-settings-value">{maptilerSettings.static_style || "streets-v2"}</span>
+                <span className="etsy-settings-value">{maptilerSettings.static_style || "backdrop"}</span>
               </div>
               <div className="etsy-settings-detail">
                 <span className="etsy-settings-label">Only Mode:</span>
@@ -380,7 +380,7 @@ export default function AdminDashboard({ onBack }) {
                 type="text"
                 value={maptilerStaticStyle}
                 onChange={(e) => setMaptilerStaticStyle(e.target.value)}
-                placeholder="streets-v2"
+                placeholder="backdrop (art-focused default)"
               />
             </div>
             <div className="control-group">

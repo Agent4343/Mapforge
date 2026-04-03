@@ -132,6 +132,27 @@ async def _resolve_maptiler_key(db: Any | None = None, maptiler_key: str | None 
     return key
 
 
+async def _resolve_style_id(db: Any | None = None, style_id: str | None = None) -> str:
+    """Resolve MapTiler static style with an art-focused default."""
+    # Explicit style_id always wins.
+    if style_id and style_id.strip():
+        return style_id.strip()
+
+    resolved = (settings.MAPTILER_STATIC_STYLE or "").strip()
+    if db is not None:
+        try:
+            from app.services.app_settings import get_maptiler_static_style
+
+            resolved = (await get_maptiler_static_style(db) or resolved or "").strip()
+        except Exception as e:
+            log.warning(f"MapTiler style lookup failed in renderer: {e}")
+
+    # Legacy default `streets-v2` reads as navigation UI, not printable wall art.
+    if not resolved or resolved.lower() == "streets-v2":
+        return "backdrop"
+    return resolved
+
+
 def _lat_to_mercator_rad(lat: float) -> float:
     sin = math.sin(lat * math.pi / 180.0)
     rad_x2 = math.log((1 + sin) / (1 - sin)) / 2
@@ -173,6 +194,18 @@ def _apply_product_zoom_bias(zoom: float, product_type: str | None) -> float:
         "name_sign": 0.55,
     }.get(pt, 0.0)
     return max(4.0, min(15.5, zoom + bias))
+
+
+def _normalize_style_id(style_id: str | None) -> str:
+    """Sanitize style id and default to art-oriented style."""
+    style = (style_id or "").strip().lower()
+    if not style:
+        return "backdrop"
+    if style.startswith("http://") or style.startswith("https://"):
+        return "backdrop"
+    if style.startswith("{") or style.endswith(".json"):
+        return "backdrop"
+    return style
 
 
 async def render_maptiler_print_png(
@@ -248,7 +281,7 @@ async def render_maptiler_print_png(
     fetch_w = max(512, int(out_w * fetch_scale))
     fetch_h = max(512, int(map_h * fetch_scale))
 
-    style = (style_id or settings.MAPTILER_STATIC_STYLE or "streets-v2").strip()
+    style = await _resolve_style_id(db, style_id=style_id)
     static_url = (
         f"https://api.maptiler.com/maps/{style}/static/"
         f"{lon:.6f},{lat:.6f},{zoom:.2f}/{fetch_w}x{fetch_h}.png?key={key}"
