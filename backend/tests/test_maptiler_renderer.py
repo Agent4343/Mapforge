@@ -68,6 +68,27 @@ def test_stylize_map_for_print_art_reduces_city_speckle_noise():
     assert sp[16, 16][0] < 120
 
 
+def test_stylize_map_for_print_art_avoids_large_dark_fill_blocks():
+    img = Image.new("RGB", (80, 80), color=(245, 245, 245))
+    px = img.load()
+    # Simulate a large dark filled harbor/land mass.
+    for x in range(10, 70):
+        for y in range(12, 62):
+            px[x, y] = (45, 45, 45)
+    # Add a thin road outside the filled mass to ensure linework is retained.
+    for x in range(5, 75):
+        px[x, 70] = (35, 35, 35)
+
+    styled = _stylize_map_for_print_art(img, "city")
+    sp = styled.load()
+
+    # Interior of large fill should be near paper tone, not dark block.
+    assert sp[40, 35][0] > 165
+    # Linework should remain visible.
+    assert sp[40, 70][0] < 200
+    assert sp[40, 70][0] + 20 < sp[40, 75][0]
+
+
 def test_blank_art_recovery_triggers_for_city_when_styled_too_sparse():
     raw = Image.new("RGB", (64, 64), color=(238, 238, 236))
     raw_px = raw.load()

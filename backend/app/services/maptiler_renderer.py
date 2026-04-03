@@ -12,7 +12,7 @@ import re
 from typing import Any
 
 import httpx
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 from app.config import settings
 from app.logging_config import log
@@ -240,19 +240,33 @@ def _stylize_map_for_print_art(map_img: Image.Image, product_type: str | None) -
     if pt not in {"city", "community", "name_sign"}:
         return map_img
 
-    gray = map_img.convert("L")
+    gray = map_img.convert("L").filter(ImageFilter.GaussianBlur(0.9))
 
-    # Two-level line extraction: light network + bold primary routes.
-    minor_mask = gray.point(lambda p: 255 if p < 170 else 0, mode="L")
-    major_mask = gray.point(lambda p: 255 if p < 120 else 0, mode="L")
+    # Edge-first extraction avoids giant dark fill blocks from water/land polygons.
+    edges = gray.filter(ImageFilter.FIND_EDGES)
+    minor_mask = edges.point(lambda p: 255 if p > 26 else 0, mode="L")
+    major_mask = edges.point(lambda p: 255 if p > 46 else 0, mode="L")
 
-    # Opening removes tiny label/building speckles while preserving longer roads.
-    minor_mask = minor_mask.filter(ImageFilter.MinFilter(3)).filter(ImageFilter.MaxFilter(3))
-    major_mask = major_mask.filter(ImageFilter.MinFilter(3)).filter(ImageFilter.MaxFilter(3))
+    # Keep coherent linework while dropping isolated noise.
+    minor_mask = minor_mask.filter(ImageFilter.MaxFilter(3)).filter(ImageFilter.MinFilter(3))
+    major_mask = major_mask.filter(ImageFilter.MaxFilter(3)).filter(ImageFilter.MinFilter(3))
+    major_mask = major_mask.filter(ImageFilter.MaxFilter(3))
+
+    # Recover dark linear features while suppressing thick region interiors.
+    dark_seed = gray.point(lambda p: 255 if p < 138 else 0, mode="L")
+    dark_core = dark_seed.filter(ImageFilter.MinFilter(7))
+    dark_edges = ImageChops.subtract(dark_seed, dark_core).filter(ImageFilter.MaxFilter(3))
+    minor_mask = ImageChops.lighter(minor_mask, dark_edges)
+
+    # Strong line layer from darkest structures, with region interiors removed.
+    major_seed = gray.point(lambda p: 255 if p < 106 else 0, mode="L")
+    major_core = major_seed.filter(ImageFilter.MinFilter(5))
+    major_edges = ImageChops.subtract(major_seed, major_core).filter(ImageFilter.MaxFilter(3))
+    major_mask = ImageChops.lighter(major_mask, major_edges)
 
     art = Image.new("RGB", map_img.size, color="#efefed")
-    minor_layer = Image.new("RGB", map_img.size, color="#bdbdbd")
-    major_layer = Image.new("RGB", map_img.size, color="#4a4a4a")
+    minor_layer = Image.new("RGB", map_img.size, color="#b8b8b8")
+    major_layer = Image.new("RGB", map_img.size, color="#3f3f3f")
     art.paste(minor_layer, mask=minor_mask)
     art.paste(major_layer, mask=major_mask)
     return art
@@ -268,7 +282,7 @@ def _pick_art_style(style: str, product_type: str | None) -> str:
 def _line_ink_ratio(map_img: Image.Image) -> float:
     """Estimate visible line density to catch near-blank map outputs."""
     sample = map_img.convert("L").resize((220, 220), Image.Resampling.BILINEAR)
-    px = sample.getdata()
+    px = sample.tobytes()
     total = len(px) or 1
     # "Ink" means visibly dark linework, not off-white paper/background.
     ink = sum(1 for v in px if v < 185)
@@ -283,7 +297,7 @@ def _should_recover_from_blank_art(raw_img: Image.Image, styled_img: Image.Image
     styled_ratio = _line_ink_ratio(styled_img)
     # Very sparse styled result plus large drop from the source tile means the
     # art transform was too aggressive for this viewport/style.
-    return styled_ratio < 0.003 and raw_ratio > max(styled_ratio * 2.0, 0.006)
+    return styled_ratio < 0.0022 and raw_ratio > max(styled_ratio * 2.0, 0.006)
 
 
 async def _fetch_static_map_image(
