@@ -75,9 +75,11 @@ def test_stylize_map_for_print_art_avoids_large_dark_fill_blocks():
     for x in range(10, 70):
         for y in range(12, 62):
             px[x, y] = (45, 45, 45)
-    # Add a thin road outside the filled mass to ensure linework is retained.
+    # Add a clear arterial road outside the filled mass to ensure linework is retained.
     for x in range(5, 75):
+        px[x, 69] = (35, 35, 35)
         px[x, 70] = (35, 35, 35)
+        px[x, 71] = (35, 35, 35)
 
     styled = _stylize_map_for_print_art(img, "city")
     sp = styled.load()
@@ -87,6 +89,36 @@ def test_stylize_map_for_print_art_avoids_large_dark_fill_blocks():
     # Linework should remain visible.
     assert sp[40, 70][0] < 200
     assert sp[40, 70][0] + 20 < sp[40, 75][0]
+
+
+def test_stylize_map_for_print_art_reduces_dense_parcel_like_clusters():
+    img = Image.new("RGB", (96, 96), color=(244, 244, 242))
+    px = img.load()
+
+    # Simulate dense parcel/block boundaries (many closed rectangles).
+    for x0 in range(10, 70, 12):
+        for y0 in range(12, 72, 12):
+            for x in range(x0, x0 + 10):
+                px[x, y0] = (55, 55, 55)
+                px[x, y0 + 10] = (55, 55, 55)
+            for y in range(y0, y0 + 10):
+                px[x0, y] = (55, 55, 55)
+                px[x0 + 10, y] = (55, 55, 55)
+
+    # Add one cleaner arterial line that should survive pruning.
+    for x in range(5, 90):
+        px[x, 82] = (35, 35, 35)
+        px[x, 83] = (35, 35, 35)
+        px[x, 84] = (35, 35, 35)
+        px[x, 85] = (35, 35, 35)
+
+    styled = _stylize_map_for_print_art(img, "city")
+    sp = styled.load()
+
+    # Dense parcel area should be substantially lighter than arterial line area.
+    assert sp[28, 28][0] > 170
+    assert sp[52, 52][0] > 170
+    assert sp[48, 84][0] + 22 < sp[48, 78][0]
 
 
 def test_blank_art_recovery_triggers_for_city_when_styled_too_sparse():

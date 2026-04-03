@@ -264,6 +264,22 @@ def _stylize_map_for_print_art(map_img: Image.Image, product_type: str | None) -
     major_edges = ImageChops.subtract(major_seed, major_core).filter(ImageFilter.MaxFilter(3))
     major_mask = ImageChops.lighter(major_mask, major_edges)
 
+    # Remove ultra-dense edge neighborhoods (parcel/cadastral block texture)
+    # while preserving clearer arterial street structure.
+    edge_density = minor_mask.filter(ImageFilter.BoxBlur(2.0))
+    dense_clusters = edge_density.point(lambda p: 255 if p > 150 else 0, mode="L")
+    major_density = major_mask.filter(ImageFilter.BoxBlur(2.4))
+    very_dense_major = major_density.point(lambda p: 255 if p > 168 else 0, mode="L")
+    minor_mask = ImageChops.subtract(minor_mask, dense_clusters)
+    major_mask = ImageChops.subtract(major_mask, very_dense_major)
+
+    # Recover strong, long dark routes after clutter suppression so posters do
+    # not look empty in sparse areas.
+    arterial_seed = gray.point(lambda p: 255 if p < 92 else 0, mode="L")
+    arterial_blob = arterial_seed.filter(ImageFilter.MinFilter(11))
+    arterial_lines = ImageChops.subtract(arterial_seed, arterial_blob).filter(ImageFilter.MaxFilter(3))
+    major_mask = ImageChops.lighter(major_mask, arterial_lines)
+
     art = Image.new("RGB", map_img.size, color="#efefed")
     minor_layer = Image.new("RGB", map_img.size, color="#b8b8b8")
     major_layer = Image.new("RGB", map_img.size, color="#3f3f3f")
