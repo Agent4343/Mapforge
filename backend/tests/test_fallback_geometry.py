@@ -75,6 +75,15 @@ def test_derive_city_context_bbox_tightens_large_relation_bbox():
     assert tight_lon_span >= 0.10
 
 
+def test_derive_city_context_bbox_keeps_compact_city_bounds():
+    # For already compact city relations, avoid extra cropping that can remove
+    # valid local streets from the final poster composition.
+    compact_bbox = (46.1071148, -60.2161333, 46.1786423, -60.1450518)
+    center = (46.1464, -60.1819)
+    resolved = _derive_city_context_bbox(compact_bbox, center)
+    assert resolved == compact_bbox
+
+
 @pytest.mark.asyncio
 async def test_generate_city_vector_mode_uses_tight_bbox_for_street_fetch(db_session):
     req = GenerateRequest(

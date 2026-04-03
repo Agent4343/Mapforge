@@ -207,6 +207,10 @@ def _derive_city_context_bbox(
     lat, lon = center_latlon
     lat_span_raw = max(0.0001, north - south)
     lon_span_raw = max(0.0001, east - west)
+    # If the source city relation is already compact, keep full bounds so we
+    # don't trim legitimate neighborhood streets (e.g., Sydney, NS).
+    if lat_span_raw <= 0.09 and lon_span_raw <= 0.12:
+        return bbox
     # Keep context tighter than full administrative relations, but wide enough
     # to include a fuller urban street network for city poster art.
     lat_span = max(0.05, min(0.2, lat_span_raw * 0.62))
