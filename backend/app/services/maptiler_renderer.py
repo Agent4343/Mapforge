@@ -217,7 +217,12 @@ def _apply_product_zoom_bias(zoom: float, product_type: str | None) -> float:
         "city": 0.35,
         "name_sign": 0.55,
     }.get(pt, 0.0)
-    return max(4.0, min(15.5, zoom + bias))
+    adjusted = zoom + bias
+    # City-scale print art should avoid parcel/cadastral clutter. Keep a
+    # tighter upper zoom ceiling than generic web map views.
+    if pt in _CITY_ART_PRODUCT_TYPES:
+        return max(10.8, min(14.1, adjusted))
+    return max(4.0, min(15.5, adjusted))
 
 
 def _normalize_style_id(style_id: str | None) -> str:
@@ -304,8 +309,11 @@ def _stylize_map_for_print_art(map_img: Image.Image, product_type: str | None) -
 
 def _pick_art_style(style: str, product_type: str | None) -> str:
     """Choose art-friendly style variants by product type."""
-    # Keep configured style exactly as selected by admin/user.
-    # No implicit switching by product type.
+    pt = (product_type or "").strip().lower()
+    # Hard rule for Etsy city/community/name-sign products:
+    # use the clean road-focused style to suppress parcel-like texture.
+    if pt in _CITY_ART_PRODUCT_TYPES:
+        return "basic-v2"
     return style
 
 

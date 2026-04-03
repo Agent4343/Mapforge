@@ -2,6 +2,7 @@ import pytest
 from PIL import Image
 
 from app.services.maptiler_renderer import (
+    _apply_product_zoom_bias,
     _extract_center_latlon,
     _extract_poster_subtitle,
     _should_recover_from_blank_art,
@@ -36,6 +37,13 @@ def test_zoom_to_fit_bbox_stays_within_supported_range():
         height_px=6200,
     )
     assert 4.0 <= zoom <= 15.5
+
+
+def test_apply_product_zoom_bias_caps_city_zoom_to_avoid_tile_clutter():
+    assert _apply_product_zoom_bias(15.3, "city") <= 14.2
+    assert _apply_product_zoom_bias(15.0, "community") <= 14.2
+    # Lower zooms should still get mild city emphasis.
+    assert _apply_product_zoom_bias(12.0, "city") > 12.0
 
 
 def test_extract_poster_subtitle_from_svg_text_group():
