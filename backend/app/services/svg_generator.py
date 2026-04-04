@@ -2098,8 +2098,24 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
     # Theme colors
     major_color = theme.get("street_major", "#333333")
     minor_color = theme.get("street_minor", "#666666")
-    # Road fill (inner color) — lighter than the casing for contrast
-    land_color = theme.get("land", "#e8dfd0")
+    map_bg = theme.get("map_bg", "#ffffff")
+
+    # Road fill (inner color) for cased-road effect. Must contrast with the
+    # casing color so the dual-stroke is visible. Using raw `land` fails on
+    # themes where land == map_bg (e.g. vintage_map). Instead, blend map_bg
+    # toward the casing color so the fill is always distinguishable.
+    def _blend_hex(c1: str, c2: str, t: float) -> str:
+        """Blend c1 toward c2 by factor t (0=c1, 1=c2)."""
+        h1, h2 = c1.lstrip("#"), c2.lstrip("#")
+        r = int(int(h1[0:2], 16) * (1 - t) + int(h2[0:2], 16) * t)
+        g = int(int(h1[2:4], 16) * (1 - t) + int(h2[2:4], 16) * t)
+        b = int(int(h1[4:6], 16) * (1 - t) + int(h2[4:6], 16) * t)
+        return f"#{min(r,255):02x}{min(g,255):02x}{min(b,255):02x}"
+
+    # Major road fill: blend 15% from map_bg toward casing color
+    major_fill_color = _blend_hex(map_bg, major_color, 0.15)
+    # Minor road fill: blend 10% from map_bg toward casing color
+    minor_fill_color = _blend_hex(map_bg, minor_color, 0.10)
 
     # Width multipliers for province vs city scale
     if is_province:
@@ -2217,7 +2233,7 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
         fw = round(cw * fill_ratio, 2)
         lines.append(
             f'      <path d="{path_d}"'
-            f' fill="none" stroke="{land_color}" stroke-width="{fw}"'
+            f' fill="none" stroke="{minor_fill_color}" stroke-width="{fw}"'
             f' stroke-linecap="round" stroke-linejoin="round"/>'
         )
 
@@ -2232,10 +2248,9 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
     # Layer 4: Major road fills (topmost)
     for path_d, road_class, cw in major_paths:
         fw = round(cw * fill_ratio, 2)
-        fill_color = land_color
         lines.append(
             f'      <path d="{path_d}"'
-            f' fill="none" stroke="{fill_color}" stroke-width="{fw}"'
+            f' fill="none" stroke="{major_fill_color}" stroke-width="{fw}"'
             f' stroke-linecap="round" stroke-linejoin="round"/>'
         )
 
