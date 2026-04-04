@@ -419,3 +419,35 @@ def test_print_svg_city_with_streets_uses_subtle_water_and_clean_stroke_hierarch
     # Compass should render after frame so it appears anchored to map box.
     assert 'id="compass_rose"' in svg
     assert svg.index('id="map_frame"') < svg.index('id="compass_rose"')
+
+
+def test_print_svg_global_layout_quality_rules_apply_to_all_map_types():
+    processed = {
+        "polygons": [([(20, 20), (180, 20), (180, 150), (20, 150), (20, 20)], [])],
+        "bounds_mm": (20, 20, 180, 150),
+        "board_mm": (200.0, 260.0),
+        "center_latlon": (44.95, -79.45),
+        "node_count": 5,
+    }
+    result = generate_svg(
+        processed=processed,
+        location_name="Nova Scotia",
+        style=CutStyle.filled,
+        show_coordinates=True,
+        font_size_mm=14,
+        color_theme="classic",
+        product_type="province",
+        output_mode="print",
+        show_compass=True,
+    )
+    svg = result["svg"]
+    # Global quality rules: every poster gets a visible frame and readable separator.
+    assert 'id="map_frame"' in svg
+    assert 'stroke-width="0.6"' in svg
+    assert 'stroke-width="0.36"' in svg
+    assert 'stroke-width="0.42"' in svg
+    # Global title consistency (avoid extra-heavy bold across product types).
+    assert 'font-weight="600"' in svg
+    # Compass should render after frame for anchored composition.
+    assert 'id="compass_rose"' in svg
+    assert svg.index('id="map_frame"') < svg.index('id="compass_rose"')

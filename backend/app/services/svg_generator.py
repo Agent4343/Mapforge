@@ -527,17 +527,22 @@ def _generate_print_svg(
         product_type in ("city", "community")
         and bool(streets_data and (streets_data.get("major_roads") or streets_data.get("minor_roads")))
     )
+    has_linework = bool(
+        (streets_data and (streets_data.get("major_roads") or streets_data.get("minor_roads")))
+        or (water_data and (water_data.get("water_polygons") or water_data.get("waterways")))
+        or contour_data
+    )
 
     # Poster layout dimensions from layout config
     mat_pct = layout["mat_pct"]
     text_area_pct = layout["text_area_pct"]
     full_bleed_map = layout.get("full_bleed_map", False)
-    # City/community street art benefits from a slightly larger map window and
-    # a tighter text area to reduce dead whitespace.
-    if has_city_streets and not full_bleed_map:
-        mat_pct = max(0.03, mat_pct * 0.78)
+    # Universal sellable composition: reduce dead whitespace for any map that
+    # has visible linework, while preserving enough margin for print framing.
+    if has_linework and not full_bleed_map:
+        mat_pct = max(0.03, mat_pct * 0.86)
         if layout.get("text_position") == "bottom":
-            text_area_pct = max(0.12, text_area_pct * 0.82)
+            text_area_pct = max(0.12, text_area_pct * 0.88)
 
     if full_bleed_map:
         # Full-bleed: map fills entire board, text overlaid
@@ -894,7 +899,7 @@ def _generate_print_svg(
         inset = 1.5
         frame_color = theme["land_stroke"]
         frame_primary_w = "0.6"
-        frame_secondary_w = "0.25"
+        frame_secondary_w = "0.36"
         frame_secondary_opacity = "0.5"
         if city_sellable_mode:
             frame_color = theme.get("text_secondary", theme["land_stroke"])
@@ -933,7 +938,7 @@ def _generate_print_svg(
             sep_y = round(map_y + map_h + text_area_h * 0.10, 2)
         sep_margin = round(board_w * 0.25, 2)
         sep_color = theme["land_stroke"]
-        sep_width = "0.3"
+        sep_width = "0.42"
         sep_opacity = "0.4"
         if city_sellable_mode and text_position == "bottom":
             sep_margin = round(board_w * 0.22, 2)
@@ -955,9 +960,7 @@ def _generate_print_svg(
     coord_size = round(font_size_mm * 0.45, 2)
 
     title_text = location_name.upper()
-    title_weight = "bold"
-    if city_sellable_mode and text_position == "bottom":
-        title_weight = "600"
+    title_weight = "600"
     char_width_factor = 0.75
     title_tracking = title_size * 0.2
     est_title_width = len(title_text) * (title_size * char_width_factor + title_tracking)

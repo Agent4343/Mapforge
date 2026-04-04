@@ -667,7 +667,10 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             streets_data = synthesized
             street_fallback_used = True
 
-    if street_overpass_unavailable:
+    suppress_overlay_outage_warnings = bool(
+        maptiler_only_mode and req.product_type.value in {"city", "community", "name_sign"}
+    )
+    if street_overpass_unavailable and not suppress_overlay_outage_warnings:
         if street_fallback_used:
             warnings.append(
                 "Detailed street overlays were unavailable, so MapForge used boundary linework fallback."
@@ -676,7 +679,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             warnings.append(
                 "Street data unavailable — the Overpass API may be busy. Try regenerating in a minute."
             )
-    if water_overpass_unavailable:
+    if water_overpass_unavailable and not suppress_overlay_outage_warnings:
         warnings.append(
             "Water data unavailable — the Overpass API may be busy. Try regenerating in a minute."
         )
