@@ -52,8 +52,7 @@ ROAD_CLASSES = {
 }
 
 # Maximum total time budget for the entire street fetch (seconds).
-# Province-scale queries need up to 75s; city queries finish in <20s.
-STREET_FETCH_BUDGET = 80
+STREET_FETCH_BUDGET = 55
 
 
 async def _try_endpoint(client: httpx.AsyncClient, endpoint: str, query: str) -> dict | None:
@@ -206,34 +205,32 @@ async def fetch_streets(
     all_filter = "|".join(ROAD_CLASSES.keys())
     major_filter = "|".join(k for k, v in ROAD_CLASSES.items() if v["layer"] == "major")
 
-    # Larger bboxes need longer Overpass server-side timeouts.
-    # A 30s timeout is fine for cities (<5 deg²) but province-scale
-    # queries (10-50 deg²) need more time to complete.
+    # Overpass server-side timeout: slightly longer for province-scale bboxes,
+    # but NOT so long that the user waits forever. Province queries should
+    # fail fast and fall back to MapTiler/boundary art.
     south, west, north, east = bbox
     bbox_area = abs((north - south) * (east - west))
     overpass_timeout = 30
-    if bbox_area > 20:
-        overpass_timeout = 60
-    elif bbox_area > 5:
-        overpass_timeout = 45
+    if bbox_area > 10:
+        overpass_timeout = 45  # province-scale: give Overpass a bit more time
 
     # Choose query builder based on whether we have an OSM relation ID
     use_area = osm_id and osm_type == "relation"
     if use_area:
         area_id = osm_id + 3600000000
         build_q = lambda filt: _build_area_query(area_id, filt, timeout=overpass_timeout)
-        log.info(f"Street fetch: area query for relation {osm_id} (overpass timeout={overpass_timeout}s)")
+        log.info(f"Street fetch: area query for relation {osm_id} (timeout={overpass_timeout}s)")
     else:
         build_q = lambda filt: _build_bbox_query(bbox, filt, timeout=overpass_timeout)
-        log.info(f"Street fetch: bbox query for {bbox} (overpass timeout={overpass_timeout}s)")
+        log.info(f"Street fetch: bbox query for {bbox} (timeout={overpass_timeout}s)")
 
     data = None
 
-    # Client-side timeouts scale with the Overpass server timeout.
-    # For province-scale queries (45-60s server timeout), we need longer
-    # client waits or the httpx client disconnects before the server finishes.
-    ep_timeout = min(overpass_timeout + 5, 65.0) if not fast_mode else 8.0
-    budget = min(overpass_timeout + 15, 75.0) if not fast_mode else 10.0
+    # Client-side timeouts: slightly longer than Overpass server timeout,
+    # but keep total budget tight so generation doesn't stall.
+    # Province queries try fewer endpoints (budget limits retries).
+    ep_timeout = min(overpass_timeout + 5, 50.0) if not fast_mode else 8.0
+    budget = min(overpass_timeout + 8, 55.0) if not fast_mode else 10.0
 
     if include_minor:
         if fast_mode:
@@ -256,7 +253,7 @@ async def fetch_streets(
         # Fall back to major roads if all roads failed
         if data is None:
             elapsed = time.monotonic() - start
-            remaining = max(0, budget + 10 - elapsed)
+            remaining = max(0, STREET_FETCH_BUDGET - elapsed)
             if remaining > 5:
                 log.warning(f"All-roads fetch failed ({elapsed:.0f}s) — trying major only")
                 if fast_mode:
@@ -271,9 +268,9 @@ async def fetch_streets(
                     data = await _fetch_with_fallback(
                         build_q(major_filter),
                         timeout_per_endpoint=min(ep_timeout, 20.0),
-                        total_budget=min(remaining, 25.0),
+                        total_budget=min(remaining, 20.0),
                         second_chance_delay=2.0,
-                        second_chance_timeout=10.0,
+                        second_chance_timeout=8.0,
                     )
     else:
         if fast_mode:
@@ -289,8 +286,8 @@ async def fetch_streets(
                 build_q(major_filter),
                 timeout_per_endpoint=ep_timeout,
                 total_budget=budget,
-                second_chance_delay=2.5,
-                second_chance_timeout=min(ep_timeout, 15.0),
+                second_chance_delay=2.0,
+                second_chance_timeout=10.0,
             )
 
     elapsed = time.monotonic() - start

@@ -177,29 +177,26 @@ async def fetch_water_features(
     south, west, north, east = bbox
     bbox_area_deg2 = max(0.0, (north - south) * (east - west))
 
-    # Overpass server-side timeout scales with bbox size.
-    # Province-scale queries (>20 deg²) need more time to gather water features.
+    # Overpass server-side timeout: slightly more for province-scale bboxes.
     overpass_timeout = 30
-    if bbox_area_deg2 > 20:
-        overpass_timeout = 60
-    elif bbox_area_deg2 > 5:
+    if bbox_area_deg2 > 10:
         overpass_timeout = 45
 
     query = f"""[out:json][timeout:{overpass_timeout}];(way["natural"="water"]({south},{west},{north},{east});way["natural"="coastline"]({south},{west},{north},{east});way["waterway"~"^(river|stream|canal)$"]({south},{west},{north},{east});relation["natural"="water"]({south},{west},{north},{east});way["water"~"^(lake|reservoir|pond)$"]({south},{west},{north},{east});relation["water"~"^(lake|reservoir|pond)$"]({south},{west},{north},{east}););out body;>;out skel qt;"""
 
-    log.info(f"Fetching water features for bbox: {bbox} (overpass timeout={overpass_timeout}s)")
+    log.info(f"Fetching water features for bbox: {bbox} (timeout={overpass_timeout}s)")
 
     if fast_mode:
         data = await _fetch_overpass_with_retry(
             query,
-            max_budget_s=min(overpass_timeout + 5, 20.0),
-            per_endpoint_timeout_s=min(overpass_timeout + 2, 15.0),
+            max_budget_s=15.0,
+            per_endpoint_timeout_s=10.0,
         )
     else:
         data = await _fetch_overpass_with_retry(
             query,
-            max_budget_s=min(overpass_timeout + 15, 75.0),
-            per_endpoint_timeout_s=min(overpass_timeout + 5, 65.0),
+            max_budget_s=min(overpass_timeout + 8, 55.0),
+            per_endpoint_timeout_s=min(overpass_timeout + 3, 48.0),
         )
     if data is None:
         return {"water_polygons": [], "waterways": []}
