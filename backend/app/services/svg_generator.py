@@ -670,6 +670,8 @@ def _generate_print_svg(
     # Product group flags (used for clipping/fill logic)
     is_street_map = product_type in ("city", "community", "name_sign")
     is_city_community = product_type in ("city", "community")
+    has_streets = bool(streets_data and (streets_data.get("major_roads") or streets_data.get("minor_roads")))
+    city_sellable_mode = is_city_community and has_streets
 
     # Clip path for map content (keeps streets/water inside the map area)
     lines.append("  <defs>")
@@ -720,8 +722,6 @@ def _generate_print_svg(
     #
     # For lake/province/park maps, the filled polygon IS the visual —
     # the shape of the lake or province is the main content.
-    has_streets = streets_data and (streets_data.get("major_roads") or streets_data.get("minor_roads"))
-
     # Land shadow — render BEFORE geography so it appears behind the land mass
     # Sparse/rural areas get a deeper shadow for more visual depth
     if land_shadow and not full_bleed_map:
@@ -742,7 +742,12 @@ def _generate_print_svg(
         layer_count += 1
 
     lines.append('    <g id="geography_fill">')
-    if is_street_map:
+    if city_sellable_mode:
+        # City/community sellable mode:
+        # do not render enclosing administrative polygon shell;
+        # composition is carried by street/network linework.
+        pass
+    elif is_street_map:
         # Street maps: fill the boundary polygon with land color to create
         # visible contrast between the city area and the white mat border.
         # Streets and water are layered on top.
@@ -774,7 +779,7 @@ def _generate_print_svg(
 
     # Subtle texture overlay for sparse/rural areas — fills empty land with
     # a fine dot pattern so the map doesn't look bare when there are few streets
-    if is_sparse_area:
+    if is_sparse_area and not city_sellable_mode:
         lines.append('    <g id="land_texture_overlay">')
         for exterior, holes in polygons:
             path_d = _coords_to_path(exterior)
@@ -798,7 +803,14 @@ def _generate_print_svg(
 
     # Water features — filled with water color (optional gradient)
     if water_data:
-        _render_print_water(lines, water_data, processed, theme, gradient=gradient_water)
+        _render_print_water(
+            lines,
+            water_data,
+            processed,
+            theme,
+            gradient=gradient_water,
+            street_mode=city_sellable_mode,
+        )
 
     # Contour bands
     if contour_data:
@@ -1936,7 +1948,14 @@ def _render_geography(lines: list[str], polygons: list, style: CutStyle):
         lines.append("  </g>")
 
 
-def _render_print_water(lines: list[str], water_data: dict, processed: dict, theme: dict, gradient: bool = True):
+def _render_print_water(
+    lines: list[str],
+    water_data: dict,
+    processed: dict,
+    theme: dict,
+    gradient: bool = True,
+    street_mode: bool = False,
+):
     """Render water features with themed poster colors.
 
     When gradient=True, larger water bodies get a radial gradient fill

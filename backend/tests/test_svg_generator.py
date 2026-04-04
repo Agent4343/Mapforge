@@ -360,3 +360,49 @@ def test_print_svg_city_hides_boundary_polygon_fill_when_street_data_present():
     assert 'fill="#f5f0e6"' not in svg
     # And no explicit boundary-clip id should be present for city/community maps.
     assert 'id="boundary_clip"' not in svg
+
+
+def test_print_svg_city_with_streets_uses_subtle_water_and_clean_stroke_hierarchy():
+    processed = {
+        "polygons": [([(20, 20), (180, 20), (180, 150), (20, 150), (20, 20)], [])],
+        "bounds_mm": (20, 20, 180, 150),
+        "board_mm": (200.0, 260.0),
+        "center_latlon": (44.95, -79.45),
+        "node_count": 5,
+    }
+    streets = {
+        "major_roads": [
+            ([(20.0, 20.0), (120.0, 20.0)], "primary", 1.0, "Primary Hwy"),
+        ],
+        "minor_roads": [
+            ([(24.0, 25.0), (110.0, 40.0)], "residential", 0.4, "Local St"),
+        ],
+    }
+    water = {
+        "water_polygons": [
+            ([(30.0, 40.0), (60.0, 40.0), (60.0, 70.0), (30.0, 70.0), (30.0, 40.0)], "lake", "Test Lake")
+        ],
+        "waterways": [],
+    }
+    result = generate_svg(
+        processed=processed,
+        location_name="Halifax",
+        style=CutStyle.filled,
+        show_coordinates=True,
+        font_size_mm=14,
+        streets_data=streets,
+        water_data=water,
+        color_theme="classic",
+        product_type="city",
+        output_mode="print",
+    )
+    svg = result["svg"]
+
+    # No city land texture overlay for street-rich city output.
+    assert 'id="land_texture_overlay"' not in svg
+    # City water polygons should be subtle and stroke-light.
+    assert 'id="water_features"' in svg
+    assert 'stroke-width="0.3"' in svg
+    # City minor road casing/fill should stay light for cleaner premium look.
+    assert 'stroke-width="0.3"' in svg
+    assert 'stroke-width="0.23"' in svg
