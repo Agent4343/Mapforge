@@ -259,18 +259,20 @@ def _stylize_map_for_print_art(map_img: Image.Image, product_type: str | None) -
     """Convert city-scale map tiles into cleaner monochrome poster linework."""
     pt = (product_type or "").strip().lower()
     if pt == "province":
-        # Province maps should preserve natural geographic features (land, water,
-        # coastline) rather than reducing everything to a faint pencil sketch.
-        # Desaturate slightly and boost contrast for a clean poster aesthetic,
-        # but keep the map readable with visible features.
+        # Province MapTiler fallback: convert to clean monochrome poster art.
+        # The raw MapTiler tiles look like a web map screenshot with colored
+        # land, blue water, and city labels. We convert to a high-contrast
+        # grayscale that reads as intentional minimalist wall art.
         from PIL import ImageEnhance
         img = map_img.copy()
-        # Reduce saturation for a muted poster tone (not fully grayscale)
-        img = ImageEnhance.Color(img).enhance(0.35)
-        # Boost contrast so roads and coastline stand out
-        img = ImageEnhance.Contrast(img).enhance(1.3)
-        # Slightly brighten to keep a light, airy poster feel
-        img = ImageEnhance.Brightness(img).enhance(1.05)
+        # Full desaturation — monochrome poster style
+        img = ImageEnhance.Color(img).enhance(0.0)
+        # High contrast so roads and coastline pop against land
+        img = ImageEnhance.Contrast(img).enhance(1.6)
+        # Brighten to push land areas toward white, keeping roads/water dark
+        img = ImageEnhance.Brightness(img).enhance(1.25)
+        # Second contrast pass to sharpen the difference
+        img = ImageEnhance.Contrast(img).enhance(1.2)
         return img
 
     if pt not in {"city", "community", "name_sign"}:
@@ -341,8 +343,9 @@ def _pick_art_style(style: str, product_type: str | None) -> str:
         return "basic-v2"
     if pt == "province":
         # Province posters need clean land/water/roads without city name labels.
-        # The -nolabels variant removes all text labels from the tiles.
-        return "basic-v2-nolabels"
+        # "backdrop" is MapTiler's minimal background style — fewer labels and
+        # cleaner for post-processing into monochrome poster art.
+        return "backdrop"
     return style
 
 

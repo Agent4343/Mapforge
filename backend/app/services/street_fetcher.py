@@ -52,7 +52,8 @@ ROAD_CLASSES = {
 }
 
 # Maximum total time budget for the entire street fetch (seconds).
-STREET_FETCH_BUDGET = 25
+# Province-scale queries need up to 75s; city queries finish in <20s.
+STREET_FETCH_BUDGET = 80
 
 
 async def _try_endpoint(client: httpx.AsyncClient, endpoint: str, query: str) -> dict | None:
@@ -162,21 +163,21 @@ async def _fetch_with_fallback(
     return None
 
 
-def _build_area_query(area_id: int, highway_filter: str) -> str:
+def _build_area_query(area_id: int, highway_filter: str, *, timeout: int = 30) -> str:
     """Build an Overpass area query (for relations with known OSM ID)."""
     return (
-        f'[out:json][timeout:30];'
+        f'[out:json][timeout:{timeout}];'
         f'area({area_id})->.a;'
         f'way["highway"~"^({highway_filter})$"](area.a);'
         f'out body;>;out skel qt;'
     )
 
 
-def _build_bbox_query(bbox: tuple, highway_filter: str) -> str:
+def _build_bbox_query(bbox: tuple, highway_filter: str, *, timeout: int = 30) -> str:
     """Build an Overpass bbox query."""
     south, west, north, east = bbox
     return (
-        f'[out:json][timeout:30];'
+        f'[out:json][timeout:{timeout}];'
         f'way["highway"~"^({highway_filter})$"]({south},{west},{north},{east});'
         f'out body;>;out skel qt;'
     )
@@ -205,17 +206,34 @@ async def fetch_streets(
     all_filter = "|".join(ROAD_CLASSES.keys())
     major_filter = "|".join(k for k, v in ROAD_CLASSES.items() if v["layer"] == "major")
 
+    # Larger bboxes need longer Overpass server-side timeouts.
+    # A 30s timeout is fine for cities (<5 deg²) but province-scale
+    # queries (10-50 deg²) need more time to complete.
+    south, west, north, east = bbox
+    bbox_area = abs((north - south) * (east - west))
+    overpass_timeout = 30
+    if bbox_area > 20:
+        overpass_timeout = 60
+    elif bbox_area > 5:
+        overpass_timeout = 45
+
     # Choose query builder based on whether we have an OSM relation ID
     use_area = osm_id and osm_type == "relation"
     if use_area:
         area_id = osm_id + 3600000000
-        build_q = lambda filt: _build_area_query(area_id, filt)
-        log.info(f"Street fetch: area query for relation {osm_id}")
+        build_q = lambda filt: _build_area_query(area_id, filt, timeout=overpass_timeout)
+        log.info(f"Street fetch: area query for relation {osm_id} (overpass timeout={overpass_timeout}s)")
     else:
-        build_q = lambda filt: _build_bbox_query(bbox, filt)
-        log.info(f"Street fetch: bbox query for {bbox}")
+        build_q = lambda filt: _build_bbox_query(bbox, filt, timeout=overpass_timeout)
+        log.info(f"Street fetch: bbox query for {bbox} (overpass timeout={overpass_timeout}s)")
 
     data = None
+
+    # Client-side timeouts scale with the Overpass server timeout.
+    # For province-scale queries (45-60s server timeout), we need longer
+    # client waits or the httpx client disconnects before the server finishes.
+    ep_timeout = min(overpass_timeout + 5, 65.0) if not fast_mode else 8.0
+    budget = min(overpass_timeout + 15, 75.0) if not fast_mode else 10.0
 
     if include_minor:
         if fast_mode:
@@ -229,16 +247,16 @@ async def fetch_streets(
         else:
             data = await _fetch_with_fallback(
                 build_q(all_filter),
-                timeout_per_endpoint=15.0,
-                total_budget=20.0,
+                timeout_per_endpoint=ep_timeout,
+                total_budget=budget,
                 second_chance_delay=2.5,
-                second_chance_timeout=10.0,
+                second_chance_timeout=min(ep_timeout, 15.0),
             )
 
         # Fall back to major roads if all roads failed
         if data is None:
             elapsed = time.monotonic() - start
-            remaining = STREET_FETCH_BUDGET - elapsed
+            remaining = max(0, budget + 10 - elapsed)
             if remaining > 5:
                 log.warning(f"All-roads fetch failed ({elapsed:.0f}s) — trying major only")
                 if fast_mode:
@@ -252,10 +270,10 @@ async def fetch_streets(
                 else:
                     data = await _fetch_with_fallback(
                         build_q(major_filter),
-                        timeout_per_endpoint=10.0,
-                        total_budget=min(remaining, 15.0),
+                        timeout_per_endpoint=min(ep_timeout, 20.0),
+                        total_budget=min(remaining, 25.0),
                         second_chance_delay=2.0,
-                        second_chance_timeout=8.0,
+                        second_chance_timeout=10.0,
                     )
     else:
         if fast_mode:
@@ -269,10 +287,10 @@ async def fetch_streets(
         else:
             data = await _fetch_with_fallback(
                 build_q(major_filter),
-                timeout_per_endpoint=15.0,
-                total_budget=20.0,
+                timeout_per_endpoint=ep_timeout,
+                total_budget=budget,
                 second_chance_delay=2.5,
-                second_chance_timeout=10.0,
+                second_chance_timeout=min(ep_timeout, 15.0),
             )
 
     elapsed = time.monotonic() - start

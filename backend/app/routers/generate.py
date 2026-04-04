@@ -543,17 +543,17 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
 
     # Size thresholds for street fetching:
     #   Cities (<1 deg²): full streets with all road types
-    #   Small provinces (1-30 deg²): full streets — PEI, Nova Scotia, New Brunswick
-    #   Medium provinces (30-80 deg²): major roads only — Saskatchewan, Manitoba
-    #   Very large provinces (>80 deg²): major roads with short timeout, boundary fallback if fetch fails
-    #   Very large non-provinces (>80 deg²): skip streets entirely
+    #   Small provinces (<50 deg²): major roads — PEI, Nova Scotia, New Brunswick
+    #   Medium provinces (50-120 deg²): major roads only — Saskatchewan, Manitoba
+    #   Very large provinces (>120 deg²): major roads with short timeout, boundary fallback if fetch fails
+    #   Very large non-provinces (>120 deg²): skip streets entirely
     active_street_bbox = street_fetch_bbox if city_vector_road_art_mode else bbox
     bbox_area_deg2 = (
         (active_street_bbox[3] - active_street_bbox[1])
         * (active_street_bbox[2] - active_street_bbox[0])
     )
-    is_medium_area = bbox_area_deg2 > 30.0
-    is_very_large_area = bbox_area_deg2 > 80.0
+    is_medium_area = bbox_area_deg2 > 50.0
+    is_very_large_area = bbox_area_deg2 > 120.0
 
     if is_very_large_area and need_streets:
         if is_province:
