@@ -12,6 +12,7 @@ from shapely.geometry import Polygon, MultiPolygon
 from shapely.ops import orient
 from shapely.validation import make_valid
 
+from app.logging_config import log
 from app.models.schemas import ProductType, BOARD_DIMENSIONS_INCHES
 
 # WGS84 → Web Mercator
@@ -59,15 +60,27 @@ def process_geometry(
     # Normalize to list of polygons
     polys = list(geom_m.geoms) if isinstance(geom_m, MultiPolygon) else [geom_m]
 
-    # Step 3b: Remove administrative boundary envelopes for provinces.
-    # Some province relations (e.g. PEI) have an outer administrative boundary
-    # polygon that extends into the ocean, plus the actual coastline polygon(s)
-    # inside it. The admin boundary looks like an angular bounding box and
-    # creates ugly empty space. Detect and remove it by checking if one polygon
-    # fully contains other significant polygons — that container is the admin
-    # boundary, not the actual land shape.
-    if product_type == ProductType.province and len(polys) > 1:
-        polys = _remove_admin_boundary_envelope(polys)
+    # Diagnostic logging for province geometry — helps debug boundary/shape issues
+    if product_type == ProductType.province:
+        bounds_all = geom_m.bounds
+        extent_km = max(bounds_all[2] - bounds_all[0], bounds_all[3] - bounds_all[1]) / 1000
+        log.info(
+            f"Province geometry: {len(polys)} polygon(s), "
+            f"extent={extent_km:.0f}km, tolerance={tolerance:.0f}m"
+        )
+        for i, p in enumerate(polys):
+            n_ext = len(p.exterior.coords)
+            n_holes = len(p.interiors)
+            hole_verts = sum(len(h.coords) for h in p.interiors)
+            area_km2 = p.area / 1e6
+            try:
+                convexity = p.area / p.convex_hull.area if p.convex_hull.area > 0 else 0
+            except Exception:
+                convexity = -1
+            log.info(
+                f"  poly[{i}]: {n_ext} ext verts, {n_holes} holes ({hole_verts} hole verts), "
+                f"area={area_km2:.1f}km², convexity={convexity:.2f}"
+            )
 
     # Step 4: Filter small polygons
     # At province scale, tiny islands look like noise dots — but the threshold
@@ -94,6 +107,10 @@ def process_geometry(
     if not include_islands and len(polys) > 1:
         largest = max(polys, key=lambda p: p.area)
         polys = [largest]
+
+    if product_type == ProductType.province:
+        total_verts = sum(len(p.exterior.coords) + sum(len(h.coords) for h in p.interiors) for p in polys)
+        log.info(f"Province after filtering: {len(polys)} polygon(s), {total_verts} total vertices")
 
     # Step 5 & 6: Close paths + enforce winding order
     oriented = []
@@ -218,60 +235,6 @@ def _get_tolerance(geom_m: Polygon | MultiPolygon, product_type: ProductType, si
     else:                   # > 500km
         return base * 1.2
 
-
-def _remove_admin_boundary_envelope(polys: list[Polygon]) -> list[Polygon]:
-    """Remove administrative boundary envelopes that engulf actual land polygons.
-
-    Province OSM relations can include an outer admin boundary (straight-line
-    polygon extending into the ocean) plus the actual coastline polygon(s).
-    The admin boundary creates ugly empty space and wrong province shapes.
-
-    CONSERVATIVE detection — only removes a polygon when ALL of these hold:
-    1. It has very few exterior vertices (<30) — admin boundaries are crude
-       straight-line polygons, coastlines have hundreds/thousands of vertices
-    2. It is highly convex (>0.85 ratio) — admin boundaries are nearly convex
-    3. It fully contains at least one other polygon with >50 vertices (actual land)
-    """
-    if len(polys) < 2:
-        return polys
-
-    to_remove = set()
-    for i, candidate in enumerate(polys):
-        n_verts = len(candidate.exterior.coords)
-        # Only consider very simple polygons as potential admin boundaries
-        if n_verts > 30:
-            continue
-
-        # Must be highly convex (admin boundaries are near-rectangular)
-        try:
-            convexity = candidate.area / candidate.convex_hull.area if candidate.convex_hull.area > 0 else 0
-        except Exception:
-            continue
-        if convexity < 0.85:
-            continue
-
-        # Must contain at least one other polygon with many vertices (actual coastline)
-        contains_detailed_land = False
-        for j, other in enumerate(polys):
-            if i == j:
-                continue
-            if len(other.exterior.coords) < 50:
-                continue
-            try:
-                if candidate.contains(other.representative_point()):
-                    contains_detailed_land = True
-                    break
-            except Exception:
-                continue
-
-        if contains_detailed_land:
-            to_remove.add(i)
-
-    if to_remove:
-        result = [p for i, p in enumerate(polys) if i not in to_remove]
-        return result if result else polys  # safety: never return empty
-
-    return polys
 
 
 def _scale_to_board(

@@ -132,7 +132,10 @@ async def _fetch_via_nominatim(osm_id: int, osm_type: str) -> MultiPolygon | Pol
     if geom_type not in ("Polygon", "MultiPolygon"):
         return None
 
-    return _to_polygon(shape(geojson))
+    geom = _to_polygon(shape(geojson))
+    if geom is not None:
+        _log_raw_geometry(geom, source="nominatim", osm_id=osm_id)
+    return geom
 
 
 async def _fetch_via_overpass(osm_id: int, osm_type: str) -> MultiPolygon | Polygon | None:
@@ -177,7 +180,10 @@ async def _fetch_via_overpass(osm_id: int, osm_type: str) -> MultiPolygon | Poly
     if not elements:
         return None
 
-    return _build_geometry_from_overpass(elements, osm_id, element_type)
+    geom = _build_geometry_from_overpass(elements, osm_id, element_type)
+    if geom is not None:
+        _log_raw_geometry(geom, source="overpass", osm_id=osm_id)
+    return geom
 
 
 def _build_geometry_from_overpass(elements: list[dict], target_id: int, target_type: str) -> MultiPolygon | Polygon | None:
@@ -350,6 +356,30 @@ async def fetch_area_around_point(
     coords.append(coords[0])  # close the ring
 
     return Polygon(coords)
+
+
+def _log_raw_geometry(geom: Polygon | MultiPolygon, source: str, osm_id: int) -> None:
+    """Log diagnostic info about raw geometry before any processing."""
+    try:
+        if isinstance(geom, MultiPolygon):
+            polys = list(geom.geoms)
+        else:
+            polys = [geom]
+        bounds = geom.bounds
+        log.info(
+            f"Raw geometry from {source} for osm_id={osm_id}: "
+            f"{len(polys)} polygon(s), bounds=({bounds[0]:.4f},{bounds[1]:.4f},{bounds[2]:.4f},{bounds[3]:.4f})"
+        )
+        for i, p in enumerate(polys):
+            n_ext = len(p.exterior.coords)
+            n_holes = len(p.interiors)
+            hole_verts = sum(len(h.coords) for h in p.interiors)
+            log.info(
+                f"  raw_poly[{i}]: {n_ext} ext verts, {n_holes} holes ({hole_verts} hole verts), "
+                f"area={p.area:.6f} deg²"
+            )
+    except Exception as e:
+        log.debug(f"Failed to log raw geometry: {e}")
 
 
 def _to_polygon(geom) -> MultiPolygon | Polygon | None:
