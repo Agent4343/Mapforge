@@ -226,72 +226,50 @@ def _remove_admin_boundary_envelope(polys: list[Polygon]) -> list[Polygon]:
     polygon extending into the ocean) plus the actual coastline polygon(s).
     The admin boundary creates ugly empty space and wrong province shapes.
 
-    Detection: if a polygon contains other significant polygons and is much
-    more convex (fewer vertices per area, or high convex hull ratio), it's
-    likely an admin boundary rather than actual land.
+    CONSERVATIVE detection — only removes a polygon when ALL of these hold:
+    1. It has very few exterior vertices (<30) — admin boundaries are crude
+       straight-line polygons, coastlines have hundreds/thousands of vertices
+    2. It is highly convex (>0.85 ratio) — admin boundaries are nearly convex
+    3. It fully contains at least one other polygon with >50 vertices (actual land)
     """
     if len(polys) < 2:
         return polys
 
-    # Sort by area descending
-    sorted_polys = sorted(polys, key=lambda p: p.area, reverse=True)
-    largest = sorted_polys[0]
-    others = sorted_polys[1:]
-
-    # Check if the largest polygon contains other significant polygons
-    contained_area = 0.0
-    contained_count = 0
-    for p in others:
-        try:
-            if largest.contains(p.representative_point()):
-                contained_area += p.area
-                contained_count += 1
-        except Exception:
+    to_remove = set()
+    for i, candidate in enumerate(polys):
+        n_verts = len(candidate.exterior.coords)
+        # Only consider very simple polygons as potential admin boundaries
+        if n_verts > 30:
             continue
 
-    if contained_count == 0:
-        return polys
+        # Must be highly convex (admin boundaries are near-rectangular)
+        try:
+            convexity = candidate.area / candidate.convex_hull.area if candidate.convex_hull.area > 0 else 0
+        except Exception:
+            continue
+        if convexity < 0.85:
+            continue
 
-    # If the largest polygon contains significant land mass inside it,
-    # it's likely an admin boundary envelope. Check additional signals:
-    # 1. The contained polygons make up a meaningful fraction of the largest
-    # 2. The largest polygon is much more convex than the contained ones
-    #    (admin boundaries are simplified straight lines; coastlines are complex)
-    contained_ratio = contained_area / largest.area if largest.area > 0 else 0
+        # Must contain at least one other polygon with many vertices (actual coastline)
+        contains_detailed_land = False
+        for j, other in enumerate(polys):
+            if i == j:
+                continue
+            if len(other.exterior.coords) < 50:
+                continue
+            try:
+                if candidate.contains(other.representative_point()):
+                    contains_detailed_land = True
+                    break
+            except Exception:
+                continue
 
-    # Convexity: ratio of polygon area to its convex hull area.
-    # Admin boundaries ≈ 0.8-1.0 (nearly convex). Coastlines ≈ 0.3-0.7.
-    try:
-        largest_convexity = largest.area / largest.convex_hull.area if largest.convex_hull.area > 0 else 1.0
-    except Exception:
-        largest_convexity = 1.0
+        if contains_detailed_land:
+            to_remove.add(i)
 
-    # Vertex density: coastlines have many vertices per unit perimeter;
-    # admin boundaries have very few (straight lines).
-    largest_vertex_density = len(largest.exterior.coords) / max(1.0, largest.length) * 1000
-    avg_other_density = 0.0
-    if others:
-        densities = []
-        for p in others:
-            if p.length > 0:
-                densities.append(len(p.exterior.coords) / p.length * 1000)
-        if densities:
-            avg_other_density = sum(densities) / len(densities)
-
-    is_admin_envelope = False
-
-    # Strong signal: contains >10% of its area in other polygons AND is convex
-    if contained_ratio > 0.10 and largest_convexity > 0.75:
-        is_admin_envelope = True
-
-    # Strong signal: vertex density of largest is much lower than contained polygons
-    # (admin boundary = straight lines, coastline = complex)
-    if contained_ratio > 0.05 and avg_other_density > 0 and largest_vertex_density < avg_other_density * 0.3:
-        is_admin_envelope = True
-
-    if is_admin_envelope:
-        # Remove the admin boundary, keep the actual land polygons
-        return others
+    if to_remove:
+        result = [p for i, p in enumerate(polys) if i not in to_remove]
+        return result if result else polys  # safety: never return empty
 
     return polys
 
