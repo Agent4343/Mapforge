@@ -594,10 +594,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         if cache_key in _overpass_cache:
             log.info("Using cached street data")
             return _overpass_cache[cache_key]
-        # When MapTiler-only mode is on, Overpass streets are a bonus — use
-        # fast_mode so we don't block the user waiting for Overpass to respond.
-        # Very large provinces also use fast_mode regardless.
-        use_fast = is_preview_request or (is_province and is_very_large_area) or (is_province and maptiler_only_mode)
+        # Very large provinces use fast_mode to avoid long Overpass waits.
+        use_fast = is_preview_request or (is_province and is_very_large_area)
         result = await fetch_streets(
             bbox=street_fetch_bbox,
             include_minor=include_minor_streets,
@@ -616,9 +614,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         # will timeout on Overpass. Use fast mode to keep timeouts short — we'd
         # rather get partial water data than none. The water-colored SVG background
         # already provides the ocean contrast even without explicit water polygons.
-        # Province water: use fast mode when MapTiler handles the primary render,
-        # or when the area is too large for reliable Overpass results.
-        water_fast = is_preview_request or (is_province and (is_medium_area or is_very_large_area or maptiler_only_mode))
+        # Province water: use fast mode for large areas to avoid long Overpass waits.
+        water_fast = is_preview_request or (is_province and (is_medium_area or is_very_large_area))
         water_bbox = bbox
         cache_key = _bbox_cache_key("water", water_bbox)
         if cache_key in _overpass_cache:
@@ -873,20 +870,15 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
 
     maptiler_static_failed = False
     maptiler_key_runtime = ""
-    # MapTiler raster rendering is enabled when:
-    # - MapTiler-only mode is on (admin setting), OR it's a preview request
-    # - Not using city vector road art mode (cities render their own streets)
-    # - For provinces: ALWAYS use MapTiler when maptiler_only_mode is on —
-    #   MapTiler is the primary rendering path, Overpass streets are a bonus.
-    #   Without maptiler_only_mode, provinces use SVG art unless Overpass failed.
+    # MapTiler raster rendering:
+    # - Cities/communities: use MapTiler when maptiler_only_mode or preview
+    # - Provinces: NEVER use MapTiler raster — it shows the whole region with
+    #   labels and neighboring provinces, not sellable poster art. Provinces
+    #   use the SVG art path (province shape + highways on water background).
     maptiler_raster_enabled = (
         (maptiler_only_mode or is_preview_request)
         and not city_vector_road_art_mode
-        and (
-            maptiler_only_mode  # MapTiler-only: always use it for all types
-            or not province_svg_art_mode  # non-province types use it normally
-            or province_needs_maptiler_fallback  # province Overpass failed
-        )
+        and not province_svg_art_mode
     )
     if maptiler_raster_enabled:
         try:
@@ -949,7 +941,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             raise HTTPException(status_code=500, detail="Failed to save generated file. Please try again.")
 
         maptiler_print_png: bytes | None = None
-        if maptiler_only_mode and maptiler_key_runtime and not city_vector_road_art_mode:
+        if maptiler_only_mode and maptiler_key_runtime and not city_vector_road_art_mode and not province_svg_art_mode:
             try:
                 maptiler_print_png = await _render_maptiler_poster_png(
                     db=db,
