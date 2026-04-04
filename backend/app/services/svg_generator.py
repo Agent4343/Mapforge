@@ -2024,7 +2024,18 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
     minor_paths = []
 
     province_keep_major_classes = {
-        "motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link",
+        "motorway", "motorway_link", "trunk", "trunk_link",
+        "primary", "primary_link", "secondary", "secondary_link",
+    }
+    province_min_len_by_class = {
+        "motorway": 2.0,
+        "motorway_link": 3.0,
+        "trunk": 2.0,
+        "trunk_link": 3.0,
+        "primary": 2.4,
+        "primary_link": 3.2,
+        "secondary": 4.8,
+        "secondary_link": 4.2,
     }
 
     for coords, road_class, _width, name in streets_data.get("major_roads", []):
@@ -2033,8 +2044,10 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
         if len(coords) < 2:
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
-        if is_province and _path_length(board_coords) < 2.4:
-            continue
+        if is_province:
+            min_len = province_min_len_by_class.get(road_class, 2.8)
+            if _path_length(board_coords) < min_len:
+                continue
         path_d = _coords_to_open_path(board_coords)
         cw = casing_widths.get(road_class, 0.5)
         major_paths.append((path_d, road_class, cw))

@@ -294,7 +294,7 @@ def test_generate_svg_vintage_map_uses_standard_theme_renderer():
     assert "MapForge Vintage Map v1.0" not in svg
 
 
-def test_province_print_streets_filters_secondary_and_avoids_white_centerlines():
+def test_province_print_streets_keeps_major_secondary_structure_and_avoids_white_centerlines():
     processed = {
         "polygons": [([(20, 20), (180, 20), (180, 150), (20, 150), (20, 20)], [])],
         "bounds_mm": (20, 20, 180, 150),
@@ -321,8 +321,8 @@ def test_province_print_streets_filters_secondary_and_avoids_white_centerlines()
         output_mode="print",
     )
     svg = result["svg"]
-    # Primary road should remain, secondary should be filtered for cleaner province art.
+    # Primary + secondary should remain for richer province structure.
     assert 'd="M20.0,20.0 L120.0,20.0"' in svg
-    assert 'd="M20.0,35.0 L120.0,35.0"' not in svg
+    assert 'd="M20.0,35.0 L120.0,35.0"' in svg
     # Province centerline fill should use land color, not bright white.
     assert 'stroke="#ffffff"' not in svg
