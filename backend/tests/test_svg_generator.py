@@ -292,3 +292,37 @@ def test_generate_svg_vintage_map_uses_standard_theme_renderer():
     svg = result["svg"]
     assert "MapForge Print Poster v1.0 | Theme: vintage_map" in svg
     assert "MapForge Vintage Map v1.0" not in svg
+
+
+def test_province_print_streets_filters_secondary_and_avoids_white_centerlines():
+    processed = {
+        "polygons": [([(20, 20), (180, 20), (180, 150), (20, 150), (20, 20)], [])],
+        "bounds_mm": (20, 20, 180, 150),
+        "board_mm": (200.0, 260.0),
+        "center_latlon": (44.95, -79.45),
+        "node_count": 5,
+    }
+    streets = {
+        "major_roads": [
+            ([(20.0, 20.0), (120.0, 20.0)], "primary", 1.0, "Primary Hwy"),
+            ([(20.0, 35.0), (120.0, 35.0)], "secondary", 0.8, "Secondary Hwy"),
+        ],
+        "minor_roads": [],
+    }
+    result = generate_svg(
+        processed=processed,
+        location_name="Nova Scotia",
+        style=CutStyle.filled,
+        show_coordinates=True,
+        font_size_mm=14,
+        streets_data=streets,
+        color_theme="classic",
+        product_type="province",
+        output_mode="print",
+    )
+    svg = result["svg"]
+    # Primary road should remain, secondary should be filtered for cleaner province art.
+    assert 'd="M20.0,20.0 L120.0,20.0"' in svg
+    assert 'd="M20.0,35.0 L120.0,35.0"' not in svg
+    # Province centerline fill should use land color, not bright white.
+    assert 'stroke="#ffffff"' not in svg
