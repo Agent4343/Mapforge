@@ -5,6 +5,7 @@
 const API_BASE = "/api/v1";
 const TIMEOUT_MS = 30000;
 const GENERATE_TIMEOUT_MS = 300000;
+const DOWNLOAD_TIMEOUT_MS = 180000;
 const ENV_API_ORIGIN = (import.meta.env.VITE_API_URL || "").trim().replace(/\/+$/, "");
 const ENV_API_FALLBACK_ORIGINS = (import.meta.env.VITE_API_FALLBACK_URLS || "")
   .split(",")
@@ -342,8 +343,13 @@ async function downloadThumbnail(fileId) {
 }
 
 async function downloadPrintPNG(fileId) {
-  const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}?format=png`);
-  if (!resp.ok) throw new Error("Print PNG download failed");
+  const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}?format=png`, {
+    timeout: DOWNLOAD_TIMEOUT_MS,
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Print PNG download failed"));
+  }
   return resp.blob();
 }
 

@@ -1252,14 +1252,27 @@ async def download(
     if not file_record:
         raise HTTPException(status_code=404, detail="File not found.")
 
+    async def _safe_retrieve(key: str | None, *, label: str) -> bytes | None:
+        """Read a stored file while converting storage outages into clean API errors."""
+        if not key:
+            return None
+        try:
+            return await retrieve_file(key)
+        except Exception as e:
+            log.error(f"Download storage read failed ({label}) for {file_id} key={key}: {type(e).__name__}: {e}")
+            raise HTTPException(
+                status_code=503,
+                detail="File storage is temporarily unavailable. Please try again in a moment.",
+            )
+
     if format == ExportFormat.png:
         content = None
         if file_record.print_png_key:
-            content = await retrieve_file(file_record.print_png_key)
+            content = await _safe_retrieve(file_record.print_png_key, label="print_png")
         # Fallback: render PNG on-demand from stored SVG if pre-rendered PNG
         # is missing (happens when cairosvg fails during generation)
         if content is None and file_record.svg_storage_key:
-            svg_bytes = await retrieve_file(file_record.svg_storage_key)
+            svg_bytes = await _safe_retrieve(file_record.svg_storage_key, label="svg_fallback")
             if svg_bytes:
                 try:
                     from app.services.thumbnail_generator import generate_print_image
@@ -1277,9 +1290,9 @@ async def download(
     elif format == ExportFormat.pdf:
         content = None
         if getattr(file_record, "print_pdf_key", None):
-            content = await retrieve_file(file_record.print_pdf_key)
+            content = await _safe_retrieve(file_record.print_pdf_key, label="print_pdf")
         if content is None and file_record.svg_storage_key:
-            svg_bytes = await retrieve_file(file_record.svg_storage_key)
+            svg_bytes = await _safe_retrieve(file_record.svg_storage_key, label="svg_fallback")
             if svg_bytes:
                 try:
                     content = generate_print_pdf(svg_bytes.decode("utf-8"))
@@ -1293,18 +1306,18 @@ async def download(
     elif format == ExportFormat.dxf:
         if not file_record.dxf_storage_key:
             raise HTTPException(status_code=404, detail="DXF not available. Regenerate the map to create a DXF file.")
-        content = await retrieve_file(file_record.dxf_storage_key)
+        content = await _safe_retrieve(file_record.dxf_storage_key, label="dxf")
         media_type = "application/dxf"
         ext = "dxf"
     elif format == ExportFormat.stl:
         stl_key = file_record.svg_storage_key.replace("svg/", "stl/").replace(".svg", ".stl")
-        content = await retrieve_file(stl_key)
+        content = await _safe_retrieve(stl_key, label="stl")
         if content is None:
             raise HTTPException(status_code=404, detail="STL not available. Generate with contours enabled for 3D export.")
         media_type = "model/stl"
         ext = "stl"
     else:
-        content = await retrieve_file(file_record.svg_storage_key)
+        content = await _safe_retrieve(file_record.svg_storage_key, label="svg")
         media_type = "image/svg+xml"
         ext = "svg"
 
