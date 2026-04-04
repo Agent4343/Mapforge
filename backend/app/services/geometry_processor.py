@@ -59,6 +59,16 @@ def process_geometry(
     # Normalize to list of polygons
     polys = list(geom_m.geoms) if isinstance(geom_m, MultiPolygon) else [geom_m]
 
+    # Step 3b: Remove administrative boundary envelopes for provinces.
+    # Some province relations (e.g. PEI) have an outer administrative boundary
+    # polygon that extends into the ocean, plus the actual coastline polygon(s)
+    # inside it. The admin boundary looks like an angular bounding box and
+    # creates ugly empty space. Detect and remove it by checking if one polygon
+    # fully contains other significant polygons — that container is the admin
+    # boundary, not the actual land shape.
+    if product_type == ProductType.province and len(polys) > 1:
+        polys = _remove_admin_boundary_envelope(polys)
+
     # Step 4: Filter small polygons
     # At province scale, tiny islands look like noise dots — but the threshold
     # must scale with province size. Small provinces (PEI, NS) need to keep
@@ -207,6 +217,83 @@ def _get_tolerance(geom_m: Polygon | MultiPolygon, product_type: ProductType, si
         return base
     else:                   # > 500km
         return base * 1.2
+
+
+def _remove_admin_boundary_envelope(polys: list[Polygon]) -> list[Polygon]:
+    """Remove administrative boundary envelopes that engulf actual land polygons.
+
+    Province OSM relations can include an outer admin boundary (straight-line
+    polygon extending into the ocean) plus the actual coastline polygon(s).
+    The admin boundary creates ugly empty space and wrong province shapes.
+
+    Detection: if a polygon contains other significant polygons and is much
+    more convex (fewer vertices per area, or high convex hull ratio), it's
+    likely an admin boundary rather than actual land.
+    """
+    if len(polys) < 2:
+        return polys
+
+    # Sort by area descending
+    sorted_polys = sorted(polys, key=lambda p: p.area, reverse=True)
+    largest = sorted_polys[0]
+    others = sorted_polys[1:]
+
+    # Check if the largest polygon contains other significant polygons
+    contained_area = 0.0
+    contained_count = 0
+    for p in others:
+        try:
+            if largest.contains(p.representative_point()):
+                contained_area += p.area
+                contained_count += 1
+        except Exception:
+            continue
+
+    if contained_count == 0:
+        return polys
+
+    # If the largest polygon contains significant land mass inside it,
+    # it's likely an admin boundary envelope. Check additional signals:
+    # 1. The contained polygons make up a meaningful fraction of the largest
+    # 2. The largest polygon is much more convex than the contained ones
+    #    (admin boundaries are simplified straight lines; coastlines are complex)
+    contained_ratio = contained_area / largest.area if largest.area > 0 else 0
+
+    # Convexity: ratio of polygon area to its convex hull area.
+    # Admin boundaries ≈ 0.8-1.0 (nearly convex). Coastlines ≈ 0.3-0.7.
+    try:
+        largest_convexity = largest.area / largest.convex_hull.area if largest.convex_hull.area > 0 else 1.0
+    except Exception:
+        largest_convexity = 1.0
+
+    # Vertex density: coastlines have many vertices per unit perimeter;
+    # admin boundaries have very few (straight lines).
+    largest_vertex_density = len(largest.exterior.coords) / max(1.0, largest.length) * 1000
+    avg_other_density = 0.0
+    if others:
+        densities = []
+        for p in others:
+            if p.length > 0:
+                densities.append(len(p.exterior.coords) / p.length * 1000)
+        if densities:
+            avg_other_density = sum(densities) / len(densities)
+
+    is_admin_envelope = False
+
+    # Strong signal: contains >10% of its area in other polygons AND is convex
+    if contained_ratio > 0.10 and largest_convexity > 0.75:
+        is_admin_envelope = True
+
+    # Strong signal: vertex density of largest is much lower than contained polygons
+    # (admin boundary = straight lines, coastline = complex)
+    if contained_ratio > 0.05 and avg_other_density > 0 and largest_vertex_density < avg_other_density * 0.3:
+        is_admin_envelope = True
+
+    if is_admin_envelope:
+        # Remove the admin boundary, keep the actual land polygons
+        return others
+
+    return polys
 
 
 def _scale_to_board(

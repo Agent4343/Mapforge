@@ -2119,16 +2119,18 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
 
     # Width multipliers for province vs city scale
     if is_province:
-        # Province: bold, clear highways visible at province scale
+        # Province: elegant highway lines visible at province scale.
+        # Keep strokes refined — thick casings on dense road networks
+        # create muddy dark blobs instead of readable map art.
         casing_widths = {
-            "motorway": 3.0, "motorway_link": 2.2,
-            "trunk": 2.6, "trunk_link": 1.8,
-            "primary": 2.0, "primary_link": 1.4,
-            "secondary": 1.4, "secondary_link": 1.0,
-            "tertiary": 1.0, "tertiary_link": 0.8,
-            "boundary": 1.6,
-            "residential": 0.5, "unclassified": 0.5,
-            "living_street": 0.5, "service": 0.4, "track": 0.35,
+            "motorway": 1.8, "motorway_link": 1.3,
+            "trunk": 1.5, "trunk_link": 1.1,
+            "primary": 1.2, "primary_link": 0.9,
+            "secondary": 0.8, "secondary_link": 0.6,
+            "tertiary": 0.5, "tertiary_link": 0.4,
+            "boundary": 1.2,
+            "residential": 0.3, "unclassified": 0.3,
+            "living_street": 0.3, "service": 0.25, "track": 0.2,
         }
         fill_ratio = 0.45
     elif product_type in ("community", "park"):
@@ -2186,16 +2188,16 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
         "tertiary", "tertiary_link", "boundary",
     }
     province_min_len_by_class = {
-        "motorway": 1.5,
-        "motorway_link": 2.0,
-        "trunk": 1.5,
-        "trunk_link": 2.0,
-        "primary": 1.8,
-        "primary_link": 2.2,
-        "secondary": 2.5,
-        "secondary_link": 2.8,
-        "tertiary": 3.0,
-        "tertiary_link": 3.5,
+        "motorway": 2.0,
+        "motorway_link": 3.0,
+        "trunk": 2.0,
+        "trunk_link": 3.0,
+        "primary": 2.5,
+        "primary_link": 3.5,
+        "secondary": 4.0,
+        "secondary_link": 5.0,
+        "tertiary": 5.0,
+        "tertiary_link": 6.0,
     }
 
     for coords, road_class, _width, name in streets_data.get("major_roads", []):
