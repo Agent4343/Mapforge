@@ -155,6 +155,7 @@ class PosterLayout(str, Enum):
     editorial = "editorial"   # Large text header above map
     bold = "bold"             # Full-bleed map with bold overlay text
     vintage = "vintage"       # Ornate border, serif text, aged look
+    city_art = "city_art"     # Minimalist B&W city map art print
 
 
 class OutputMode(str, Enum):

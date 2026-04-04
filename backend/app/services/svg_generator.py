@@ -81,6 +81,17 @@ POSTER_LAYOUTS = {
         "ornate_corners": True,
         "force_font": "serif",
     },
+    "city_art": {
+        "mat_pct": 0.025,
+        "text_area_pct": 0.28,
+        "text_position": "bottom",
+        "map_frame": False,
+        "separator": False,
+        "vignette": False,
+        "full_bleed_map": False,
+        "force_font": "sans",
+        "city_art_mode": True,
+    },
 }
 
 
@@ -356,6 +367,22 @@ def _generate_cnc_svg(
     }
 
 
+def _format_dms(degrees: float, positive_dir: str, negative_dir: str) -> str:
+    """Format decimal degrees as DMS (e.g. 25° 46' 46" N)."""
+    direction = positive_dir if degrees >= 0 else negative_dir
+    degrees = abs(degrees)
+    d = int(degrees)
+    m = int((degrees - d) * 60)
+    s = int(round(((degrees - d) * 60 - m) * 60))
+    if s == 60:
+        s = 0
+        m += 1
+    if m == 60:
+        m = 0
+        d += 1
+    return f'{d}\u00b0 {m}\' {s}" {direction}'
+
+
 def _generate_print_svg(
     processed: dict,
     location_name: str,
@@ -571,11 +598,39 @@ def _generate_print_svg(
     lines.append("  </g>")
     lines.append("")
 
+    # --- Pre-compute product flags before map area background ---
+    is_city_art = layout.get("city_art_mode", False)
+    is_city_community = product_type in ("city", "community")
+    is_street_map = product_type in ("city", "community", "name_sign")
+    has_streets = streets_data and (streets_data.get("major_roads") or streets_data.get("minor_roads"))
+
+    _total_roads = 0
+    if streets_data:
+        _total_roads = len(streets_data.get("major_roads", [])) + len(streets_data.get("minor_roads", []))
+
+    # Determine if this city/community has enough road density to hide the
+    # geography polygon. Use real-world area (via Web Mercator scale) so
+    # large sparse islands like Cape Breton still show their outline.
+    city_sellable_mode = False
+    if is_city_community and has_streets:
+        transform_info = processed.get("transform", {})
+        scale = transform_info.get("scale", 0)
+        if scale > 0:
+            meters_per_mm = 1.0 / scale
+            real_w_km = (geo_w * meters_per_mm) / 1000.0
+            real_h_km = (geo_h * meters_per_mm) / 1000.0
+            real_area_km2 = max(real_w_km * real_h_km, 0.01)
+            roads_per_km2 = _total_roads / real_area_km2
+            city_sellable_mode = roads_per_km2 >= 0.15
+        else:
+            city_sellable_mode = _total_roads >= 200
+
     # Layer: map area background
-    # For provinces/lakes, use water color as the background so the ocean
-    # is visible and the land shape has strong contrast. For cities, use
-    # the standard map_bg since streets are the focus.
-    is_coastal_map = product_type in ("province", "lake", "park")
+    # For provinces/lakes, use water color as background (ocean visible).
+    # For sparse city/community maps, also use water so the land shape shows.
+    is_coastal_map = product_type in ("province", "lake", "park") or (
+        is_city_community and not city_sellable_mode
+    )
     map_area_bg = theme["water"] if is_coastal_map else theme["map_bg"]
     lines.append('  <g id="map_area">')
     lines.append(
@@ -608,15 +663,11 @@ def _generate_print_svg(
         lines.append("    </clipPath>")
 
     # Subtle texture pattern for sparse/rural areas — gives visual density
-    # when there are few streets to fill the map. Also detect cities with
-    # very few roads (small towns like Baddeck classified as "city").
-    _total_roads = 0
-    if streets_data:
-        _total_roads = len(streets_data.get("major_roads", [])) + len(streets_data.get("minor_roads", []))
+    # when there are few streets to fill the map. Skip for city_art mode.
     is_sparse_area = product_type in ("community", "park") or (
         product_type == "city" and _total_roads < 80
     )
-    if is_sparse_area:
+    if is_sparse_area and not is_city_art:
         land_stroke_color = theme.get("land_stroke", "#c4b598")
         lines.append(f'    <pattern id="land_texture" width="4" height="4" patternUnits="userSpaceOnUse">')
         lines.append(f'      <circle cx="2" cy="2" r="0.25" fill="{land_stroke_color}" opacity="0.15"/>')
@@ -628,18 +679,9 @@ def _generate_print_svg(
     # All map content clipped to the map area
     lines.append(f'  <g clip-path="url(#map_clip)">')
 
-    # For city/community maps, the streets ARE the visual — the geography
-    # boundary should be subtle or invisible. The map_bg rectangle already
-    # provides the "land" color. The polygon is only used as a subtle boundary.
-    #
-    # For lake/province/park maps, the filled polygon IS the visual —
-    # the shape of the lake or province is the main content.
-    is_street_map = product_type in ("city", "community", "name_sign")
-    has_streets = streets_data and (streets_data.get("major_roads") or streets_data.get("minor_roads"))
-
     # Land shadow — render BEFORE geography so it appears behind the land mass
     # Sparse/rural areas get a deeper shadow for more visual depth
-    if land_shadow and not full_bleed_map:
+    if land_shadow and not full_bleed_map and not is_city_art:
         shadow_opacity = "0.18" if is_sparse_area else "0.12"
         lines.append(f'    <g id="land_shadow" opacity="{shadow_opacity}">')
         shadow_scale = 0.006 if is_sparse_area else 0.004
@@ -657,7 +699,11 @@ def _generate_print_svg(
         layer_count += 1
 
     lines.append('    <g id="geography_fill">')
-    if is_street_map:
+    # For dense cities in city_art mode, skip the geography polygon entirely —
+    # the streets alone define the map shape against the background.
+    if is_city_art and city_sellable_mode:
+        pass  # No geography polygon — streets are the visual
+    elif is_street_map:
         # Street maps: fill the boundary polygon with land color to create
         # visible contrast between the city area and the white mat border.
         # Streets and water are layered on top.
@@ -689,7 +735,7 @@ def _generate_print_svg(
 
     # Subtle texture overlay for sparse/rural areas — fills empty land with
     # a fine dot pattern so the map doesn't look bare when there are few streets
-    if is_sparse_area:
+    if is_sparse_area and not is_city_art:
         lines.append('    <g id="land_texture_overlay">')
         for exterior, holes in polygons:
             path_d = _coords_to_path(exterior)
@@ -720,7 +766,10 @@ def _generate_print_svg(
 
     # Streets
     if streets_data:
-        _render_print_streets(lines, streets_data, processed, theme, product_type=product_type)
+        if is_city_art:
+            _render_city_art_streets(lines, streets_data, processed)
+        else:
+            _render_print_streets(lines, streets_data, processed, theme, product_type=product_type)
 
     if clip_to_boundary:
         lines.append("    </g>")  # close boundary_clip
@@ -785,7 +834,7 @@ def _generate_print_svg(
     lines.append("")
 
     # Map frame and text — depends on layout
-    if layout.get("map_frame", False) and not full_bleed_map:
+    if layout.get("map_frame", False) and not full_bleed_map and not is_city_art:
         inset = 1.5
         lines.append('  <g id="map_frame">')
         lines.append(
@@ -823,22 +872,93 @@ def _generate_print_svg(
     # --- Text rendering based on layout text_position ---
     text_center_x = round(board_w / 2, 2)
 
-    # Print-mode font sizes
-    title_size = round(font_size_mm * 1.6, 2)
-    subtitle_size = round(font_size_mm * 0.65, 2)
-    coord_size = round(font_size_mm * 0.45, 2)
+    # City Art mode: custom typography — bold sans, wide tracking, DMS coords
+    if is_city_art:
+        ca_ff = FONT_FAMILIES["sans"]
+        # Title: ~9% of poster height, weight 800, tracking 0.35x
+        ca_title_size = round(board_h * 0.09, 2)
+        ca_title_tracking = round(ca_title_size * 0.35, 2)
+        ca_title_text = location_name.upper()
+        # Auto-shrink title to fit
+        char_w = 0.75
+        est_w = len(ca_title_text) * (ca_title_size * char_w + ca_title_tracking)
+        avail_w = board_w * 0.85
+        if est_w > avail_w and len(ca_title_text) > 0:
+            shrink = avail_w / est_w
+            ca_title_size = round(ca_title_size * shrink, 2)
+            ca_title_tracking = round(ca_title_size * 0.35, 2)
+        ca_sub_size = round(ca_title_size * 0.40, 2)
+        ca_coord_size = round(ca_title_size * 0.30, 2)
 
-    title_text = location_name.upper()
-    char_width_factor = 0.75
-    title_tracking = title_size * 0.2
-    est_title_width = len(title_text) * (title_size * char_width_factor + title_tracking)
-    available_width = board_w * 0.85
-    if est_title_width > available_width and len(title_text) > 0:
-        scale = available_width / est_title_width
-        title_size = round(title_size * scale, 2)
+        # Text zone starts below the map
+        text_zone_y = map_y + map_h
+        text_zone_h = board_h - text_zone_y - board_h * mat_pct
+        text_start_y = round(text_zone_y + text_zone_h * 0.35, 2)
+
+        lines.append('  <g id="poster_text">')
+        lines.append(
+            f'    <text x="{text_center_x}" y="{text_start_y}"'
+            f' text-anchor="middle" font-family="{ca_ff}"'
+            f' font-size="{ca_title_size}" font-weight="800"'
+            f' letter-spacing="{ca_title_tracking}"'
+            f' fill="{theme["text_primary"]}">{_escape_xml(ca_title_text)}</text>'
+        )
+        next_y = text_start_y + ca_title_size * 1.1
+        if subtitle:
+            lines.append(
+                f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
+                f' text-anchor="middle" font-family="{ca_ff}"'
+                f' font-size="{ca_sub_size}" font-weight="300"'
+                f' letter-spacing="{round(ca_sub_size * 0.25, 2)}"'
+                f' fill="{theme["text_secondary"]}">{_escape_xml(subtitle)}</text>'
+            )
+            next_y += ca_sub_size * 1.6
+        if show_coordinates and latlon:
+            lat, lon = latlon
+            lat_dms = _format_dms(lat, "N", "S")
+            lon_dms = _format_dms(lon, "E", "W")
+            coord_text = f"{lat_dms}  |  {lon_dms}"
+            lines.append(
+                f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
+                f' text-anchor="middle" font-family="{ca_ff}"'
+                f' font-size="{ca_coord_size}"'
+                f' letter-spacing="{round(ca_coord_size * 0.15, 2)}"'
+                f' fill="{theme["text_secondary"]}">{coord_text}</text>'
+            )
+        lines.append("  </g>")
+        lines.append("")
+
+        # Thin poster border — #AAAAAA, 0.5px, 2.5% inset
+        border_inset = round(min(board_w, board_h) * 0.025, 2)
+        lines.append('  <g id="poster_border">')
+        lines.append(
+            f'    <rect x="{border_inset}" y="{border_inset}"'
+            f' width="{round(board_w - 2 * border_inset, 2)}"'
+            f' height="{round(board_h - 2 * border_inset, 2)}"'
+            f' fill="none" stroke="#AAAAAA" stroke-width="0.5"/>'
+        )
+        lines.append("  </g>")
+        lines.append("")
+
+    # Standard (non-city_art) text rendering
+    elif not is_city_art:
+
+        # Print-mode font sizes
+        title_size = round(font_size_mm * 1.6, 2)
+        subtitle_size = round(font_size_mm * 0.65, 2)
+        coord_size = round(font_size_mm * 0.45, 2)
+
+        title_text = location_name.upper()
+        char_width_factor = 0.75
         title_tracking = title_size * 0.2
+        est_title_width = len(title_text) * (title_size * char_width_factor + title_tracking)
+        available_width = board_w * 0.85
+        if est_title_width > available_width and len(title_text) > 0:
+            scale = available_width / est_title_width
+            title_size = round(title_size * scale, 2)
+            title_tracking = title_size * 0.2
 
-    if text_position in ("overlay_bottom", "overlay_center"):
+    if not is_city_art and text_position in ("overlay_bottom", "overlay_center"):
         # Overlay text on the map with a semi-transparent backdrop
         if text_position == "overlay_center":
             overlay_y = round(board_h * 0.45, 2)
@@ -888,7 +1008,7 @@ def _generate_print_svg(
             )
         lines.append("  </g>")
         lines.append("")
-    elif text_position == "top":
+    elif not is_city_art and text_position == "top":
         # Editorial: large text header above the map
         text_start_y = round(mat_y + text_area_h * 0.45, 2)
         lines.append('  <g id="poster_text">')
@@ -924,7 +1044,7 @@ def _generate_print_svg(
             )
         lines.append("  </g>")
         lines.append("")
-    else:
+    elif not is_city_art:
         # Classic/vintage: text below the map
         if text_area_h > 0:
             sep_y_ref = round(map_y + map_h + text_area_h * 0.10, 2)
@@ -2085,6 +2205,59 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
             f' fill="none" stroke="{fill_color}" stroke-width="{fw}"'
             f' stroke-linecap="round" stroke-linejoin="round"/>'
         )
+
+    lines.append("    </g>")
+
+
+def _render_city_art_streets(lines: list[str], streets_data: dict, processed: dict):
+    """Render streets in minimalist grayscale for city map art prints.
+
+    No casing — single strokes only. 4-tier road hierarchy:
+    Tier 1 (motorway/trunk): #1A1A1A, bold
+    Tier 2 (primary): #444444, medium
+    Tier 3 (secondary/tertiary): #888888, light
+    Tier 4 (residential/service): #BBBBBB, fine
+    """
+    transform = processed.get("transform")
+
+    city_art_styles = {
+        "motorway": (1.1, "#1A1A1A"), "motorway_link": (0.8, "#1A1A1A"),
+        "trunk": (0.9, "#1A1A1A"), "trunk_link": (0.7, "#1A1A1A"),
+        "primary": (0.7, "#444444"), "primary_link": (0.55, "#444444"),
+        "secondary": (0.5, "#888888"), "secondary_link": (0.4, "#888888"),
+        "tertiary": (0.35, "#888888"), "tertiary_link": (0.3, "#888888"),
+        "residential": (0.2, "#BBBBBB"), "unclassified": (0.2, "#BBBBBB"),
+        "living_street": (0.2, "#BBBBBB"), "service": (0.15, "#BBBBBB"),
+    }
+
+    lines.append('    <g id="streets">')
+
+    # Collect paths by tier for proper layering (fine roads first, bold on top)
+    tiers = {4: [], 3: [], 2: [], 1: []}
+    tier_map = {
+        "motorway": 1, "motorway_link": 1, "trunk": 1, "trunk_link": 1,
+        "primary": 2, "primary_link": 2,
+        "secondary": 3, "secondary_link": 3, "tertiary": 3, "tertiary_link": 3,
+    }
+
+    for road_list_key in ("minor_roads", "major_roads"):
+        for coords, road_class, _width, name in streets_data.get(road_list_key, []):
+            if len(coords) < 2:
+                continue
+            board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
+            path_d = _coords_to_open_path(board_coords)
+            sw, color = city_art_styles.get(road_class, (0.15, "#BBBBBB"))
+            tier = tier_map.get(road_class, 4)
+            tiers[tier].append((path_d, sw, color))
+
+    # Draw from fine to bold
+    for tier_num in (4, 3, 2, 1):
+        for path_d, sw, color in tiers[tier_num]:
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="none" stroke="{color}" stroke-width="{sw}"'
+                f' stroke-linecap="round" stroke-linejoin="round"/>'
+            )
 
     lines.append("    </g>")
 

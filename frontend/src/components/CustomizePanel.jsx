@@ -15,6 +15,7 @@ const COLOR_THEMES = [
   { value: "sunset", label: "Sunset", bg: "#fff5eb", road: "#c0392b", land: "#e67e22" },
   { value: "arctic", label: "Arctic", bg: "#f0f8ff", road: "#2c3e50", land: "#85c1e9" },
   { value: "vintage_map", label: "Vintage Map", bg: "#f0e6d0", road: "#2a2018", land: "#d8c8a8" },
+  { value: "city_art", label: "City Map Art", bg: "#E8E8E8", road: "#1A1A1A", land: "#E8E8E8" },
 ];
 
 const SUBTITLE_PRESETS = [
@@ -178,6 +179,7 @@ export default function CustomizePanel({ config, onChange, user }) {
               <option value="editorial">Editorial — Text header above map</option>
               <option value="bold">Bold — Full bleed with overlay text</option>
               <option value="vintage">Vintage — Ornate border, serif text</option>
+              <option value="city_art">City Map Art — Minimalist B&W</option>
             </select>
           </div>
         </div>
