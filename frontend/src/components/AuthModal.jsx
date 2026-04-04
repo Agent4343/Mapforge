@@ -1,17 +1,15 @@
 import { useState } from "react";
-import { register, login, requestPasswordReset, resetPassword } from "../services/api.js";
+import { login, requestPasswordReset, resetPassword } from "../services/api.js";
 
 export default function AuthModal({ onAuth, onClose }) {
-  const [mode, setMode] = useState("login"); // login, register, reset_request, reset_confirm
+  const [mode, setMode] = useState("login"); // login, reset_request, reset_confirm
   const [email, setEmail] = useState("");
-  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [resetToken, setResetToken] = useState("");
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [acceptTerms, setAcceptTerms] = useState(false);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -34,14 +32,6 @@ export default function AuthModal({ onAuth, onClose }) {
         setMode("login");
         setNewPassword("");
         setResetToken("");
-      } else if (mode === "register") {
-        if (!acceptTerms) {
-          setError("Please accept the terms to create an account.");
-          setLoading(false);
-          return;
-        }
-        const data = await register(email, username, password);
-        onAuth(data.user);
       } else {
         const data = await login(email, password);
         onAuth(data.user);
@@ -53,7 +43,7 @@ export default function AuthModal({ onAuth, onClose }) {
     }
   }
 
-  const titles = { login: "Sign In", register: "Create Account", reset_request: "Reset Password", reset_confirm: "Set New Password" };
+  const titles = { login: "Sign In", reset_request: "Reset Password", reset_confirm: "Set New Password" };
   const title = titles[mode];
 
   return (
@@ -62,7 +52,7 @@ export default function AuthModal({ onAuth, onClose }) {
         <h2>{title}</h2>
 
         <form onSubmit={handleSubmit}>
-          {(mode === "login" || mode === "register" || mode === "reset_request") && (
+          {(mode === "login" || mode === "reset_request") && (
             <div className="control-group">
               <label>Email</label>
               <input
@@ -74,35 +64,9 @@ export default function AuthModal({ onAuth, onClose }) {
             </div>
           )}
 
-          {mode === "register" && (
-            <div className="control-group">
-              <label>Username</label>
-              <input
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                required
-                minLength={3}
-              />
-            </div>
-          )}
-
           {mode === "login" && (
             <div className="control-group">
               <label>Password</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                minLength={8}
-              />
-            </div>
-          )}
-
-          {mode === "register" && (
-            <div className="control-group">
-              <label>Password (min 8 characters)</label>
               <input
                 type="password"
                 value={password}
@@ -138,22 +102,11 @@ export default function AuthModal({ onAuth, onClose }) {
             </>
           )}
 
-          {mode === "register" && (
-            <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", color: "var(--text-muted)", cursor: "pointer" }}>
-              <input
-                type="checkbox"
-                checked={acceptTerms}
-                onChange={(e) => setAcceptTerms(e.target.checked)}
-              />
-              I agree to the Terms of Service and Privacy Policy
-            </label>
-          )}
-
           {error && <div className="error-message">{error}</div>}
           {success && <div className="success-message">{success}</div>}
 
           <button className="btn btn-primary btn-full" type="submit" disabled={loading}>
-            {loading ? "..." : mode === "login" ? "Sign In" : mode === "register" ? "Create Account" : mode === "reset_request" ? "Send Reset Link" : "Set New Password"}
+            {loading ? "..." : mode === "login" ? "Sign In" : mode === "reset_request" ? "Send Reset Link" : "Set New Password"}
           </button>
         </form>
 
@@ -162,19 +115,6 @@ export default function AuthModal({ onAuth, onClose }) {
             <>
               <button className="link-btn" onClick={() => { setMode("reset_request"); setError(null); setSuccess(null); }}>
                 Forgot password?
-              </button>
-              {" \u00b7 "}
-              No account?{" "}
-              <button className="link-btn" onClick={() => { setMode("register"); setError(null); setSuccess(null); }}>
-                Create one
-              </button>
-            </>
-          )}
-          {mode === "register" && (
-            <>
-              Have an account?{" "}
-              <button className="link-btn" onClick={() => { setMode("login"); setError(null); setSuccess(null); }}>
-                Sign in
               </button>
             </>
           )}

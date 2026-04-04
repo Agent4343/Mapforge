@@ -1,6 +1,8 @@
 """Fetch full geometry from OpenStreetMap Overpass API and Nominatim with caching."""
 
-import json
+import math
+import time
+import asyncio
 
 import httpx
 from shapely.geometry import shape, mapping, MultiPolygon, Polygon, GeometryCollection
@@ -8,11 +10,13 @@ from shapely.geometry import shape, mapping, MultiPolygon, Polygon, GeometryColl
 from app.config import settings
 from app.logging_config import log
 from app.services.cache import cache_get, cache_set, make_geometry_key
+from app.services.overpass_health import overpass_health
 
 OVERPASS_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
-    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
     "https://overpass.openstreetmap.fr/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
 ]
 OVERPASS_URL = OVERPASS_ENDPOINTS[0]  # backward compat
 NOMINATIM_LOOKUP_URL = "https://nominatim.openstreetmap.org/lookup"
@@ -51,6 +55,51 @@ async def fetch_geometry(osm_id: int, osm_type: str = "relation") -> MultiPolygo
             log.debug(f"Failed to cache geometry: {e}")
 
     return geom
+
+
+async def fetch_fallback_geometry(osm_id: int, osm_type: str = "relation") -> Polygon | None:
+    """Build an approximate map area when polygon geometry is unavailable.
+
+    Fallback strategy:
+    1) Use Nominatim lookup bounding box if available.
+    2) Otherwise build a small envelope around the location centroid.
+    """
+    item = await _lookup_nominatim_item(osm_id, osm_type)
+    if not item:
+        return None
+
+    # Relation/way fallbacks can be wider than a point feature.
+    base_span = 0.10 if osm_type == "node" else (0.16 if osm_type == "way" else 0.22)
+    geom = _polygon_from_bbox(item.get("boundingbox"), min_span_deg=base_span, max_span_deg=1.8)
+    if geom is not None:
+        return geom
+
+    lat = _safe_float(item.get("lat"))
+    lon = _safe_float(item.get("lon"))
+    if lat is None or lon is None:
+        return None
+    return _ellipse_envelope(lat, lon, span_lat=base_span, span_lon=base_span, points=64)
+
+
+async def _lookup_nominatim_item(osm_id: int, osm_type: str) -> dict | None:
+    type_prefix = OSM_TYPE_MAP.get(osm_type, "R")
+    params = {
+        "osm_ids": f"{type_prefix}{osm_id}",
+        "format": "json",
+        "addressdetails": 1,
+        "polygon_geojson": 0,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            resp = await client.get(NOMINATIM_LOOKUP_URL, params=params, headers=NOMINATIM_HEADERS)
+            resp.raise_for_status()
+            data = resp.json()
+    except (httpx.HTTPError, httpx.ProxyError) as e:
+        log.warning(f"Nominatim fallback lookup failed for {osm_type}/{osm_id}: {e}")
+        return None
+    if not data:
+        return None
+    return data[0]
 
 
 async def _fetch_via_nominatim(osm_id: int, osm_type: str) -> MultiPolygon | Polygon | None:
@@ -99,19 +148,27 @@ async def _fetch_via_overpass(osm_id: int, osm_type: str) -> MultiPolygon | Poly
     """
 
     data = None
+    ordered_endpoints = overpass_health.get_endpoint_order(OVERPASS_ENDPOINTS, service="geometry")
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-        for endpoint in OVERPASS_ENDPOINTS:
+        for i, endpoint in enumerate(ordered_endpoints):
             try:
+                if i > 0:
+                    await asyncio.sleep(0.5)
+                started = time.monotonic()
                 resp = await client.post(endpoint, data={"data": query}, headers=OVERPASS_HEADERS)
                 if resp.status_code == 200:
                     data = resp.json()
                     if data.get("elements"):
+                        overpass_health.record_success(endpoint, latency_s=(time.monotonic() - started))
                         break
                     data = None
+                    overpass_health.record_failure(endpoint, reason="empty_elements")
                 else:
                     log.warning(f"Overpass HTTP {resp.status_code} from {endpoint} for {osm_type}/{osm_id}")
+                    overpass_health.record_failure(endpoint, reason=f"http_{resp.status_code}")
             except Exception as e:
                 log.warning(f"Overpass request to {endpoint} failed for {osm_type}/{osm_id}: {e}")
+                overpass_health.record_failure(endpoint, reason=type(e).__name__)
 
     if data is None:
         return None
@@ -181,12 +238,28 @@ def _build_geometry_from_overpass(elements: list[dict], target_id: int, target_t
             continue
         if ring[0] != ring[-1]:
             ring.append(ring[0])
+        # Attach only holes that are actually inside this outer ring.
+        # Previous logic attached every merged inner ring to every outer,
+        # which can create large, incorrect cutouts and technical-looking artifacts.
         holes = []
+        outer_poly = None
+        try:
+            outer_poly = Polygon(ring)
+        except Exception:
+            outer_poly = None
         for inner in merged_inners:
-            if len(inner) >= 4:
-                if inner[0] != inner[-1]:
-                    inner.append(inner[0])
-                holes.append(inner)
+            if len(inner) < 4:
+                continue
+            if inner[0] != inner[-1]:
+                inner.append(inner[0])
+            if outer_poly is not None:
+                try:
+                    test_inner = Polygon(inner)
+                    if not outer_poly.contains(test_inner.representative_point()):
+                        continue
+                except Exception:
+                    continue
+            holes.append(inner)
         try:
             poly = Polygon(ring, holes)
             if poly.is_valid:
@@ -288,3 +361,63 @@ def _to_polygon(geom) -> MultiPolygon | Polygon | None:
         if polys:
             return MultiPolygon(polys) if len(polys) > 1 else polys[0]
     return None
+
+
+def _safe_float(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _polygon_from_bbox(
+    bbox_values,
+    *,
+    min_span_deg: float = 0.12,
+    max_span_deg: float = 1.8,
+) -> Polygon | None:
+    """Convert Nominatim boundingbox into a reasonable fallback polygon."""
+    if not isinstance(bbox_values, list) or len(bbox_values) < 4:
+        return None
+    south = _safe_float(bbox_values[0])
+    north = _safe_float(bbox_values[1])
+    west = _safe_float(bbox_values[2])
+    east = _safe_float(bbox_values[3])
+    if None in (south, north, west, east):
+        return None
+
+    south, north = sorted((south, north))
+    west, east = sorted((west, east))
+    center_lat = (south + north) / 2.0
+    center_lon = (west + east) / 2.0
+
+    span_lat = max(north - south, min_span_deg)
+    span_lon = max(east - west, min_span_deg)
+    span_lat = min(span_lat, max_span_deg)
+    span_lon = min(span_lon, max_span_deg)
+
+    return _ellipse_envelope(center_lat, center_lon, span_lat=span_lat, span_lon=span_lon, points=72)
+
+
+def _ellipse_envelope(
+    lat: float,
+    lon: float,
+    *,
+    span_lat: float,
+    span_lon: float,
+    points: int = 64,
+) -> Polygon:
+    """Create a smooth ellipse-shaped fallback region around a center point."""
+    half_lat = max(0.01, span_lat / 2.0)
+    half_lon = max(0.01, span_lon / 2.0)
+
+    coords = []
+    for i in range(max(24, points)):
+        angle = 2.0 * math.pi * (i / max(24, points))
+        y = lat + math.sin(angle) * half_lat
+        x = lon + math.cos(angle) * half_lon
+        y = min(89.9, max(-89.9, y))
+        x = min(179.9, max(-179.9, x))
+        coords.append((x, y))
+    coords.append(coords[0])
+    return Polygon(coords)

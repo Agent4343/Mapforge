@@ -115,7 +115,7 @@ export default function OrderStatus({ creditToken, onBack }) {
         <div className="order-downloads">
           <h3>Download Your Files</h3>
           <p className="order-download-note">
-            {credit.download_count} of {credit.max_downloads} downloads used
+            This purchase includes one secure download. Files are removed right after download.
           </p>
 
           <div className="order-download-buttons">
@@ -125,20 +125,6 @@ export default function OrderStatus({ creditToken, onBack }) {
               disabled={!!downloading}
             >
               {downloading === "png" ? "Downloading..." : "Download Print PNG (300 DPI)"}
-            </button>
-            <button
-              className="btn btn-secondary btn-full"
-              onClick={() => handleDownload("svg")}
-              disabled={!!downloading}
-            >
-              {downloading === "svg" ? "Downloading..." : "Download SVG Source"}
-            </button>
-            <button
-              className="btn btn-secondary btn-full"
-              onClick={() => handleDownload("thumbnail")}
-              disabled={!!downloading}
-            >
-              {downloading === "thumbnail" ? "Downloading..." : "Download Mockup PNG"}
             </button>
           </div>
         </div>

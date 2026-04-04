@@ -7,7 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.db_models import GeneratedFile, MarketplaceListing, Purchase, User
-from app.services.app_settings import get_setting, set_setting, delete_setting
+from app.services.app_settings import (
+    get_setting,
+    set_setting,
+    delete_setting,
+    get_maptiler_only_mode,
+)
 from app.services.auth import get_current_user
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
@@ -147,6 +152,87 @@ async def clear_etsy_settings(
     _require_admin(user)
 
     for key in ETSY_SETTING_KEYS:
+        await delete_setting(db, key)
+
+    return {"status": "cleared"}
+
+
+# --- MapTiler Settings ---
+
+MAPTILER_SETTING_KEYS = [
+    "MAPTILER_KEY",
+    "VITE_MAPTILER_KEY",
+    "MAPTILER_STATIC_STYLE",
+    "MAPFORGE_MAPTILER_ONLY_MODE",
+    "MAPTILER_ONLY_MODE",
+]
+
+
+class MapTilerSettingsRequest(BaseModel):
+    api_key: str = ""
+    static_style: str = ""
+    maptiler_only_mode: bool = False
+
+
+@router.get("/maptiler-settings")
+async def get_maptiler_settings(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get current MapTiler settings (admin only). API key is masked."""
+    _require_admin(user)
+
+    api_key = (
+        (await get_setting(db, "MAPTILER_KEY"))
+        or (await get_setting(db, "VITE_MAPTILER_KEY"))
+        or ""
+    ).strip()
+    static_style = ((await get_setting(db, "MAPTILER_STATIC_STYLE")) or "").strip()
+    maptiler_only_mode = await get_maptiler_only_mode(db)
+
+    return {
+        "api_key": api_key[:8] + "..." if len(api_key) > 8 else api_key,
+        "static_style": static_style or "basic-v2",
+        "maptiler_only_mode": bool(maptiler_only_mode),
+        "configured": bool(api_key),
+    }
+
+
+@router.post("/maptiler-settings")
+async def save_maptiler_settings(
+    req: MapTilerSettingsRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Save MapTiler settings to the database (admin only)."""
+    _require_admin(user)
+
+    api_key = (req.api_key or "").strip()
+    static_style = (req.static_style or "").strip()
+
+    if api_key:
+        # Write both keys so frontend/backend code paths remain compatible.
+        await set_setting(db, "MAPTILER_KEY", api_key)
+        await set_setting(db, "VITE_MAPTILER_KEY", api_key)
+    if static_style:
+        await set_setting(db, "MAPTILER_STATIC_STYLE", static_style)
+
+    mode_val = "1" if req.maptiler_only_mode else "0"
+    await set_setting(db, "MAPFORGE_MAPTILER_ONLY_MODE", mode_val)
+    await set_setting(db, "MAPTILER_ONLY_MODE", mode_val)
+
+    return {"status": "saved"}
+
+
+@router.delete("/maptiler-settings")
+async def clear_maptiler_settings(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Clear MapTiler settings from the database (admin only)."""
+    _require_admin(user)
+
+    for key in MAPTILER_SETTING_KEYS:
         await delete_setting(db, key)
 
     return {"status": "cleared"}

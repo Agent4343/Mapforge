@@ -30,7 +30,19 @@ limiter = Limiter(key_func=get_remote_address)
 
 @router.post("/register", response_model=AuthResponse, status_code=201)
 async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
-    """Create a new user account."""
+    """Create a new admin account (self-serve registration disabled)."""
+    admin_emails = {e.strip().lower() for e in settings.ADMIN_EMAILS if e and e.strip()}
+    if not admin_emails:
+        raise HTTPException(
+            status_code=503,
+            detail="Admin account provisioning is not configured. Set ADMIN_EMAILS first.",
+        )
+    if req.email.strip().lower() not in admin_emails:
+        raise HTTPException(
+            status_code=403,
+            detail="Self registration is disabled. Customer access is via Etsy design credits.",
+        )
+
     # Check existing
     existing = await db.execute(
         select(User).where((User.email == req.email) | (User.username == req.username))
@@ -41,7 +53,7 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
     # Create Stripe customer
     stripe_id = await create_customer(req.email, req.username)
 
-    tier = "admin" if req.email in settings.ADMIN_EMAILS else "free"
+    tier = "admin"
     user = User(
         email=req.email,
         username=req.username,
@@ -70,17 +82,18 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
 
 @router.post("/login", response_model=AuthResponse)
 async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
-    """Login and get access token."""
+    """Admin login and access token."""
     result = await db.execute(select(User).where(User.email == req.email))
     user = result.scalar_one_or_none()
 
     if not user or not verify_password(req.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    # Auto-promote admin if not already
-    if user.email in settings.ADMIN_EMAILS and user.tier != "admin":
-        user.tier = "admin"
-        await db.commit()
+    if user.tier != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Admin access only. Customers use Etsy credit links instead of login.",
+        )
 
     token = create_access_token(user.id)
     log.info(f"User logged in: {user.username}")
@@ -116,7 +129,7 @@ async def request_password_reset(
     email: str,
     db: AsyncSession = Depends(get_db),
 ):
-    """Request a password reset token. Returns the token directly (in production, email it)."""
+    """Request a password reset token for admin accounts."""
     import secrets
     from datetime import timedelta
     from app.models.db_models import PasswordResetToken
@@ -124,8 +137,8 @@ async def request_password_reset(
     result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
 
-    # Always return success to avoid email enumeration
-    if not user:
+    # Always return success to avoid email enumeration.
+    if not user or user.tier != "admin":
         return {"message": "If an account with that email exists, a reset link has been sent."}
 
     token = secrets.token_urlsafe(48)
@@ -137,10 +150,9 @@ async def request_password_reset(
     db.add(reset)
     await db.commit()
 
-    log.info(f"Password reset requested for: {user.email}")
-    # In production: send email with reset link containing token
-    # For now: return token directly so the frontend can use it
-    return {"message": "If an account with that email exists, a reset link has been sent.", "reset_token": token}
+    log.info(f"Password reset requested for admin: {user.email}")
+    # Production path should email this token to admin out-of-band.
+    return {"message": "If an account with that email exists, a reset link has been sent."}
 
 
 @router.post("/reset-password")

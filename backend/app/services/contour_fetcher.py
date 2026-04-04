@@ -10,11 +10,13 @@ import httpx
 from shapely.geometry import LineString
 
 from app.logging_config import log
+from app.services.overpass_health import overpass_health
 
 OVERPASS_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
-    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
     "https://overpass.openstreetmap.fr/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
 ]
 
 REQUEST_HEADERS = {
@@ -69,7 +71,8 @@ async def fetch_contour_lines(
     start = time.monotonic()
     budget = 25.0  # keep within Railway's request timeout budget
     _min_ep_timeout = 5.0  # minimum seconds needed for a meaningful Overpass request
-    for endpoint in OVERPASS_ENDPOINTS:
+    ordered_endpoints = overpass_health.get_endpoint_order(OVERPASS_ENDPOINTS, service="contours")
+    for endpoint in ordered_endpoints:
         elapsed = time.monotonic() - start
         if elapsed >= budget:
             log.warning(f"Contour fetch budget exhausted ({elapsed:.0f}s)")
@@ -79,16 +82,19 @@ async def fetch_contour_lines(
             break
         ep_timeout = min(20.0, remaining)
         try:
+            endpoint_started = time.monotonic()
             async with httpx.AsyncClient(timeout=ep_timeout, follow_redirects=True) as client:
                 resp = await client.post(endpoint, data={"data": query}, headers=REQUEST_HEADERS)
                 resp.raise_for_status()
                 data = resp.json()
             if data.get("elements"):
+                overpass_health.record_success(endpoint, latency_s=(time.monotonic() - endpoint_started))
                 break
             log.warning(f"Overpass contour: empty from {endpoint}")
             data = None
         except Exception as e:
             log.warning(f"Overpass contour request to {endpoint} failed: {e}")
+            overpass_health.record_failure(endpoint, reason=type(e).__name__)
             data = None
     if data is None:
         return []

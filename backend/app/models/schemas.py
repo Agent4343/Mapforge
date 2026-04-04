@@ -24,6 +24,7 @@ class CutStyle(str, Enum):
 class ExportFormat(str, Enum):
     svg = "svg"
     png = "png"
+    pdf = "pdf"
     dxf = "dxf"
     stl = "stl"
 
@@ -106,6 +107,14 @@ class SearchResult(BaseModel):
     feature_type: str
     boundingbox: list[float] = []
     has_geometry: bool = False
+    relevance_score: float = 0.0
+    match_confidence: str = "medium"
+    geometry_quality: str = "low"
+    country_code: Optional[str] = None
+    admin_region: Optional[str] = None
+    is_recommended: bool = False
+    fallback_available: bool = False
+    is_admin_boundary: bool = False
 
 
 class SearchResponse(BaseModel):
@@ -245,6 +254,7 @@ class PinGenerateRequest(BaseModel):
 
 class GenerateResponse(BaseModel):
     svg: Optional[str] = None
+    preview_png_b64: Optional[str] = None
     thumbnail_available: bool = False
     print_png_available: bool = False
     etsy_listing_available: bool = False
@@ -258,7 +268,60 @@ class GenerateResponse(BaseModel):
     layer_count: int
     print_dpi: Optional[int] = None
     print_pixels: Optional[tuple[int, int]] = None
+    geometry_fallback_used: bool = False
+    needs_location_repick: bool = False
     warnings: list[str] = Field(default_factory=list)
+
+
+class RenderEngineProfile(str, Enum):
+    basic_svg = "basic_svg"
+    professional_print = "professional_print"
+
+
+class RenderOutputFormat(str, Enum):
+    png = "png"
+    pdf = "pdf"
+
+
+# Backward-compatible alias for router/service typing.
+RenderJobOutputFormat = RenderOutputFormat
+
+
+class RenderJobCreateRequest(BaseModel):
+    file_id: str
+    formats: list[RenderOutputFormat] = Field(
+        default_factory=lambda: [RenderOutputFormat.png, RenderOutputFormat.pdf],
+        min_length=1,
+        max_length=2,
+    )
+    dpi: int = Field(600, ge=300, le=1200)
+    engine_profile: RenderEngineProfile = RenderEngineProfile.professional_print
+
+
+class RenderJobCreateResponse(BaseModel):
+    job_id: str
+    status: str
+    engine_profile: RenderEngineProfile
+    formats: list[RenderOutputFormat]
+
+
+class RenderJobOutput(BaseModel):
+    format: RenderOutputFormat
+    status: str
+    content_type: Optional[str] = None
+    download_url: Optional[str] = None
+    error: Optional[str] = None
+
+
+class RenderJobStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    file_id: str
+    engine_profile: RenderEngineProfile
+    dpi: int
+    formats: list[str]
+    outputs: list[RenderJobOutput] = Field(default_factory=list)
+    error: Optional[str] = None
 
 
 class PreviewResponse(BaseModel):

@@ -16,6 +16,24 @@ def _fixup_db_url(url: str) -> str:
     return url
 
 
+def _parse_env_bool(raw: str | None) -> bool:
+    """Parse env boolean values, tolerating common quoted forms."""
+    normalized = str(raw or "").strip()
+    if normalized.startswith(("'", '"')) and normalized.endswith(("'", '"')) and len(normalized) >= 2:
+        normalized = normalized[1:-1].strip()
+    normalized = normalized.lower()
+    return normalized in {"1", "true", "yes", "on", "enabled"}
+
+
+def _first_non_empty_env(*keys: str) -> str:
+    """Return first non-empty env var value among provided keys."""
+    for key in keys:
+        value = os.getenv(key)
+        if value is not None and str(value).strip() != "":
+            return value
+    return ""
+
+
 class Settings:
     # Database
     DATABASE_URL: str = _fixup_db_url(os.getenv("DATABASE_URL", "sqlite+aiosqlite:////tmp/mapforge.db"))
@@ -53,6 +71,17 @@ class Settings:
 
     # Etsy shop URL (shown to customers as the purchase link)
     ETSY_SHOP_URL: str = os.getenv("ETSY_SHOP_URL", "")
+
+    # MapTiler key for browser-side map preview.
+    # Supports both MAPTILER_KEY and VITE_MAPTILER_KEY for deployment flexibility.
+    MAPTILER_KEY: str = os.getenv("MAPTILER_KEY", os.getenv("VITE_MAPTILER_KEY", ""))
+    MAPTILER_STATIC_STYLE: str = os.getenv("MAPTILER_STATIC_STYLE", "streets-v2")
+    # When enabled, customer generation skips Overpass overlays and uses
+    # MapTiler-only preview/export composition to avoid Overpass instability.
+    # Backward-compatible with older MAPTILER_ONLY_MODE naming.
+    MAPFORGE_MAPTILER_ONLY_MODE: bool = _parse_env_bool(
+        _first_non_empty_env("MAPFORGE_MAPTILER_ONLY_MODE", "MAPTILER_ONLY_MODE")
+    )
 
     # Redis (optional caching layer)
     REDIS_URL: str = os.getenv("REDIS_URL", "")

@@ -10,12 +10,13 @@ import time
 import httpx
 
 from app.logging_config import log
+from app.services.overpass_health import overpass_health
 
 # Overpass endpoints in priority order — try one at a time, not all at once.
 # Racing all endpoints simultaneously looks like abuse and gets IPs blocked.
 OVERPASS_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
-    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
     "https://overpass.openstreetmap.fr/api/interpreter",
     "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
 ]
@@ -51,13 +52,12 @@ ROAD_CLASSES = {
 }
 
 # Maximum total time budget for the entire street fetch (seconds).
-# Must be tight enough that streets + water + SVG + PNG all fit
-# within Railway's ~60s proxy timeout.
 STREET_FETCH_BUDGET = 25
 
 
 async def _try_endpoint(client: httpx.AsyncClient, endpoint: str, query: str) -> dict | None:
     """Try a single Overpass endpoint. Returns valid data or None."""
+    started = time.monotonic()
     try:
         resp = await client.post(endpoint, data={"data": query}, headers=REQUEST_HEADERS)
 
@@ -70,14 +70,17 @@ async def _try_endpoint(client: httpx.AsyncClient, endpoint: str, query: str) ->
             resp = await client.post(endpoint, data={"data": query}, headers=REQUEST_HEADERS)
             if resp.status_code != 200:
                 log.warning(f"Overpass retry still failed: HTTP {resp.status_code}")
+                overpass_health.record_failure(endpoint, reason=f"http_{resp.status_code}")
                 return None
 
         if resp.status_code == 504:
             log.warning(f"Overpass 504 timeout from {endpoint}")
+            overpass_health.record_failure(endpoint, reason="http_504")
             return None
 
         if resp.status_code != 200:
             log.warning(f"Overpass HTTP {resp.status_code} from {endpoint}")
+            overpass_health.record_failure(endpoint, reason=f"http_{resp.status_code}")
             return None
 
         data = resp.json()
@@ -86,25 +89,36 @@ async def _try_endpoint(client: httpx.AsyncClient, endpoint: str, query: str) ->
             remark = data["remark"]
             log.warning(f"Overpass remark from {endpoint}: {remark[:120]}")
             if "runtime" in remark.lower() or "timeout" in remark.lower():
+                overpass_health.record_failure(endpoint, reason="remark_timeout")
                 return None
+            overpass_health.record_failure(endpoint, reason="remark")
             return None
 
         if not data.get("elements"):
             log.warning(f"Overpass returned 0 elements from {endpoint}")
             return None
 
+        overpass_health.record_success(endpoint, latency_s=(time.monotonic() - started))
         log.info(f"Overpass OK from {endpoint}: {len(data['elements'])} elements")
         return data
 
     except httpx.TimeoutException:
         log.warning(f"Overpass timeout from {endpoint}")
+        overpass_health.record_failure(endpoint, reason="timeout")
         return None
     except Exception as e:
         log.warning(f"Overpass error from {endpoint}: {type(e).__name__}: {e}")
+        overpass_health.record_failure(endpoint, reason=type(e).__name__)
         return None
 
 
-async def _fetch_with_fallback(query: str, timeout_per_endpoint: float = 20.0, total_budget: float = 30.0) -> dict | None:
+async def _fetch_with_fallback(
+    query: str,
+    timeout_per_endpoint: float = 20.0,
+    total_budget: float = 30.0,
+    second_chance_delay: float = 3.0,
+    second_chance_timeout: float = 12.0,
+) -> dict | None:
     """Try Overpass endpoints sequentially with a hard total time limit.
 
     Each endpoint gets a limited timeout. A small delay between attempts
@@ -113,7 +127,8 @@ async def _fetch_with_fallback(query: str, timeout_per_endpoint: float = 20.0, t
     """
     start = time.monotonic()
     async with httpx.AsyncClient(timeout=timeout_per_endpoint, follow_redirects=True) as client:
-        for i, endpoint in enumerate(OVERPASS_ENDPOINTS):
+        ordered_endpoints = overpass_health.get_endpoint_order(OVERPASS_ENDPOINTS, service="streets")
+        for i, endpoint in enumerate(ordered_endpoints):
             elapsed = time.monotonic() - start
             if elapsed >= total_budget:
                 log.warning(f"Street fetch budget exhausted ({elapsed:.0f}s)")
@@ -134,10 +149,12 @@ async def _fetch_with_fallback(query: str, timeout_per_endpoint: float = 20.0, t
                 return result
 
     # Second chance: wait and retry the primary endpoint
-    log.warning("All Overpass endpoints failed for streets — waiting 3s for second chance")
-    await asyncio.sleep(3.0)
-    async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
-        result = await _try_endpoint(client, OVERPASS_ENDPOINTS[0], query)
+    log.warning(f"All Overpass endpoints failed for streets — waiting {second_chance_delay:.1f}s for second chance")
+    await asyncio.sleep(second_chance_delay)
+    async with httpx.AsyncClient(timeout=second_chance_timeout, follow_redirects=True) as client:
+        second_chance = overpass_health.get_endpoint_order(OVERPASS_ENDPOINTS, service="streets")
+        endpoint = second_chance[0] if second_chance else OVERPASS_ENDPOINTS[0]
+        result = await _try_endpoint(client, endpoint, query)
         if result is not None:
             log.info("Second-chance street fetch succeeded")
             return result
@@ -170,6 +187,7 @@ async def fetch_streets(
     include_minor: bool = True,
     osm_id: int | None = None,
     osm_type: str | None = None,
+    fast_mode: bool = False,
 ) -> dict:
     """Fetch street network for a geographic area.
 
@@ -200,8 +218,22 @@ async def fetch_streets(
     data = None
 
     if include_minor:
-        # Try all roads with ~25s budget
-        data = await _fetch_with_fallback(build_q(all_filter), timeout_per_endpoint=15.0, total_budget=20.0)
+        if fast_mode:
+            data = await _fetch_with_fallback(
+                build_q(all_filter),
+                timeout_per_endpoint=8.0,
+                total_budget=10.0,
+                second_chance_delay=1.5,
+                second_chance_timeout=6.0,
+            )
+        else:
+            data = await _fetch_with_fallback(
+                build_q(all_filter),
+                timeout_per_endpoint=15.0,
+                total_budget=20.0,
+                second_chance_delay=2.5,
+                second_chance_timeout=10.0,
+            )
 
         # Fall back to major roads if all roads failed
         if data is None:
@@ -209,9 +241,39 @@ async def fetch_streets(
             remaining = STREET_FETCH_BUDGET - elapsed
             if remaining > 5:
                 log.warning(f"All-roads fetch failed ({elapsed:.0f}s) — trying major only")
-                data = await _fetch_with_fallback(build_q(major_filter), timeout_per_endpoint=10.0, total_budget=min(remaining, 15.0))
+                if fast_mode:
+                    data = await _fetch_with_fallback(
+                        build_q(major_filter),
+                        timeout_per_endpoint=6.0,
+                        total_budget=min(remaining, 8.0),
+                        second_chance_delay=1.0,
+                        second_chance_timeout=5.0,
+                    )
+                else:
+                    data = await _fetch_with_fallback(
+                        build_q(major_filter),
+                        timeout_per_endpoint=10.0,
+                        total_budget=min(remaining, 15.0),
+                        second_chance_delay=2.0,
+                        second_chance_timeout=8.0,
+                    )
     else:
-        data = await _fetch_with_fallback(build_q(major_filter), timeout_per_endpoint=15.0, total_budget=20.0)
+        if fast_mode:
+            data = await _fetch_with_fallback(
+                build_q(major_filter),
+                timeout_per_endpoint=8.0,
+                total_budget=10.0,
+                second_chance_delay=1.5,
+                second_chance_timeout=6.0,
+            )
+        else:
+            data = await _fetch_with_fallback(
+                build_q(major_filter),
+                timeout_per_endpoint=15.0,
+                total_budget=20.0,
+                second_chance_delay=2.5,
+                second_chance_timeout=10.0,
+            )
 
     elapsed = time.monotonic() - start
     if data is None:

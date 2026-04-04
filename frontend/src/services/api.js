@@ -4,15 +4,78 @@
 
 const API_BASE = "/api/v1";
 const TIMEOUT_MS = 30000;
+const GENERATE_TIMEOUT_MS = 300000;
+const DOWNLOAD_TIMEOUT_MS = 180000;
+const ENV_API_ORIGIN = (import.meta.env.VITE_API_URL || "").trim().replace(/\/+$/, "");
+const ENV_API_FALLBACK_ORIGINS = (import.meta.env.VITE_API_FALLBACK_URLS || "")
+  .split(",")
+  .map((v) => v.trim().replace(/\/+$/, ""))
+  .filter(Boolean);
 
-let authToken = localStorage.getItem("mapforge_token") || null;
+// Safari private browsing can throw on localStorage access at module load.
+function safeStorageGet(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeStorageSet(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {}
+}
+
+function safeStorageRemove(key) {
+  try {
+    localStorage.removeItem(key);
+  } catch {}
+}
+
+let authToken = safeStorageGet("mapforge_token") || null;
+
+function buildApiFallbackOrigins() {
+  const origins = [];
+  if (ENV_API_ORIGIN) {
+    origins.push(ENV_API_ORIGIN);
+  }
+  origins.push(...ENV_API_FALLBACK_ORIGINS);
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    const protocol = window.location.protocol || "http:";
+
+    // Local/dev direct backend fallback.
+    if (host === "localhost" || host === "127.0.0.1") {
+      origins.push(`${protocol}//${host}:8000`);
+    }
+
+    // Common deployment topology fallback: app.example.com -> api.example.com
+    if (host.startsWith("www.")) {
+      origins.push(`${protocol}//api.${host.slice(4)}`);
+    } else {
+      origins.push(`${protocol}//api.${host}`);
+    }
+
+    // Common service-name split fallback: "frontend" host segment -> "backend".
+    if (host.includes("frontend")) {
+      origins.push(`${protocol}//${host.replace("frontend", "backend")}`);
+    }
+
+    // Project default hosted backend (used by existing backend defaults).
+    origins.push("https://mapforge-production.up.railway.app");
+  }
+  return [...new Set(origins)];
+}
+
+const API_FALLBACK_ORIGINS = buildApiFallbackOrigins();
 
 function setToken(token) {
   authToken = token;
   if (token) {
-    localStorage.setItem("mapforge_token", token);
+    safeStorageSet("mapforge_token", token);
   } else {
-    localStorage.removeItem("mapforge_token");
+    safeStorageRemove("mapforge_token");
   }
 }
 
@@ -36,27 +99,66 @@ function extractErrorMessage(detail, fallback) {
 }
 
 async function fetchWithTimeout(url, options = {}) {
-  const controller = new AbortController();
   const timeoutMs = options.timeout || TIMEOUT_MS;
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  delete options.timeout;
+  const requestOptions = { ...options };
+  delete requestOptions.timeout;
 
-  const headers = { ...options.headers };
-  if (authToken) {
-    headers["Authorization"] = `Bearer ${authToken}`;
-  }
-
-  try {
-    const resp = await fetch(url, { ...options, headers, signal: controller.signal });
-    return resp;
-  } catch (err) {
-    if (err.name === "AbortError") {
-      throw new Error("Request timed out. Please check your connection and try again.");
+  const candidateUrls = [url];
+  if (typeof url === "string" && url.startsWith("/api/")) {
+    for (const origin of API_FALLBACK_ORIGINS) {
+      const candidate = `${origin}${url}`;
+      if (!candidateUrls.includes(candidate)) {
+        candidateUrls.push(candidate);
+      }
     }
-    throw new Error("Network error. Please check your internet connection and try again.");
-  } finally {
-    clearTimeout(timeout);
   }
+
+  let lastError = null;
+  for (let i = 0; i < candidateUrls.length; i += 1) {
+    const candidateUrl = candidateUrls[i];
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const headers = { ...requestOptions.headers };
+    if (authToken) {
+      headers["Authorization"] = `Bearer ${authToken}`;
+    }
+
+    try {
+      return await fetch(candidateUrl, { ...requestOptions, headers, signal: controller.signal });
+    } catch (err) {
+      if (err.name === "AbortError") {
+        lastError = err;
+        const isFinalAttempt = i === candidateUrls.length - 1;
+        if (isFinalAttempt) {
+          const endpoint = typeof url === "string" ? String(url).split("?")[0] : "API request";
+          const attempted = candidateUrls
+            .map((u) => (typeof u === "string" ? String(u).split("?")[0] : "API request"))
+            .join(", ");
+          throw new Error(
+            `Request timed out while calling ${endpoint}. Please check your connection and try again. Tried: ${attempted}`
+          );
+        }
+        continue;
+      }
+      lastError = err;
+      const isFinalAttempt = i === candidateUrls.length - 1;
+      if (isFinalAttempt) {
+        const endpoint = typeof url === "string" ? String(url).split("?")[0] : "API request";
+        const reason = err?.message ? ` (${err.message})` : "";
+        const attempted = candidateUrls
+          .map((u) => (typeof u === "string" ? String(u).split("?")[0] : "API request"))
+          .join(", ");
+        throw new Error(
+          `Network error while calling ${endpoint}${reason}. Please check your connection and API server. Tried: ${attempted}`
+        );
+      }
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  const reason = lastError?.message ? ` (${lastError.message})` : "";
+  throw new Error(`Network error while calling API request${reason}. Please check your connection and API server.`);
 }
 
 // --- Auth ---
@@ -102,9 +204,17 @@ async function getProfile() {
 }
 
 async function requestPasswordReset(email) {
-  const resp = await fetchWithTimeout(`${API_BASE}/auth/request-reset?email=${encodeURIComponent(email)}`, {
+  let resp = await fetchWithTimeout(`${API_BASE}/auth/request-reset`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
   });
+  if (resp.status === 404 || resp.status === 405 || resp.status === 422) {
+    // Backward compatibility for older backend deployments.
+    resp = await fetchWithTimeout(`${API_BASE}/auth/request-reset?email=${encodeURIComponent(email)}`, {
+      method: "POST",
+    });
+  }
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
     throw new Error(extractErrorMessage(err.detail, "Reset request failed"));
@@ -113,9 +223,18 @@ async function requestPasswordReset(email) {
 }
 
 async function resetPassword(token, newPassword) {
-  const resp = await fetchWithTimeout(`${API_BASE}/auth/reset-password?token=${encodeURIComponent(token)}&new_password=${encodeURIComponent(newPassword)}`, {
+  let resp = await fetchWithTimeout(`${API_BASE}/auth/reset-password`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, new_password: newPassword }),
   });
+  if (resp.status === 404 || resp.status === 405 || resp.status === 422) {
+    // Backward compatibility for older backend deployments.
+    resp = await fetchWithTimeout(
+      `${API_BASE}/auth/reset-password?token=${encodeURIComponent(token)}&new_password=${encodeURIComponent(newPassword)}`,
+      { method: "POST" }
+    );
+  }
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
     throw new Error(extractErrorMessage(err.detail, "Reset failed"));
@@ -146,7 +265,10 @@ async function searchLocations(query, country = "ca") {
   const resp = await fetchWithTimeout(
     `${API_BASE}/search?q=${encodeURIComponent(query)}&country=${encodeURIComponent(country)}&limit=10`
   );
-  if (!resp.ok) throw new Error(`Search failed: ${resp.statusText}`);
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Search failed"));
+  }
   return resp.json();
 }
 
@@ -157,7 +279,7 @@ async function generateSVG(params) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
-    timeout: 180000,
+    timeout: GENERATE_TIMEOUT_MS,
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
@@ -171,7 +293,7 @@ async function generatePin(params) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
-    timeout: 180000,
+    timeout: GENERATE_TIMEOUT_MS,
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: resp.statusText }));
@@ -221,8 +343,13 @@ async function downloadThumbnail(fileId) {
 }
 
 async function downloadPrintPNG(fileId) {
-  const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}?format=png`);
-  if (!resp.ok) throw new Error("Print PNG download failed");
+  const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}?format=png`, {
+    timeout: DOWNLOAD_TIMEOUT_MS,
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Print PNG download failed"));
+  }
   return resp.blob();
 }
 
@@ -258,6 +385,12 @@ async function downloadEtsyPackage(fileId) {
 async function getPrintSizes() {
   const resp = await fetchWithTimeout(`${API_BASE}/print-sizes`);
   if (!resp.ok) throw new Error("Failed to load print sizes");
+  return resp.json();
+}
+
+async function getPublicConfig() {
+  const resp = await fetchWithTimeout(`${API_BASE}/config`);
+  if (!resp.ok) return {};
   return resp.json();
 }
 
@@ -557,6 +690,45 @@ async function clearEtsySettings() {
   return resp.json();
 }
 
+// --- Admin MapTiler Settings ---
+
+async function getMapTilerSettings() {
+  const resp = await fetchWithTimeout(`${API_BASE}/admin/maptiler-settings`);
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Failed to load MapTiler settings"));
+  }
+  return resp.json();
+}
+
+async function saveMapTilerSettings(apiKey, staticStyle, maptilerOnlyMode) {
+  const resp = await fetchWithTimeout(`${API_BASE}/admin/maptiler-settings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      api_key: apiKey,
+      static_style: staticStyle,
+      maptiler_only_mode: Boolean(maptilerOnlyMode),
+    }),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Failed to save MapTiler settings"));
+  }
+  return resp.json();
+}
+
+async function clearMapTilerSettings() {
+  const resp = await fetchWithTimeout(`${API_BASE}/admin/maptiler-settings`, {
+    method: "DELETE",
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Failed to clear MapTiler settings"));
+  }
+  return resp.json();
+}
+
 // --- Design Credits (Etsy-paid customers) ---
 
 async function redeemCredit(token) {
@@ -604,6 +776,7 @@ export {
   searchLocations, generateSVG, generatePin, batchGenerate,
   downloadSVG, downloadDXF, downloadSTL, downloadThumbnail, downloadPrintPNG,
   downloadEtsyListing, downloadEtsyPackage, downloadPreview, downloadWallMockup, getPrintSizes,
+  getPublicConfig,
   getLibrary, deleteLibraryFile,
   browseMarketplace, createListing, purchaseListing,
   getMyPurchases, updateListing, removeListing,
@@ -612,5 +785,6 @@ export {
   getEtsyStatus, connectEtsy, disconnectEtsy, publishToEtsy,
   getShowcaseCities, showcasePublish,
   getEtsyDebug, getAdminStats, getEtsySettings, saveEtsySettings, clearEtsySettings,
+  getMapTilerSettings, saveMapTilerSettings, clearMapTilerSettings,
   redeemCredit, generateForCredit, getCreditStatus, downloadCreditFile,
 };

@@ -1,5 +1,6 @@
 const COLOR_THEMES = [
   { value: "classic", label: "Classic", bg: "#faf8f5", road: "#8b7355", land: "#4a7c59" },
+  { value: "gallery_premium", label: "Gallery Premium", bg: "#f7f2e7", road: "#2b2217", land: "#e2d4bc" },
   { value: "modern_dark", label: "Modern Dark", bg: "#1a1a2e", road: "#e2e8f0", land: "#2d3748" },
   { value: "rose_gold", label: "Rose Gold", bg: "#fdf2f0", road: "#8b6f66", land: "#d4a59a" },
   { value: "midnight", label: "Midnight Blue", bg: "#0f1923", road: "#c9d6df", land: "#1b3a4b" },
@@ -26,9 +27,96 @@ const SUBTITLE_PRESETS = [
   "Forever & Always",
 ];
 
+const MAP_ART_PRESETS = [
+  {
+    id: "gallery_premium",
+    label: "Gallery Premium",
+    hint: "Museum-grade neutral palette with polished typography",
+    updates: {
+      colorTheme: "gallery_premium",
+      posterLayout: "classic",
+      fontFamily: "serif",
+      borderStyle: "thin",
+      showCoordinates: true,
+      showCompass: true,
+      showScaleBar: true,
+      gradientWater: true,
+      landShadow: true,
+    },
+  },
+  {
+    id: "gallery_minimal",
+    label: "Gallery Minimal",
+    hint: "Clean Scandinavian style for modern homes",
+    updates: {
+      colorTheme: "minimal",
+      posterLayout: "minimal",
+      fontFamily: "sans",
+      borderStyle: "thin",
+      showCoordinates: false,
+      showCompass: false,
+      showScaleBar: false,
+      gradientWater: false,
+      landShadow: false,
+    },
+  },
+  {
+    id: "vintage_romance",
+    label: "Vintage Romance",
+    hint: "Warm gift style with classic typography",
+    updates: {
+      colorTheme: "vintage_map",
+      posterLayout: "vintage",
+      fontFamily: "serif",
+      borderStyle: "ornate",
+      showCoordinates: true,
+      showCompass: true,
+      showScaleBar: false,
+      gradientWater: true,
+      landShadow: true,
+    },
+  },
+  {
+    id: "coastal_calm",
+    label: "Coastal Calm",
+    hint: "Airy blue palette perfect for lake and ocean art",
+    updates: {
+      colorTheme: "ocean",
+      posterLayout: "editorial",
+      fontFamily: "condensed",
+      borderStyle: "none",
+      showCoordinates: true,
+      showCompass: false,
+      showScaleBar: true,
+      gradientWater: true,
+      landShadow: true,
+    },
+  },
+  {
+    id: "dark_bold",
+    label: "Dark Bold",
+    hint: "High-contrast dramatic wall piece",
+    updates: {
+      colorTheme: "midnight",
+      posterLayout: "bold",
+      fontFamily: "display",
+      borderStyle: "double",
+      showCoordinates: false,
+      showCompass: true,
+      showScaleBar: true,
+      gradientWater: true,
+      landShadow: true,
+    },
+  },
+];
+
 export default function CustomizePanel({ config, onChange, user }) {
   function update(key, value) {
     onChange({ ...config, [key]: value });
+  }
+
+  function applyMapArtPreset(preset) {
+    onChange({ ...config, ...preset.updates });
   }
 
   const isPro = user?.tier === "pro" || user?.tier === "admin";
@@ -75,6 +163,30 @@ export default function CustomizePanel({ config, onChange, user }) {
               </button>
             ))}
           </div>
+        </div>
+      )}
+
+      {isPrint && (
+        <div className="control-group">
+          <label>Quick Style Presets</label>
+          <div className="preset-chips">
+            {MAP_ART_PRESETS.map((preset) => {
+              const active = Object.entries(preset.updates).every(([key, value]) => config[key] === value);
+              return (
+                <button
+                  key={preset.id}
+                  className={`preset-chip${active ? " active" : ""}`}
+                  onClick={() => applyMapArtPreset(preset)}
+                  title={preset.hint}
+                >
+                  {preset.label}
+                </button>
+              );
+            })}
+          </div>
+          <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: "6px 0 0" }}>
+            Apply curated combinations of theme, layout, typography, and map elements.
+          </p>
         </div>
       )}
 

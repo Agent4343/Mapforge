@@ -6,17 +6,57 @@ Uses sequential endpoint fallback with proper identification headers.
 """
 
 import asyncio
+import time
+import math
 
 import httpx
 
 from app.logging_config import log
+from app.services.overpass_health import overpass_health
 
 OVERPASS_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
-    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
     "https://overpass.openstreetmap.fr/api/interpreter",
     "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
 ]
+
+
+def _polygon_area_wgs84(coords: list[tuple[float, float]]) -> float:
+    """Approximate polygon area in degree² using planar shoelace."""
+    if len(coords) < 4:
+        return 0.0
+    area = 0.0
+    pts = coords
+    if pts[0] != pts[-1]:
+        pts = pts + [pts[0]]
+    for i in range(len(pts) - 1):
+        x1, y1 = pts[i]
+        x2, y2 = pts[i + 1]
+        area += (x1 * y2) - (x2 * y1)
+    return abs(area) * 0.5
+
+
+def _is_reasonable_relation_water_polygon(
+    ring: list[tuple[float, float]],
+    bbox_area_deg2: float,
+) -> bool:
+    """Drop obviously malformed relation polygons that engulf the whole bbox.
+
+    Overpass multipolygon relations can occasionally include unmerged/incomplete
+    outers that produce giant envelopes around the target region. Those are not
+    real water bodies and look like the artifact in user screenshots.
+    """
+    if len(ring) < 4:
+        return False
+    area = _polygon_area_wgs84(ring)
+    if area <= 0:
+        return False
+    # Ignore polygons that are too large relative to the request bbox.
+    # Real lakes/coastal insets should be materially smaller than province bbox.
+    if bbox_area_deg2 > 0 and area > bbox_area_deg2 * 0.35:
+        return False
+    return True
 
 REQUEST_HEADERS = {
     "User-Agent": "MapForgeCNC/1.0 (https://mapforge-production.up.railway.app; mapforge map generator)",
@@ -28,6 +68,7 @@ async def _try_endpoint(client: httpx.AsyncClient, endpoint: str, query: str) ->
 
     On 429 (rate limited), waits for the retry-after period and retries once.
     """
+    started = time.monotonic()
     try:
         resp = await client.post(endpoint, data={"data": query}, headers=REQUEST_HEADERS)
 
@@ -39,44 +80,55 @@ async def _try_endpoint(client: httpx.AsyncClient, endpoint: str, query: str) ->
             resp = await client.post(endpoint, data={"data": query}, headers=REQUEST_HEADERS)
             if resp.status_code != 200:
                 log.warning(f"Overpass retry still failed: HTTP {resp.status_code}")
+                overpass_health.record_failure(endpoint, reason=f"http_{resp.status_code}")
                 return None
 
         if resp.status_code != 200:
             log.warning(f"Overpass HTTP {resp.status_code} from {endpoint}")
+            overpass_health.record_failure(endpoint, reason=f"http_{resp.status_code}")
             return None
 
         data = resp.json()
 
         if "remark" in data:
             log.warning(f"Overpass remark from {endpoint}: {data['remark'][:120]}")
+            overpass_health.record_failure(endpoint, reason="remark")
             return None
 
         if not data.get("elements"):
             log.warning(f"Overpass returned 0 elements from {endpoint}")
             return None
 
+        overpass_health.record_success(endpoint, latency_s=(time.monotonic() - started))
         log.info(f"Overpass OK from {endpoint}: {len(data['elements'])} elements")
         return data
 
     except httpx.TimeoutException:
         log.warning(f"Overpass timeout from {endpoint}")
+        overpass_health.record_failure(endpoint, reason="timeout")
         return None
     except Exception as e:
         log.warning(f"Overpass error from {endpoint}: {type(e).__name__}: {e}")
+        overpass_health.record_failure(endpoint, reason=type(e).__name__)
         return None
 
 
-async def _fetch_overpass_with_retry(query: str) -> dict | None:
+async def _fetch_overpass_with_retry(
+    query: str,
+    *,
+    max_budget_s: float = 16.0,
+    per_endpoint_timeout_s: float = 10.0,
+) -> dict | None:
     """Try Overpass endpoints sequentially with a total time budget.
 
     Small delay between attempts to avoid hammering busy endpoints.
     """
-    import time
     start = time.monotonic()
-    budget = 25.0  # slightly more generous budget for reliability
+    budget = max(8.0, max_budget_s)
 
-    async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-        for i, endpoint in enumerate(OVERPASS_ENDPOINTS):
+    async with httpx.AsyncClient(timeout=per_endpoint_timeout_s, follow_redirects=True) as client:
+        ordered_endpoints = overpass_health.get_endpoint_order(OVERPASS_ENDPOINTS, service="water")
+        for i, endpoint in enumerate(ordered_endpoints):
             elapsed = time.monotonic() - start
             if elapsed >= budget:
                 break
@@ -88,17 +140,18 @@ async def _fetch_overpass_with_retry(query: str) -> dict | None:
             if i > 0:
                 await asyncio.sleep(1.0)
 
-            client.timeout = httpx.Timeout(min(15.0, remaining))
+            client.timeout = httpx.Timeout(min(per_endpoint_timeout_s, remaining))
             result = await _try_endpoint(client, endpoint, query)
             if result is not None:
                 return result
 
-    # Second chance: wait 3 seconds and try the primary endpoint one more time.
-    # Often Overpass is just momentarily busy and recovers quickly.
-    log.warning("All Overpass endpoints failed for water — waiting 3s for second chance")
-    await asyncio.sleep(3.0)
-    async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
-        result = await _try_endpoint(client, OVERPASS_ENDPOINTS[0], query)
+    # Second chance: short cooldown then retry the primary endpoint.
+    log.warning("All Overpass endpoints failed for water — waiting 1.5s for second chance")
+    await asyncio.sleep(1.5)
+    async with httpx.AsyncClient(timeout=max(6.0, per_endpoint_timeout_s * 0.7), follow_redirects=True) as client:
+        second_chance = overpass_health.get_endpoint_order(OVERPASS_ENDPOINTS, service="water")
+        endpoint = second_chance[0] if second_chance else OVERPASS_ENDPOINTS[0]
+        result = await _try_endpoint(client, endpoint, query)
         if result is not None:
             log.info("Second-chance water fetch succeeded")
             return result
@@ -109,6 +162,8 @@ async def _fetch_overpass_with_retry(query: str) -> dict | None:
 
 async def fetch_water_features(
     bbox: tuple[float, float, float, float],
+    *,
+    fast_mode: bool = False,
 ) -> dict:
     """Fetch water features within bounding box.
 
@@ -120,6 +175,7 @@ async def fetch_water_features(
         as lists of (coords_list, water_type, name) tuples
     """
     south, west, north, east = bbox
+    bbox_area_deg2 = max(0.0, (north - south) * (east - west))
 
     # Simplified query — combine water selectors to reduce Overpass load.
     # Using a shorter timeout (30s instead of 45s) to fail faster and try
@@ -128,7 +184,18 @@ async def fetch_water_features(
 
     log.info(f"Fetching water features for bbox: {bbox}")
 
-    data = await _fetch_overpass_with_retry(query)
+    if fast_mode:
+        data = await _fetch_overpass_with_retry(
+            query,
+            max_budget_s=12.0,
+            per_endpoint_timeout_s=8.0,
+        )
+    else:
+        data = await _fetch_overpass_with_retry(
+            query,
+            max_budget_s=18.0,
+            per_endpoint_timeout_s=10.0,
+        )
     if data is None:
         return {"water_polygons": [], "waterways": []}
 
@@ -199,7 +266,8 @@ async def fetch_water_features(
             if len(ring) >= 4:
                 if ring[0] != ring[-1]:
                     ring.append(ring[0])
-                water_polygons.append((ring, water_type, name))
+                if _is_reasonable_relation_water_polygon(ring, bbox_area_deg2):
+                    water_polygons.append((ring, water_type, name))
 
     log.info(f"Fetched {len(water_polygons)} water polygons, {len(waterways)} waterways")
     return {"water_polygons": water_polygons, "waterways": waterways}

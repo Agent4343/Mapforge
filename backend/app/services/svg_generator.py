@@ -84,6 +84,85 @@ POSTER_LAYOUTS = {
 }
 
 
+def _get_vintage_density_profile(product_type: str, total_roads: int) -> dict[str, float | int | str]:
+    """Choose per-scale density tuning for vintage render output.
+
+    The goal is consistent premium-looking prints across sparse and dense places:
+    - sparse areas keep enough structure to avoid looking unfinished
+    - dense areas filter low-value micro streets to reduce visual noise
+    """
+    # (sparse_cutoff, dense_cutoff)
+    cutoffs = {
+        "city": (140, 520),
+        "community": (95, 300),
+        "province": (80, 240),
+        "park": (90, 260),
+    }
+    sparse_cutoff, dense_cutoff = cutoffs.get(product_type, (100, 320))
+
+    if total_roads <= sparse_cutoff:
+        band = "sparse"
+    elif total_roads >= dense_cutoff:
+        band = "dense"
+    else:
+        band = "balanced"
+
+    # Minimum segment-length filter for minor roads (in mm).
+    # Sparse maps keep shorter segments for extra texture.
+    if band == "sparse":
+        min_minor_len_factor = 0.0032 if product_type in {"city", "community"} else 0.004
+    elif band == "dense":
+        min_minor_len_factor = 0.0068 if product_type in {"city", "community"} else 0.009
+    else:
+        min_minor_len_factor = 0.0048 if product_type in {"city", "community"} else 0.006
+
+    return {
+        "band": band,
+        "sparse_cutoff": sparse_cutoff,
+        "dense_cutoff": dense_cutoff,
+        "min_minor_len_factor": min_minor_len_factor,
+    }
+
+
+def _coords_bounds(coords: list[tuple[float, float]]) -> tuple[float, float, float, float] | None:
+    if not coords:
+        return None
+    xs = [p[0] for p in coords]
+    ys = [p[1] for p in coords]
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def _merge_bounds(
+    a: tuple[float, float, float, float] | None,
+    b: tuple[float, float, float, float] | None,
+) -> tuple[float, float, float, float] | None:
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return (
+        min(a[0], b[0]),
+        min(a[1], b[1]),
+        max(a[2], b[2]),
+        max(a[3], b[3]),
+    )
+
+
+def _street_footprint_bounds(streets_data: dict | None, transform: dict | None) -> tuple[float, float, float, float] | None:
+    """Return bounds of rendered street network in board coordinates (mm)."""
+    if not streets_data:
+        return None
+
+    bounds: tuple[float, float, float, float] | None = None
+    for key in ("major_roads", "minor_roads"):
+        for coords, _road_class, _width, _name in streets_data.get(key, []):
+            if len(coords) < 2:
+                continue
+            board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
+            bounds = _merge_bounds(bounds, _coords_bounds(board_coords))
+    return bounds
+
+
 def generate_svg(
     processed: dict,
     location_name: str,
@@ -386,13 +465,17 @@ def _generate_print_svg(
     and clean typography matching premium city map wall art.
 
     Supports 5 poster layouts: classic, minimal, editorial, bold, vintage.
-    When color_theme is "vintage_map", uses a special monochrome line-art
-    renderer with SVG paper texture for an aged parchment look.
+    The Gallery Premium theme uses a dedicated monochrome line-art renderer
+    with SVG paper texture for an aged parchment look.
     Professional map elements: compass rose, scale bar, gradient water, land shadow.
     """
-    # Vintage map: monochrome line art on aged parchment — completely
-    # different rendering path from the standard colored poster themes.
-    if color_theme == "vintage_map":
+    from app.services.thumbnail_generator import get_poster_theme, normalize_color_theme
+
+    resolved_theme = normalize_color_theme(color_theme)
+
+    # Gallery Premium uses the dedicated vintage renderer. Vintage Map now
+    # stays on the standard print renderer so detail density matches Classic.
+    if resolved_theme in {"gallery_premium"}:
         return _generate_vintage_map_svg(
             processed=processed,
             location_name=location_name,
@@ -405,11 +488,11 @@ def _generate_print_svg(
             include_bleed=include_bleed,
             include_crop_marks=include_crop_marks,
             show_compass=show_compass,
+            product_type=product_type,
+            style_variant=resolved_theme,
         )
 
-    from app.services.thumbnail_generator import get_poster_theme
-
-    theme = get_poster_theme(color_theme)
+    theme = get_poster_theme(resolved_theme)
     board_w, board_h = processed["board_mm"]
     polygons = processed["polygons"]
     latlon = center_latlon or processed.get("center_latlon", (0, 0))
@@ -440,10 +523,26 @@ def _generate_print_svg(
     if layout.get("force_font"):
         font_family = layout["force_font"]
 
+    has_city_streets = (
+        product_type in ("city", "community")
+        and bool(streets_data and (streets_data.get("major_roads") or streets_data.get("minor_roads")))
+    )
+    has_linework = bool(
+        (streets_data and (streets_data.get("major_roads") or streets_data.get("minor_roads")))
+        or (water_data and (water_data.get("water_polygons") or water_data.get("waterways")))
+        or contour_data
+    )
+
     # Poster layout dimensions from layout config
     mat_pct = layout["mat_pct"]
     text_area_pct = layout["text_area_pct"]
     full_bleed_map = layout.get("full_bleed_map", False)
+    # Universal sellable composition: reduce dead whitespace for any map that
+    # has visible linework, while preserving enough margin for print framing.
+    if has_linework and not full_bleed_map:
+        mat_pct = max(0.03, mat_pct * 0.86)
+        if layout.get("text_position") == "bottom":
+            text_area_pct = max(0.12, text_area_pct * 0.88)
 
     if full_bleed_map:
         # Full-bleed: map fills entire board, text overlaid
@@ -549,7 +648,7 @@ def _generate_print_svg(
     lines.append(svg_attrs)
 
     # Metadata
-    lines.append(f"  <!-- MapForge Print Poster v1.0 | Theme: {color_theme} -->")
+    lines.append(f"  <!-- MapForge Print Poster v1.0 | Theme: {resolved_theme} -->")
     lines.append(f"  <!-- Location: {_escape_xml(location_name)} -->")
     lines.append("  <!-- Geographic data: © OpenStreetMap contributors (ODbL) -->")
     if include_bleed:
@@ -584,6 +683,12 @@ def _generate_print_svg(
     lines.append("  </g>")
     lines.append("")
 
+    # Product group flags (used for clipping/fill logic)
+    is_street_map = product_type in ("city", "community", "name_sign")
+    is_city_community = product_type in ("city", "community")
+    has_streets = bool(streets_data and (streets_data.get("major_roads") or streets_data.get("minor_roads")))
+    city_sellable_mode = is_city_community and has_streets
+
     # Clip path for map content (keeps streets/water inside the map area)
     lines.append("  <defs>")
     lines.append(
@@ -600,7 +705,7 @@ def _generate_print_svg(
         for hole in holes:
             path_d += " " + _coords_to_path(hole)
         boundary_paths.append(path_d)
-    if boundary_paths:
+    if boundary_paths and not is_city_community:
         lines.append('    <clipPath id="boundary_clip">')
         for bp in boundary_paths:
             lines.append(f'      <path d="{bp}" fill-rule="evenodd"/>')
@@ -633,12 +738,9 @@ def _generate_print_svg(
     #
     # For lake/province/park maps, the filled polygon IS the visual —
     # the shape of the lake or province is the main content.
-    is_street_map = product_type in ("city", "community", "name_sign")
-    has_streets = streets_data and (streets_data.get("major_roads") or streets_data.get("minor_roads"))
-
     # Land shadow — render BEFORE geography so it appears behind the land mass
     # Sparse/rural areas get a deeper shadow for more visual depth
-    if land_shadow and not full_bleed_map:
+    if land_shadow and not full_bleed_map and not city_sellable_mode:
         shadow_opacity = "0.18" if is_sparse_area else "0.12"
         lines.append(f'    <g id="land_shadow" opacity="{shadow_opacity}">')
         shadow_scale = 0.006 if is_sparse_area else 0.004
@@ -656,7 +758,12 @@ def _generate_print_svg(
         layer_count += 1
 
     lines.append('    <g id="geography_fill">')
-    if is_street_map:
+    if city_sellable_mode:
+        # City/community sellable mode:
+        # do not render enclosing administrative polygon shell;
+        # composition is carried by street/network linework.
+        pass
+    elif is_street_map:
         # Street maps: fill the boundary polygon with land color to create
         # visible contrast between the city area and the white mat border.
         # Streets and water are layered on top.
@@ -688,7 +795,7 @@ def _generate_print_svg(
 
     # Subtle texture overlay for sparse/rural areas — fills empty land with
     # a fine dot pattern so the map doesn't look bare when there are few streets
-    if is_sparse_area:
+    if is_sparse_area and not city_sellable_mode:
         lines.append('    <g id="land_texture_overlay">')
         for exterior, holes in polygons:
             path_d = _coords_to_path(exterior)
@@ -702,13 +809,24 @@ def _generate_print_svg(
 
     # Clip streets and water to the boundary polygon so they don't bleed
     # outside the geographic area (applies to cities AND provinces with streets)
-    clip_to_boundary = boundary_paths and (is_street_map or (streets_data and (streets_data.get("major_roads") or streets_data.get("minor_roads"))))
+    clip_to_boundary = (
+        (not is_city_community)
+        and boundary_paths
+        and (is_street_map or (streets_data and (streets_data.get("major_roads") or streets_data.get("minor_roads"))))
+    )
     if clip_to_boundary:
         lines.append('    <g clip-path="url(#boundary_clip)">')
 
     # Water features — filled with water color (optional gradient)
     if water_data:
-        _render_print_water(lines, water_data, processed, theme, gradient=gradient_water)
+        _render_print_water(
+            lines,
+            water_data,
+            processed,
+            theme,
+            gradient=gradient_water,
+            street_mode=city_sellable_mode,
+        )
 
     # Contour bands
     if contour_data:
@@ -769,10 +887,6 @@ def _generate_print_svg(
         )
         lines.append("    </g>")
 
-    # Compass rose
-    if show_compass:
-        _add_compass_rose(lines, map_x, map_y, map_w, map_h, theme)
-
     # Scale bar
     if show_scale_bar and latlon:
         _add_scale_bar(lines, map_x, map_y, map_w, map_h, latlon, processed, theme)
@@ -781,21 +895,34 @@ def _generate_print_svg(
     lines.append("")
 
     # Map frame and text — depends on layout
-    if layout.get("map_frame", False) and not full_bleed_map:
+    if (layout.get("map_frame", False) or city_sellable_mode) and not full_bleed_map:
         inset = 1.5
+        frame_color = theme["land_stroke"]
+        frame_primary_w = "0.6"
+        frame_secondary_w = "0.36"
+        frame_secondary_opacity = "0.5"
+        if city_sellable_mode:
+            frame_color = theme.get("text_secondary", theme["land_stroke"])
+            frame_primary_w = "0.9"
+            frame_secondary_w = "0.4"
+            frame_secondary_opacity = "0.72"
         lines.append('  <g id="map_frame">')
         lines.append(
             f'    <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"'
-            f' fill="none" stroke="{theme["land_stroke"]}" stroke-width="0.6"/>'
+            f' fill="none" stroke="{frame_color}" stroke-width="{frame_primary_w}"/>'
         )
         lines.append(
             f'    <rect x="{round(map_x - inset, 2)}" y="{round(map_y - inset, 2)}"'
             f' width="{round(map_w + 2 * inset, 2)}" height="{round(map_h + 2 * inset, 2)}"'
-            f' fill="none" stroke="{theme["land_stroke"]}" stroke-width="0.25"'
-            f' opacity="0.5"/>'
+            f' fill="none" stroke="{frame_color}" stroke-width="{frame_secondary_w}"'
+            f' opacity="{frame_secondary_opacity}"/>'
         )
         lines.append("  </g>")
         lines.append("")
+
+    # Compass rose — render after map frame so it reads as anchored to frame.
+    if show_compass:
+        _add_compass_rose(lines, map_x, map_y, map_w, map_h, theme)
 
     # Ornate corners for vintage layout
     if layout.get("ornate_corners", False):
@@ -810,9 +937,17 @@ def _generate_print_svg(
         else:
             sep_y = round(map_y + map_h + text_area_h * 0.10, 2)
         sep_margin = round(board_w * 0.25, 2)
+        sep_color = theme["land_stroke"]
+        sep_width = "0.42"
+        sep_opacity = "0.4"
+        if city_sellable_mode and text_position == "bottom":
+            sep_margin = round(board_w * 0.22, 2)
+            sep_color = theme.get("text_secondary", theme["land_stroke"])
+            sep_width = "0.48"
+            sep_opacity = "0.7"
         lines.append(
             f'  <line x1="{sep_margin}" y1="{sep_y}" x2="{round(board_w - sep_margin, 2)}" y2="{sep_y}"'
-            f' stroke="{theme["land_stroke"]}" stroke-width="0.3" opacity="0.4"/>'
+            f' stroke="{sep_color}" stroke-width="{sep_width}" opacity="{sep_opacity}"/>'
         )
         lines.append("")
 
@@ -825,6 +960,7 @@ def _generate_print_svg(
     coord_size = round(font_size_mm * 0.45, 2)
 
     title_text = location_name.upper()
+    title_weight = "600"
     char_width_factor = 0.75
     title_tracking = title_size * 0.2
     est_title_width = len(title_text) * (title_size * char_width_factor + title_tracking)
@@ -855,7 +991,7 @@ def _generate_print_svg(
         lines.append(
             f'    <text x="{text_center_x}" y="{round(text_y, 2)}"'
             f' text-anchor="middle" font-family="{ff}"'
-            f' font-size="{title_size}" font-weight="bold"'
+            f' font-size="{title_size}" font-weight="{title_weight}"'
             f' letter-spacing="{round(title_tracking, 2)}"'
             f' fill="{theme["text_primary"]}">{_escape_xml(title_text)}</text>'
         )
@@ -891,7 +1027,7 @@ def _generate_print_svg(
         lines.append(
             f'    <text x="{text_center_x}" y="{round(text_start_y, 2)}"'
             f' text-anchor="middle" font-family="{ff}"'
-            f' font-size="{title_size}" font-weight="bold"'
+            f' font-size="{title_size}" font-weight="{title_weight}"'
             f' letter-spacing="{round(title_tracking, 2)}"'
             f' fill="{theme["text_primary"]}">{_escape_xml(title_text)}</text>'
         )
@@ -932,7 +1068,7 @@ def _generate_print_svg(
         lines.append(
             f'    <text x="{text_center_x}" y="{round(text_start_y, 2)}"'
             f' text-anchor="middle" font-family="{ff}"'
-            f' font-size="{title_size}" font-weight="bold"'
+            f' font-size="{title_size}" font-weight="{title_weight}"'
             f' letter-spacing="{round(title_tracking, 2)}"'
             f' fill="{theme["text_primary"]}">{_escape_xml(title_text)}</text>'
         )
@@ -996,6 +1132,8 @@ def _generate_vintage_map_svg(
     include_bleed: bool = False,
     include_crop_marks: bool = False,
     show_compass: bool = False,
+    product_type: str = "lake",
+    style_variant: str = "vintage_map",
 ) -> dict:
     """Generate a vintage parchment-style map with monochrome line art.
 
@@ -1008,13 +1146,24 @@ def _generate_vintage_map_svg(
     latlon = center_latlon or processed.get("center_latlon", (0, 0))
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # Vintage color palette — monochrome ink on parchment
-    ink = "#1e1810"          # Dark brown-black ink
-    ink_light = "#3a2e20"    # Lighter ink for minor features
-    ink_faint = "#5a4a38"    # Faint ink for detail roads
-    parchment = "#e8dcc0"   # Base parchment color
-    parchment_edge = "#c8b890"  # Darker edge color for vignette
-    water_tint = "#d0c4a4"  # Subtle darker tint for water areas
+    # Vintage / gallery-premium palettes share the same rendering structure
+    # with slightly different tone and contrast.
+    is_gallery_premium = style_variant == "gallery_premium"
+    if is_gallery_premium:
+        ink = "#1f1a14"
+        ink_light = "#3f3124"
+        ink_faint = "#6a5540"
+        parchment = "#f6f0e4"
+        parchment_edge = "#cfc1a4"
+        water_tint = "#ddd2ba"
+    else:
+        # Vintage color palette — monochrome ink on parchment
+        ink = "#1e1810"          # Dark brown-black ink
+        ink_light = "#3a2e20"    # Lighter ink for minor features
+        ink_faint = "#5a4a38"    # Faint ink for detail roads
+        parchment = "#e8dcc0"    # Base parchment color
+        parchment_edge = "#c8b890"  # Darker edge color for vignette
+        water_tint = "#d0c4a4"   # Subtle darker tint for water areas
 
     # Layout: text at bottom (15% of height), map fills the rest
     margin = round(board_w * 0.04, 2)
@@ -1080,7 +1229,51 @@ def _generate_vintage_map_svg(
     svg_h = board_h + 2 * bleed
 
     path_count = 0
-    layer_count = 5  # texture, border, water, streets, text
+    layer_count = 6  # texture, border, geography, water, streets, text
+
+    major_roads = streets_data.get("major_roads", []) if streets_data else []
+    minor_roads = streets_data.get("minor_roads", []) if streets_data else []
+    initial_total_roads = len(major_roads) + len(minor_roads)
+    density_profile = _get_vintage_density_profile(product_type, initial_total_roads)
+    density_band = str(density_profile["band"])
+    boundary_major_count = sum(1 for _coords, road_class, _width, _name in major_roads if road_class == "boundary")
+    boundary_fallback_only = bool(major_roads) and boundary_major_count == len(major_roads) and not minor_roads
+    # Remove tiny fallback fragments that look like random scratches.
+    if boundary_fallback_only and major_roads:
+        min_render_len = max(2.2, min(map_w, map_h) * 0.025)
+        major_roads = [
+            entry for entry in major_roads
+            if _path_length(entry[0]) >= min_render_len
+        ]
+    # For sparse non-fallback maps, keep more short segments so small towns
+    # still get a fuller, more connected street texture.
+    elif minor_roads:
+        min_minor_len = max(0.7, min(map_w, map_h) * float(density_profile["min_minor_len_factor"]))
+        minor_roads = [
+            entry for entry in minor_roads
+            if _path_length(entry[0]) >= min_minor_len
+        ]
+
+    total_roads = len(major_roads) + len(minor_roads)
+    density_profile = _get_vintage_density_profile(product_type, total_roads)
+    density_band = str(density_profile["band"])
+    boundary_major_count = sum(1 for _coords, road_class, _width, _name in major_roads if road_class == "boundary")
+    boundary_fallback_only = bool(major_roads) and boundary_major_count == len(major_roads) and not minor_roads
+    # Sparse fallback and small-town maps benefit from extra structure so the output
+    # still reads as intentional premium artwork instead of an unfinished draft.
+    is_sparse = density_band == "sparse"
+    is_dense = density_band == "dense"
+    geography_fill = "#dfcfad" if boundary_fallback_only else "#e4d5b7"
+    geography_stroke_w = 0.8 if boundary_fallback_only else 0.42
+    # City/community relations often contain many administrative segments that
+    # look technical (boxy) when stroked. Keep fill, but suppress those strokes
+    # so the poster reads as art instead of GIS boundaries.
+    suppress_internal_geo_strokes = (
+        product_type in ("city", "community")
+        and not boundary_fallback_only
+        and total_roads > 0
+    )
+    use_land_hatch = boundary_fallback_only or total_roads < 40 or (is_sparse and product_type in ("province", "park"))
 
     lines = []
     lines.append('<?xml version="1.0" encoding="UTF-8"?>')
@@ -1117,17 +1310,21 @@ def _generate_vintage_map_svg(
     lines.append('    </radialGradient>')
     # Subtle speckle pattern for paper grain
     lines.append(f'    <pattern id="grain" width="3" height="3" patternUnits="userSpaceOnUse">')
-    lines.append(f'      <circle cx="0.8" cy="1.2" r="0.15" fill="#a09070" opacity="0.12"/>')
-    lines.append(f'      <circle cx="2.4" cy="0.4" r="0.1" fill="#907858" opacity="0.1"/>')
-    lines.append(f'      <circle cx="1.6" cy="2.6" r="0.12" fill="#b0a080" opacity="0.08"/>')
+    lines.append(f'      <circle cx="0.8" cy="1.2" r="0.15" fill="#a09070" opacity="0.08"/>')
+    lines.append(f'      <circle cx="2.4" cy="0.4" r="0.1" fill="#907858" opacity="0.07"/>')
+    lines.append(f'      <circle cx="1.6" cy="2.6" r="0.12" fill="#b0a080" opacity="0.06"/>')
     lines.append(f'    </pattern>')
     # Larger stain-like spots pattern
     lines.append(f'    <pattern id="stains" width="40" height="40" patternUnits="userSpaceOnUse">')
-    lines.append(f'      <circle cx="8" cy="12" r="5" fill="#b8a878" opacity="0.08"/>')
-    lines.append(f'      <circle cx="28" cy="6" r="3" fill="#a89868" opacity="0.06"/>')
-    lines.append(f'      <circle cx="18" cy="30" r="6" fill="#c0a870" opacity="0.07"/>')
-    lines.append(f'      <circle cx="35" cy="25" r="4" fill="#a89060" opacity="0.05"/>')
+    lines.append(f'      <circle cx="8" cy="12" r="5" fill="#b8a878" opacity="0.05"/>')
+    lines.append(f'      <circle cx="28" cy="6" r="3" fill="#a89868" opacity="0.04"/>')
+    lines.append(f'      <circle cx="18" cy="30" r="6" fill="#c0a870" opacity="0.045"/>')
+    lines.append(f'      <circle cx="35" cy="25" r="4" fill="#a89060" opacity="0.035"/>')
     lines.append(f'    </pattern>')
+    # Light engraving-style hatching for sparse/fallback renders.
+    lines.append('    <pattern id="terrain_hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(28)">')
+    lines.append('      <line x1="0" y1="0" x2="0" y2="6" stroke="#b29d77" stroke-width="0.18" opacity="0.26"/>')
+    lines.append('    </pattern>')
     # Clip for map content
     lines.append(
         f'    <clipPath id="map_clip">'
@@ -1173,7 +1370,28 @@ def _generate_vintage_map_svg(
     # All map content clipped to map area
     lines.append(f'  <g clip-path="url(#map_clip)">')
 
-    # Layer 3: Water features — subtle tinted fill so water is distinguishable
+    # Layer 3: Land silhouette — makes sparse maps look intentional and complete.
+    lines.append('    <g id="geography_base">')
+    for exterior, holes in polygons:
+        path_d = _coords_to_path(exterior)
+        for hole in holes:
+            path_d += " " + _coords_to_path(hole)
+        stroke_color = "none" if suppress_internal_geo_strokes else ink_light
+        stroke_width = 0 if suppress_internal_geo_strokes else geography_stroke_w
+        lines.append(
+            f'      <path d="{path_d}"'
+            f' fill="{geography_fill}" stroke="{stroke_color}" stroke-width="{stroke_width}"'
+            f' fill-rule="evenodd" stroke-linejoin="round"/>'
+        )
+        path_count += 1
+        if use_land_hatch:
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="url(#terrain_hatch)" stroke="none" fill-rule="evenodd" opacity="0.55"/>'
+            )
+    lines.append("    </g>")
+
+    # Layer 4: Water features — subtle tinted fill so water is distinguishable
     if water_data:
         transform = processed.get("transform")
         lines.append('    <g id="water_features">')
@@ -1205,16 +1423,12 @@ def _generate_vintage_map_svg(
     # No land boundary outlines — the streets define the shape,
     # admin boundary polygons look ugly as geometric lines
 
-    # Layer 4: Streets — bold monochrome line art, ALL roads visible
-    # Auto-detect sparse maps and boost widths accordingly
+    # Layer 5: Streets — curated monochrome hierarchy for cleaner premium output
     if streets_data:
         transform = processed.get("transform")
         lines.append('    <g id="streets">')
 
-        total_roads = len(streets_data.get("major_roads", [])) + len(streets_data.get("minor_roads", []))
-        is_sparse = total_roads < 120
-
-        # Width table — sparse maps get ~2x thicker lines for visual impact
+        # Width table tuned for readable hierarchy without over-cluttering.
         if is_sparse:
             vintage_widths = {
                 "motorway": 1.6, "motorway_link": 1.2,
@@ -1226,6 +1440,18 @@ def _generate_vintage_map_svg(
                 "living_street": 0.4, "service": 0.3, "track": 0.25,
                 "pedestrian": 0.2, "footway": 0.15, "cycleway": 0.15,
                 "path": 0.15, "steps": 0.12, "bridleway": 0.15,
+            }
+        elif is_dense:
+            vintage_widths = {
+                "motorway": 0.95, "motorway_link": 0.75,
+                "trunk": 0.85, "trunk_link": 0.65,
+                "primary": 0.72, "primary_link": 0.5,
+                "secondary": 0.52, "secondary_link": 0.4,
+                "tertiary": 0.34, "tertiary_link": 0.28,
+                "residential": 0.2, "unclassified": 0.2,
+                "living_street": 0.18, "service": 0.12, "track": 0.12,
+                "pedestrian": 0.1, "footway": 0.08, "cycleway": 0.08,
+                "path": 0.08, "steps": 0.06, "bridleway": 0.08,
             }
         else:
             vintage_widths = {
@@ -1240,13 +1466,44 @@ def _generate_vintage_map_svg(
                 "path": 0.1, "steps": 0.08, "bridleway": 0.1,
             }
 
-        # Draw all roads — minor first, major on top
-        for coords, road_class, _width, name in streets_data.get("minor_roads", []):
+        # Province/state prints can look busy quickly; filter micro roads.
+        is_large_region = (
+            (product_type == "province" and total_roads > 220)
+            or (product_type in ("city", "community") and total_roads > 1400)
+            or total_roads > 2200
+        )
+        keep_minor_classes = {
+            "tertiary", "tertiary_link", "residential", "secondary_link", "unclassified"
+        }
+        if product_type in ("city", "community"):
+            # Keep service/living streets in dense urban outputs so downtown grids
+            # feel complete, while micro pedestrian classes remain filtered below.
+            keep_minor_classes.update({"service", "living_street"})
+        keep_major_classes = {"motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link", "secondary"}
+
+        # Draw roads with subtle contrast separation.
+        drop_minor_classes: set[str] = {"track", "steps", "bridleway"}
+        if product_type in ("province", "park"):
+            drop_minor_classes.update({"service", "path", "footway", "cycleway", "pedestrian"})
+        elif product_type in ("city", "community") and is_dense:
+            # In denser urban maps, suppress pedestrian micro-lines that add
+            # noise without improving print readability.
+            drop_minor_classes.update({"path", "footway", "cycleway", "pedestrian"})
+        elif product_type in ("city", "community"):
+            # Balanced urban maps keep service roads but remove footway clutter.
+            drop_minor_classes.update({"path", "footway", "cycleway", "pedestrian"})
+        for coords, road_class, _width, name in minor_roads:
+            if is_large_region and road_class not in keep_minor_classes:
+                continue
+            if road_class in drop_minor_classes:
+                continue
             if len(coords) < 2:
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
             path_d = _coords_to_open_path(board_coords)
             w = vintage_widths.get(road_class, 0.15)
+            if is_large_region:
+                w = max(0.12, round(w * 0.78, 2))
             color = ink_faint if road_class in ("footway", "cycleway", "path", "steps", "bridleway") else ink_light
             lines.append(
                 f'      <path d="{path_d}"'
@@ -1255,12 +1512,23 @@ def _generate_vintage_map_svg(
             )
             path_count += 1
 
-        for coords, road_class, _width, name in streets_data.get("major_roads", []):
+        for coords, road_class, _width, name in major_roads:
+            if is_large_region and road_class not in keep_major_classes:
+                continue
             if len(coords) < 2:
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
             path_d = _coords_to_open_path(board_coords)
             w = vintage_widths.get(road_class, 0.5)
+            if is_large_region:
+                w = max(0.45, round(w * 0.9, 2))
+            # A thin casing around major roads adds clarity and depth at print size.
+            casing_w = round(max(w + 0.22, w * 1.24), 2)
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="none" stroke="{ink_light}" stroke-width="{casing_w}"'
+                f' stroke-linecap="round" stroke-linejoin="round" opacity="0.58"/>'
+            )
             lines.append(
                 f'      <path d="{path_d}"'
                 f' fill="none" stroke="{ink}" stroke-width="{w}"'
@@ -1279,12 +1547,12 @@ def _generate_vintage_map_svg(
 
     # --- Text area below the map ---
     text_center_x = round(board_w / 2, 2)
-    title_size = round(font_size_mm * 1.5, 2)
-    subtitle_size = round(font_size_mm * 0.6, 2)
-    coord_size = round(font_size_mm * 0.45, 2)
+    title_size = round(font_size_mm * 1.38, 2)
+    subtitle_size = round(font_size_mm * 0.58, 2)
+    coord_size = round(font_size_mm * 0.4, 2)
 
     title_text = location_name.upper()
-    title_tracking = title_size * 0.25
+    title_tracking = title_size * (0.2 if is_gallery_premium else 0.23)
 
     # Auto-scale title to fit
     est_width = len(title_text) * (title_size * 0.75 + title_tracking)
@@ -1292,9 +1560,9 @@ def _generate_vintage_map_svg(
     if est_width > avail_w and len(title_text) > 0:
         scale = avail_w / est_width
         title_size = round(title_size * scale, 2)
-        title_tracking = title_size * 0.25
+        title_tracking = title_size * (0.2 if is_gallery_premium else 0.23)
 
-    text_start_y = round(map_y + map_h + text_area_h * 0.35, 2)
+    text_start_y = round(map_y + map_h + text_area_h * (0.33 if is_gallery_premium else 0.35), 2)
 
     lines.append('  <g id="poster_text">')
     lines.append(
@@ -1304,28 +1572,34 @@ def _generate_vintage_map_svg(
         f' letter-spacing="{round(title_tracking, 2)}"'
         f' fill="{ink}">{_escape_xml(title_text)}</text>'
     )
-    next_y = text_start_y + title_size * 1.2
-    if subtitle:
+    next_y = text_start_y + title_size * (1.28 if is_gallery_premium else 1.2)
+    subtitle_clean = (subtitle or "").strip()
+    hide_subtitle = subtitle_clean.lower() in {"no", "none", "n/a", "na"}
+
+    if subtitle_clean and not hide_subtitle:
         lines.append(
             f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
             f' text-anchor="middle" font-family="{ff}"'
             f' font-size="{subtitle_size}" font-weight="normal"'
-            f' letter-spacing="{round(subtitle_size * 0.2, 2)}"'
-            f' fill="{ink_light}">{_escape_xml(subtitle)}</text>'
+                f' letter-spacing="{round(subtitle_size * (0.16 if is_gallery_premium else 0.2), 2)}"'
+            f' fill="{ink_light}">{_escape_xml(subtitle_clean)}</text>'
         )
-        next_y += subtitle_size * 1.8
+        next_y += subtitle_size * (2.0 if is_gallery_premium else 1.8)
     if show_coordinates and latlon:
         lat, lon = latlon
         lat_dir = "N" if lat >= 0 else "S"
         lon_dir = "W" if lon < 0 else "E"
-        coord_text = f"{abs(lat):.4f}\u00b0{lat_dir}    ~    {abs(lon):.4f}\u00b0{lon_dir}"
+        coord_text = f"{abs(lat):.4f}\u00b0{lat_dir}  \u2022  {abs(lon):.4f}\u00b0{lon_dir}"
         lines.append(
             f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
             f' text-anchor="middle" font-family="{ff}"'
             f' font-size="{coord_size}"'
-            f' letter-spacing="{round(coord_size * 0.15, 2)}"'
+            f' letter-spacing="{round(coord_size * (0.18 if is_gallery_premium else 0.15), 2)}"'
             f' fill="{ink_light}">{coord_text}</text>'
         )
+    elif subtitle and subtitle.strip().lower() in {"no", "none", "n/a", "na"}:
+        # Avoid noisy placeholder subtitles in premium output.
+        pass
     lines.append("  </g>")
     lines.append("")
 
@@ -1424,13 +1698,20 @@ def _add_compass_rose(
     theme: dict,
 ) -> None:
     """Add a compass rose indicator in the top-right corner of the map."""
-    size = min(map_w, map_h) * 0.06
-    cx = round(map_x + map_w - size * 2.5, 2)
-    cy = round(map_y + size * 2.5, 2)
+    size = min(map_w, map_h) * 0.054
+    edge_pad = max(6.0, min(map_w, map_h) * 0.028)
+    cx = round(map_x + map_w - edge_pad - size * 0.55, 2)
+    cy = round(map_y + edge_pad + size * 0.62, 2)
     text_color = theme.get("text_primary", "#1a1a1a")
     stroke_color = theme.get("land_stroke", "#333333")
+    backdrop_color = theme.get("map_bg", "#ffffff")
 
-    lines.append(f'    <g id="compass_rose" opacity="0.6">')
+    lines.append(f'    <g id="compass_rose" opacity="0.84">')
+    lines.append(
+        f'      <circle cx="{cx}" cy="{cy}" r="{round(size * 0.96, 2)}"'
+        f' fill="{backdrop_color}" fill-opacity="0.78"'
+        f' stroke="{stroke_color}" stroke-opacity="0.35" stroke-width="0.24"/>'
+    )
 
     # North arrow (filled triangle pointing up)
     n_top = round(cy - size, 2)
@@ -1448,9 +1729,9 @@ def _add_compass_rose(
     )
     # East/West ticks
     lines.append(
-        f'      <line x1="{round(cx - size * 0.6, 2)}" y1="{cy}"'
-        f' x2="{round(cx + size * 0.6, 2)}" y2="{cy}"'
-        f' stroke="{stroke_color}" stroke-width="0.3"/>'
+        f'      <line x1="{round(cx - size * 0.58, 2)}" y1="{cy}"'
+        f' x2="{round(cx + size * 0.58, 2)}" y2="{cy}"'
+        f' stroke="{stroke_color}" stroke-width="0.28"/>'
     )
     # N label
     label_size = round(size * 0.5, 2)
@@ -1708,7 +1989,14 @@ def _render_geography(lines: list[str], polygons: list, style: CutStyle):
         lines.append("  </g>")
 
 
-def _render_print_water(lines: list[str], water_data: dict, processed: dict, theme: dict, gradient: bool = True):
+def _render_print_water(
+    lines: list[str],
+    water_data: dict,
+    processed: dict,
+    theme: dict,
+    gradient: bool = True,
+    street_mode: bool = False,
+):
     """Render water features with themed poster colors.
 
     When gradient=True, larger water bodies get a radial gradient fill
@@ -1738,10 +2026,17 @@ def _render_print_water(lines: list[str], water_data: dict, processed: dict, the
         path_d = _coords_to_path(board_coords)
         # Use gradient for larger water bodies (>6 points suggests a significant feature)
         fill = "url(#water_grad)" if gradient and len(coords) > 6 else theme["water"]
+        stroke_w = "0.5"
+        fill_opacity_attr = ""
+        if street_mode:
+            # City/community street posters should keep water subtle so roads remain
+            # dominant and legible at print scale.
+            stroke_w = "0.32"
+            fill_opacity_attr = ' fill-opacity="0.45"'
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="{fill}" stroke="{theme["water_stroke"]}"'
-            f' stroke-width="0.5" stroke-linejoin="round"/>'
+            f' stroke-width="{stroke_w}" stroke-linejoin="round"{fill_opacity_attr}/>'
         )
 
     for coords, water_type, name in water_data.get("waterways", []):
@@ -1750,6 +2045,8 @@ def _render_print_water(lines: list[str], water_data: dict, processed: dict, the
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
         width = 1.0 if water_type in ("river", "coastline") else 0.4
+        if street_mode:
+            width = 0.7 if water_type in ("river", "coastline") else 0.28
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="none" stroke="{theme["water_stroke"]}" stroke-width="{width}"'
@@ -1783,15 +2080,15 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
     if is_province:
         # Province: bold, clear highways visible at small scale
         casing_widths = {
-            "motorway": 3.0, "motorway_link": 2.2,
-            "trunk": 2.6, "trunk_link": 1.8,
-            "primary": 2.0, "primary_link": 1.5,
-            "secondary": 1.5, "secondary_link": 1.1,
+            "motorway": 2.4, "motorway_link": 1.8,
+            "trunk": 2.0, "trunk_link": 1.5,
+            "primary": 1.4, "primary_link": 1.1,
+            "secondary": 1.0, "secondary_link": 0.75,
             "tertiary": 1.0, "tertiary_link": 0.8,
             "residential": 0.5, "unclassified": 0.5,
             "living_street": 0.5, "service": 0.4, "track": 0.35,
         }
-        fill_ratio = 0.55  # inner fill is 55% of casing width
+        fill_ratio = 0.5
     elif product_type in ("community", "park"):
         # Community/rural: thicker roads to fill sparse areas
         casing_widths = {
@@ -1841,10 +2138,31 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
     major_paths = []
     minor_paths = []
 
+    province_keep_major_classes = {
+        "motorway", "motorway_link", "trunk", "trunk_link",
+        "primary", "primary_link", "secondary", "secondary_link",
+    }
+    province_min_len_by_class = {
+        "motorway": 2.0,
+        "motorway_link": 3.0,
+        "trunk": 2.0,
+        "trunk_link": 3.0,
+        "primary": 2.4,
+        "primary_link": 3.2,
+        "secondary": 4.8,
+        "secondary_link": 4.2,
+    }
+
     for coords, road_class, _width, name in streets_data.get("major_roads", []):
+        if is_province and road_class not in province_keep_major_classes:
+            continue
         if len(coords) < 2:
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
+        if is_province:
+            min_len = province_min_len_by_class.get(road_class, 2.8)
+            if _path_length(board_coords) < min_len:
+                continue
         path_d = _coords_to_open_path(board_coords)
         cw = casing_widths.get(road_class, 0.5)
         major_paths.append((path_d, road_class, cw))
@@ -1885,7 +2203,7 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
     # Layer 4: Major road fills (topmost)
     for path_d, road_class, cw in major_paths:
         fw = round(cw * fill_ratio, 2)
-        fill_color = "#ffffff" if is_province else land_color
+        fill_color = land_color
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="none" stroke="{fill_color}" stroke-width="{fw}"'

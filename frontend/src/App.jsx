@@ -4,7 +4,6 @@ import CustomizePanel from "./components/CustomizePanel.jsx";
 import SVGPreview from "./components/SVGPreview.jsx";
 import ExportPanel from "./components/ExportPanel.jsx";
 import AuthModal from "./components/AuthModal.jsx";
-import LibraryView from "./components/LibraryView.jsx";
 import MarketplaceView from "./components/MarketplaceView.jsx";
 import SellerDashboard from "./components/SellerDashboard.jsx";
 import AdminDashboard from "./components/AdminDashboard.jsx";
@@ -18,11 +17,12 @@ import PriceDisplay from "./components/PriceDisplay.jsx";
 import GenerateModal from "./components/CheckoutModal.jsx";
 import OrderStatus from "./components/OrderStatus.jsx";
 import {
+  searchLocations,
   generateSVG, generatePin, downloadSVG, downloadDXF, downloadSTL,
   downloadThumbnail, downloadPrintPNG,
   downloadEtsyListing, downloadEtsyPackage, downloadPreview, downloadWallMockup,
   getProfile, logout, getToken, subscribe,
-  redeemCredit,
+  redeemCredit, getPublicConfig,
 } from "./services/api.js";
 
 const DEFAULT_CONFIG = {
@@ -39,17 +39,17 @@ const DEFAULT_CONFIG = {
   borderStyle: "none",
   showCoordinates: true,
   includeIslands: true,
-  includeStreets: false,
+  includeStreets: true,
   includeContours: false,
   contourType: "depth",
   numDepthBands: 5,
   outputMode: "print",
-  colorTheme: "classic",
-  posterLayout: "classic",
+  colorTheme: "vintage_map",
+  posterLayout: "vintage",
   heartLat: null,
   heartLon: null,
-  showCompass: false,
-  showScaleBar: false,
+  showCompass: true,
+  showScaleBar: true,
   gradientWater: true,
   landShadow: true,
   includeBleed: false,
@@ -78,6 +78,109 @@ const COUNTRIES = [
   { code: "us", label: "United States" },
   { code: "", label: "Global" },
 ];
+
+const ETSY_DRAFT_STORAGE_KEY = "mapforge_etsy_drafts";
+const MAX_ETSY_DRAFTS = 20;
+
+function isFiniteCoordinate(value) {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isValidLatitude(value) {
+  return isFiniteCoordinate(value) && value >= -90 && value <= 90;
+}
+
+function isValidLongitude(value) {
+  return isFiniteCoordinate(value) && value >= -180 && value <= 180;
+}
+
+function hasValidPinCoords(pinCoords) {
+  if (!pinCoords) return false;
+  return isValidLatitude(pinCoords.lat) && isValidLongitude(pinCoords.lon);
+}
+
+function parseCoordinateInput(rawValue) {
+  if (rawValue === "") return null;
+  const parsed = Number(rawValue);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function createDraftId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function createDesignRef() {
+  return `MF-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+}
+
+function readEtsyDraftStore() {
+  try {
+    const raw = localStorage.getItem(ETSY_DRAFT_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeEtsyDraftStore(store) {
+  try {
+    localStorage.setItem(ETSY_DRAFT_STORAGE_KEY, JSON.stringify(store));
+  } catch {}
+}
+
+function saveEtsyDraft(payload) {
+  const draftId = createDraftId();
+  const designRef = createDesignRef();
+  const store = readEtsyDraftStore();
+  store[draftId] = {
+    ...payload,
+    draft_id: draftId,
+    design_ref: designRef,
+    updated_at: new Date().toISOString(),
+  };
+
+  const orderedDrafts = Object.entries(store)
+    .sort(([, a], [, b]) => String(b?.updated_at || "").localeCompare(String(a?.updated_at || "")))
+    .slice(0, MAX_ETSY_DRAFTS);
+
+  writeEtsyDraftStore(Object.fromEntries(orderedDrafts));
+  return { draftId, designRef };
+}
+
+function loadEtsyDraft(draftId) {
+  const store = readEtsyDraftStore();
+  return store[draftId] || null;
+}
+
+function listEtsyDrafts() {
+  return Object.values(readEtsyDraftStore())
+    .filter((draft) => draft && typeof draft === "object")
+    .sort((a, b) => String(b?.updated_at || "").localeCompare(String(a?.updated_at || "")));
+}
+
+function deleteEtsyDraft(draftId) {
+  const store = readEtsyDraftStore();
+  if (!store[draftId]) return false;
+  delete store[draftId];
+  writeEtsyDraftStore(store);
+  return true;
+}
+
+function formatDraftTime(isoTimestamp) {
+  if (!isoTimestamp) return "saved recently";
+  const date = new Date(isoTimestamp);
+  if (Number.isNaN(date.getTime())) return "saved recently";
+  const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+  if (seconds < 60) return "saved just now";
+  if (seconds < 3600) return `saved ${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `saved ${Math.floor(seconds / 3600)}h ago`;
+  return `saved ${Math.floor(seconds / 86400)}d ago`;
+}
 
 // Toast notification system
 function Toast({ message, type, onDismiss }) {
@@ -117,10 +220,14 @@ export default function App() {
   const [selectedResult, setSelectedResult] = useState(null);
   const [config, setConfig] = useState(loadSavedConfig);
   const [svgContent, setSvgContent] = useState(null);
+  const [previewPngB64, setPreviewPngB64] = useState(null);
   const [result, setResult] = useState(null);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState(null);
   const [qualityWarning, setQualityWarning] = useState(null);
+  const [blockCheckoutForQuality, setBlockCheckoutForQuality] = useState(false);
+  const [qualitySuggestions, setQualitySuggestions] = useState([]);
+  const [loadingQualitySuggestions, setLoadingQualitySuggestions] = useState(false);
   const [country, setCountry] = useState("ca");
   const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [pinCoords, setPinCoords] = useState(null); // {lat, lon} for name_sign pin drop
@@ -130,6 +237,7 @@ export default function App() {
   const [creditData, setCreditData] = useState(null); // credit info from API
   const [creditView, setCreditView] = useState(null); // "status" to show order status page
   const [isEtsyReferral, setIsEtsyReferral] = useState(false);
+  const [etsyDrafts, setEtsyDrafts] = useState([]);
 
   // Undo/redo state
   const [configHistory, setConfigHistory] = useState([config]);
@@ -145,6 +253,55 @@ export default function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
+  function loadRecentEtsyDrafts() {
+    setEtsyDrafts(listEtsyDrafts().slice(0, 5));
+  }
+
+  function restoreDraftState(draft, { showToast = false } = {}) {
+    if (!draft?.config) return false;
+    const restoredConfig = { ...DEFAULT_CONFIG, ...draft.config };
+    setShowLanding(false);
+    setIsEtsyReferral(true);
+    setConfig(restoredConfig);
+    setConfigHistory([restoredConfig]);
+    setHistoryIndex(0);
+    setSelectedResult(draft.selectedResult || null);
+    setPinCoords(draft.pinCoords || null);
+    setMarkers(Array.isArray(draft.markers) ? draft.markers : []);
+    setSvgContent(null);
+    setPreviewPngB64(null);
+    setResult(null);
+    setError(null);
+    setQualityWarning(null);
+    setBlockCheckoutForQuality(false);
+    if (showToast) {
+      addToast(
+        draft.design_ref ? `Restored your Etsy design (${draft.design_ref}).` : "Restored your Etsy design.",
+        "success"
+      );
+    }
+    return true;
+  }
+
+  function handleRestoreEtsyDraft(draftId) {
+    const draft = loadEtsyDraft(draftId);
+    if (!restoreDraftState(draft, { showToast: true })) {
+      addToast("Could not restore that draft.", "error");
+    }
+    loadRecentEtsyDrafts();
+  }
+
+  function handleDeleteEtsyDraft(draftId) {
+    if (deleteEtsyDraft(draftId)) {
+      addToast("Draft removed.", "success");
+      loadRecentEtsyDrafts();
+    }
+  }
+
+  useEffect(() => {
+    loadRecentEtsyDrafts();
+  }, []);
+
   // Load user profile if token exists; clear stale tokens on failure
   useEffect(() => {
     if (getToken()) {
@@ -156,10 +313,15 @@ export default function App() {
 
   // Fetch public config (Etsy shop URL, etc.)
   const [etsyShopUrl, setEtsyShopUrl] = useState(null);
+  const [maptilerKey, setMaptilerKey] = useState("");
   useEffect(() => {
-    fetch(`${import.meta.env.VITE_API_URL || ""}/api/v1/config`)
-      .then((r) => r.json())
-      .then((c) => { if (c.etsy_shop_url) setEtsyShopUrl(c.etsy_shop_url); })
+    getPublicConfig()
+      .then((c) => {
+        if (c?.etsy_shop_url) setEtsyShopUrl(c.etsy_shop_url);
+        if (typeof c?.maptiler_key === "string") {
+          setMaptilerKey(c.maptiler_key.trim());
+        }
+      })
       .catch(() => {});
   }, []);
 
@@ -194,32 +356,50 @@ export default function App() {
       return;
     }
 
+    let shouldClearQuery = false;
+    let restoredFromDraft = false;
+
+    // Restore draft when returning from Etsy with a saved draft ID
+    const draftParam = params.get("draft");
+    if (draftParam) {
+      shouldClearQuery = true;
+      const draft = loadEtsyDraft(draftParam);
+      restoredFromDraft = restoreDraftState(draft, { showToast: true });
+    }
+
     // Etsy OAuth callback success
     if (params.get("etsy_connected") === "1") {
+      shouldClearQuery = true;
       addToast("Etsy shop connected! Generate a map and publish it to your shop.", "success");
-      window.history.replaceState({}, "", window.location.pathname);
     }
 
     // Etsy OAuth callback error
     const etsyError = params.get("etsy_error");
     if (etsyError) {
+      shouldClearQuery = true;
       addToast(`Etsy connection failed: ${etsyError}. Please try again.`, "error");
-      window.history.replaceState({}, "", window.location.pathname);
     }
 
     // Etsy referral (no credit yet — just browsing from listing description)
     if (params.get("ref") === "etsy") {
+      shouldClearQuery = true;
       setIsEtsyReferral(true);
       setShowLanding(false);
-      const updates = {};
-      if (params.get("product_type")) updates.productType = params.get("product_type");
-      if (params.get("board_size")) updates.boardSize = params.get("board_size");
-      if (params.get("color_theme")) updates.colorTheme = params.get("color_theme");
-      if (Object.keys(updates).length > 0) {
-        setConfig((prev) => ({ ...prev, ...updates }));
+      if (!restoredFromDraft) {
+        const updates = {};
+        if (params.get("product_type")) updates.productType = params.get("product_type");
+        if (params.get("board_size")) updates.boardSize = params.get("board_size");
+        if (params.get("color_theme")) updates.colorTheme = params.get("color_theme");
+        if (Object.keys(updates).length > 0) {
+          setConfig((prev) => ({ ...prev, ...updates }));
+        }
       }
+    }
+
+    if (shouldClearQuery) {
       window.history.replaceState({}, "", window.location.pathname);
     }
+    loadRecentEtsyDrafts();
   }, []);
 
   // Auto-save config to localStorage
@@ -305,20 +485,71 @@ export default function App() {
       productType: item.feature_type || config.productType,
     });
     setSvgContent(null);
+    setPreviewPngB64(null);
     setResult(null);
     setError(null);
+    setBlockCheckoutForQuality(false);
+    setQualitySuggestions([]);
+    setLoadingQualitySuggestions(false);
 
-    // Check geometry quality
-    if (!item.has_geometry) {
+    // Check geometry quality and search confidence before generation.
+    if (!item.has_geometry && item.fallback_available) {
+      setQualityWarning(
+        "This location has no exact boundary, but MapForge can use fallback area mode. For highest accuracy, prefer a Best Match with medium/high geometry."
+      );
+    } else if (!item.has_geometry) {
       setQualityWarning("This location may not have polygon data. Generation might fail or produce incomplete results.");
+    } else if (item.geometry_quality === "low") {
+      setQualityWarning(
+        "This match has low geometry detail and may look inaccurate. Try another result (prefer one marked Best Match / high geometry)."
+      );
+    } else if (item.match_confidence === "low") {
+      setQualityWarning(
+        "This match has low location confidence. If the preview looks wrong, choose a result with higher confidence."
+      );
     } else {
       setQualityWarning(null);
     }
   }
 
+  const fetchQualitySuggestions = useCallback(async (baseResult) => {
+    if (!baseResult?.display_name) {
+      setQualitySuggestions([]);
+      return;
+    }
+    const namePart = String(baseResult.display_name).split(",")[0]?.trim();
+    if (!namePart || namePart.length < 2) {
+      setQualitySuggestions([]);
+      return;
+    }
+    const queryParts = [namePart];
+    if (baseResult.admin_region) queryParts.push(baseResult.admin_region);
+    const query = queryParts.join(" ").trim();
+    const searchCountry = baseResult.country_code || country || "";
+
+    setLoadingQualitySuggestions(true);
+    try {
+      const data = await searchLocations(query, searchCountry);
+      const candidates = (data?.results || [])
+        .filter((r) => !(r.osm_id === baseResult.osm_id && r.osm_type === baseResult.osm_type))
+        .filter((r) => r.has_geometry && (r.geometry_quality === "high" || r.geometry_quality === "medium"))
+        .sort((a, b) => {
+          const recommendedRank = Number(Boolean(b.is_recommended)) - Number(Boolean(a.is_recommended));
+          if (recommendedRank !== 0) return recommendedRank;
+          return (b.relevance_score || 0) - (a.relevance_score || 0);
+        })
+        .slice(0, 3);
+      setQualitySuggestions(candidates);
+    } catch {
+      setQualitySuggestions([]);
+    } finally {
+      setLoadingQualitySuggestions(false);
+    }
+  }, [country]);
+
   const handleGenerate = useCallback(async () => {
     // Pin-drop mode: use coordinates instead of OSM search result
-    const isPinMode = config.productType === "name_sign" && pinCoords;
+    const isPinMode = config.productType === "name_sign" && hasValidPinCoords(pinCoords);
     if (!selectedResult && !isPinMode) return;
 
     setGenerating(true);
@@ -411,21 +642,33 @@ export default function App() {
         data = await generateSVG(params);
       }
 
-      setSvgContent(data.svg);
+      // Prefer backend-provided MapTiler preview PNG when available.
+      if (data.preview_png_b64) {
+        setSvgContent(
+          `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 2000"><image href="data:image/png;base64,${data.preview_png_b64}" x="0" y="0" width="1600" height="2000" preserveAspectRatio="xMidYMid meet"/></svg>`
+        );
+      } else {
+        setSvgContent(data.svg);
+      }
+      setPreviewPngB64(data.preview_png_b64 || null);
       setResult(data);
+      setBlockCheckoutForQuality(Boolean(data.needs_location_repick));
+      if (data.needs_location_repick && selectedResult) {
+        void fetchQualitySuggestions(selectedResult);
+      } else {
+        setQualitySuggestions([]);
+        setLoadingQualitySuggestions(false);
+      }
 
       // Quality/generation warnings
       const allWarnings = [...(data.warnings || [])];
-      if (data.node_count < 20) {
-        allWarnings.push("Low detail: This location has very few data points. The map may appear rough or oversimplified.");
-      }
       setQualityWarning(allWarnings.length > 0 ? allWarnings.join(" ") : null);
     } catch (err) {
       setError(err.message);
     } finally {
       setGenerating(false);
     }
-  }, [selectedResult, config, pinCoords, markers]);
+  }, [selectedResult, config, pinCoords, markers, fetchQualitySuggestions]);
 
   const handleDownload = useCallback(async () => {
     if (!result) return;
@@ -517,6 +760,54 @@ export default function App() {
     }
   }, [result, config.text]);
 
+  const handleStartEtsyCheckout = useCallback(() => {
+    if (!etsyShopUrl) {
+      addToast("Etsy shop link is not configured yet.", "error");
+      return;
+    }
+
+    const selectedSnapshot = selectedResult
+      ? {
+          osm_id: selectedResult.osm_id,
+          osm_type: selectedResult.osm_type,
+          display_name: selectedResult.display_name,
+          feature_type: selectedResult.feature_type,
+          lat: selectedResult.lat,
+          lon: selectedResult.lon,
+          has_geometry: selectedResult.has_geometry,
+          boundingbox: selectedResult.boundingbox,
+        }
+      : null;
+
+    const { draftId, designRef } = saveEtsyDraft({
+      source: "etsy_checkout_handoff",
+      config,
+      selectedResult: selectedSnapshot,
+      pinCoords,
+      markers,
+      result: result
+        ? {
+            file_id: result.file_id,
+            location_name: result.location_name,
+            product_type: result.product_type,
+            style: result.style,
+          }
+        : null,
+    });
+    loadRecentEtsyDrafts();
+
+    const checkoutUrl = new URL(etsyShopUrl, window.location.origin);
+    checkoutUrl.searchParams.set("ref", "mapforge_app");
+    checkoutUrl.searchParams.set("draft", draftId);
+    checkoutUrl.searchParams.set("design_ref", designRef);
+    if (config.productType) checkoutUrl.searchParams.set("product_type", config.productType);
+    if (config.boardSize) checkoutUrl.searchParams.set("board_size", config.boardSize);
+    if (config.colorTheme) checkoutUrl.searchParams.set("color_theme", config.colorTheme);
+    if (result?.location_name) checkoutUrl.searchParams.set("location", result.location_name);
+
+    window.location.href = checkoutUrl.toString();
+  }, [addToast, config, etsyShopUrl, markers, pinCoords, result, selectedResult]);
+
   function _triggerDownload(blob, name, ext) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -564,7 +855,6 @@ export default function App() {
   }
 
   // Sub-views
-  if (view === "library") return <LibraryView onBack={() => setView("main")} />;
   if (view === "marketplace") return <MarketplaceView user={user} onBack={() => setView("main")} />;
   if (view === "dashboard") return <SellerDashboard onBack={() => setView("main")} />;
   if (view === "purchases") return <PurchasesView onBack={() => setView("main")} />;
@@ -596,7 +886,6 @@ export default function App() {
           </select>
           {user?.tier === "admin" && <button className="nav-btn" onClick={() => setShowPricing(true)}>Pricing</button>}
           {user?.tier === "admin" && <button className="nav-btn" onClick={() => setView("marketplace")}>Marketplace</button>}
-          {user?.tier === "admin" && <button className="nav-btn" onClick={() => setView("library")}>Library</button>}
           {user?.tier === "admin" && <button className="nav-btn" onClick={() => setView("purchases")}>Purchases</button>}
           {user?.tier === "admin" && (
             <button className="nav-btn" onClick={() => setView("dashboard")}>Seller</button>
@@ -628,7 +917,13 @@ export default function App() {
         </button>
 
         <div className={`panel-left${panelCollapsed ? " collapsed" : ""}`}>
-          <SearchPanel onSelect={handleSelect} selectedResult={selectedResult} country={country} />
+          <SearchPanel
+            onSelect={handleSelect}
+            selectedResult={selectedResult}
+            country={country}
+            maptilerKey={maptilerKey}
+            productType={config.productType}
+          />
 
           {/* Pin Drop for Name Sign — mark a home or special location */}
           {config.productType === "name_sign" && (
@@ -656,8 +951,8 @@ export default function App() {
                     style={{ fontSize: "12px", padding: "6px 8px" }}
                     value={pinCoords?.lat ?? ""}
                     onChange={(e) => {
-                      const lat = parseFloat(e.target.value);
-                      setPinCoords((prev) => ({ lon: prev?.lon || 0, lat: isNaN(lat) ? 0 : lat }));
+                      const lat = parseCoordinateInput(e.target.value);
+                      setPinCoords((prev) => ({ lon: prev?.lon ?? null, lat }));
                     }}
                   />
                 </div>
@@ -671,17 +966,23 @@ export default function App() {
                     style={{ fontSize: "12px", padding: "6px 8px" }}
                     value={pinCoords?.lon ?? ""}
                     onChange={(e) => {
-                      const lon = parseFloat(e.target.value);
-                      setPinCoords((prev) => ({ lat: prev?.lat || 0, lon: isNaN(lon) ? 0 : lon }));
+                      const lon = parseCoordinateInput(e.target.value);
+                      setPinCoords((prev) => ({ lat: prev?.lat ?? null, lon }));
                     }}
                   />
                 </div>
               </div>
-              {pinCoords && pinCoords.lat !== 0 && (
+              {pinCoords && !hasValidPinCoords(pinCoords) && (
+                <p style={{ margin: "0 0 8px", fontSize: "11px", color: "var(--text-muted, #888)" }}>
+                  Enter valid coordinates (latitude between -90 and 90, longitude between -180 and 180).
+                </p>
+              )}
+              {hasValidPinCoords(pinCoords) && (
                 <MapPreview
                   lat={pinCoords.lat}
                   lon={pinCoords.lon}
                   name={config.text || "Pin Location"}
+                  maptilerKey={maptilerKey}
                 />
               )}
             </div>
@@ -731,6 +1032,95 @@ export default function App() {
             </div>
           )}
 
+          {blockCheckoutForQuality && (loadingQualitySuggestions || qualitySuggestions.length > 0) && (
+            <div className="quality-warning" style={{
+              marginTop: "8px",
+              background: "#1f2430",
+              border: "1px solid #3a4a66",
+              borderRadius: "6px",
+              padding: "8px 12px",
+              fontSize: "12px",
+              color: "#c6d8ff",
+            }}>
+              <div style={{ fontWeight: 600, marginBottom: "6px" }}>
+                Better nearby matches for denser linework
+              </div>
+              {loadingQualitySuggestions ? (
+                <div>Finding nearby Best Match options...</div>
+              ) : (
+                <div style={{ display: "grid", gap: "6px" }}>
+                  {qualitySuggestions.map((s) => (
+                    <button
+                      key={`${s.osm_type}-${s.osm_id}`}
+                      type="button"
+                      className="btn btn-secondary"
+                      style={{ textAlign: "left", fontSize: "11px", padding: "6px 8px" }}
+                      onClick={() => handleSelect(s)}
+                    >
+                      <strong>{String(s.display_name || "").split(",")[0]}</strong>
+                      {" · "}
+                      {s.geometry_quality || "unknown"} geometry
+                      {s.is_recommended ? " · Best Match" : ""}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {isEtsyReferral && !creditToken && (
+            <div className="etsy-drafts-panel">
+              <div className="etsy-drafts-header">
+                <h3>Recent Etsy Drafts</h3>
+                <button
+                  className="link-btn"
+                  type="button"
+                  onClick={loadRecentEtsyDrafts}
+                  style={{ fontSize: "11px" }}
+                >
+                  Refresh
+                </button>
+              </div>
+              {etsyDrafts.length === 0 ? (
+                <p className="etsy-drafts-empty">No saved Etsy drafts yet.</p>
+              ) : (
+                <div className="etsy-drafts-list">
+                  {etsyDrafts.map((draft) => (
+                    <div key={draft.draft_id} className="etsy-draft-item">
+                      <div className="etsy-draft-main">
+                        <div className="etsy-draft-title">
+                          {draft.config?.text || draft.result?.location_name || "Untitled design"}
+                        </div>
+                        <div className="etsy-draft-meta">
+                          {draft.design_ref ? `${draft.design_ref} · ` : ""}
+                          {formatDraftTime(draft.updated_at)}
+                        </div>
+                      </div>
+                      <div className="etsy-draft-actions">
+                        <button
+                          className="btn btn-secondary"
+                          type="button"
+                          style={{ fontSize: "10px", padding: "4px 8px" }}
+                          onClick={() => handleRestoreEtsyDraft(draft.draft_id)}
+                        >
+                          Resume
+                        </button>
+                        <button
+                          className="btn btn-secondary"
+                          type="button"
+                          style={{ fontSize: "10px", padding: "4px 8px" }}
+                          onClick={() => handleDeleteEtsyDraft(draft.draft_id)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Etsy credit banner — show when customer has a valid design credit */}
           {creditToken && creditData && creditData.status === "unused" && (
             <div className="credit-banner">
@@ -742,7 +1132,7 @@ export default function App() {
 
           {/* Generate button for Etsy customers with a credit */}
           {creditToken && creditData && creditData.status === "unused" &&
-           (!!selectedResult || (config.productType === "name_sign" && !!pinCoords)) && (
+           (!!selectedResult || (config.productType === "name_sign" && hasValidPinCoords(pinCoords))) && (
             <button
               className="btn btn-primary btn-full checkout-cta"
               onClick={() => setShowGenerateModal(true)}
@@ -769,16 +1159,24 @@ export default function App() {
             onDownloadEtsyPackage={handleDownloadEtsyPackage}
             onDownloadPreview={handleDownloadPreview}
             onDownloadWallMockup={handleDownloadWallMockup}
-            canGenerate={!!selectedResult || (config.productType === "name_sign" && !!pinCoords)}
+            canGenerate={!!selectedResult || (config.productType === "name_sign" && hasValidPinCoords(pinCoords))}
             generating={generating}
             user={user}
             printDPI={config.printDPI}
             etsyShopUrl={etsyShopUrl}
+            onStartEtsyCheckout={handleStartEtsyCheckout}
+            checkoutBlockedReason={blockCheckoutForQuality
+              ? "This preview has limited map detail. Pick a nearby Best Match for a stronger print, or continue anyway."
+              : null}
+            onOverrideCheckoutBlock={() => setBlockCheckoutForQuality(false)}
+            nearbyQualitySuggestions={qualitySuggestions}
+            onPickNearbySuggestion={handleSelect}
           />
         </div>
         <div className="panel-right">
           <SVGPreview
             svgContent={svgContent}
+            previewPngB64={previewPngB64}
             loading={generating}
             error={error}
             colorTheme={config.colorTheme}
@@ -797,12 +1195,6 @@ export default function App() {
             <span className="mobile-tab-icon">&#9733;</span>
             Market
           </button>
-          {user && (
-            <button className={`mobile-tab${view === "library" ? " active" : ""}`} onClick={() => setView("library")}>
-              <span className="mobile-tab-icon">&#9776;</span>
-              Library
-            </button>
-          )}
           {user ? (
             <button className="mobile-tab" onClick={handleLogout}>
               <span className="mobile-tab-icon">&#8594;</span>

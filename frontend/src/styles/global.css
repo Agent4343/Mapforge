@@ -184,6 +184,67 @@ body {
   color: var(--text-muted);
 }
 
+.result-recommended-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: #d7f4df;
+  background: rgba(39, 174, 96, 0.3);
+  border: 1px solid rgba(39, 174, 96, 0.45);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.result-quality-pill {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 10px;
+  font-size: 9px;
+  line-height: 1.4;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.result-quality-high {
+  color: #8fe0a6;
+  border-color: rgba(39, 174, 96, 0.55);
+}
+
+.result-quality-medium {
+  color: #f6d27d;
+  border-color: rgba(241, 196, 15, 0.55);
+}
+
+.result-quality-low {
+  color: #e6a6a6;
+  border-color: rgba(192, 57, 43, 0.45);
+}
+
+.result-confidence-high {
+  color: #9fd0ff;
+  border-color: rgba(52, 152, 219, 0.55);
+}
+
+.result-confidence-medium {
+  color: #bdbdbd;
+  border-color: rgba(120, 120, 120, 0.55);
+}
+
+.result-confidence-low {
+  color: #e6a6a6;
+  border-color: rgba(192, 57, 43, 0.45);
+}
+
+.result-fallback-available {
+  color: #d6c8ff;
+  border-color: rgba(155, 89, 182, 0.5);
+}
+
 .result-type-badge {
   display: inline-block;
   background: var(--crimson);
@@ -2015,6 +2076,12 @@ body {
   border-radius: 8px;
 }
 
+.maptiler-settings-note {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .empty-state {
   font-family: var(--font-mono);
   font-size: 12px;
@@ -2598,6 +2665,78 @@ body {
   font-size: 13px;
   color: var(--success);
   font-weight: 500;
+}
+
+/* Recent Etsy drafts panel */
+.etsy-drafts-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+
+.etsy-drafts-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.etsy-drafts-header h3 {
+  margin: 0;
+  font-family: var(--font-heading);
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+}
+
+.etsy-drafts-empty {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.etsy-drafts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.etsy-draft-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-input);
+}
+
+.etsy-draft-main {
+  min-width: 0;
+}
+
+.etsy-draft-title {
+  font-size: 12px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.etsy-draft-meta {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.etsy-draft-actions {
+  display: flex;
+  gap: 4px;
 }
 
 /* Landing page showcase price */

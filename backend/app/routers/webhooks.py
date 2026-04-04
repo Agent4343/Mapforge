@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import time
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Request, HTTPException
 from sqlalchemy import select
@@ -16,6 +17,10 @@ from app.models.db_models import User, Purchase, MarketplaceListing, DesignCredi
 from app.services.payments import verify_webhook_signature, create_transfer
 
 router = APIRouter(prefix="/api/v1/webhooks", tags=["webhooks"])
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 PLAN_TIER_MAP = {
     "price_maker_monthly": "maker",
@@ -374,6 +379,8 @@ async def _handle_etsy_order_paid(db: AsyncSession, data: dict, shop_id: str):
         price_cents=price_cents,
         redeem_token=token,
         status="unused",
+        max_downloads=1,
+        expires_at=_utcnow() + timedelta(days=30),
     )
     db.add(credit)
     await db.commit()
@@ -403,7 +410,7 @@ async def _handle_etsy_order_paid(db: AsyncSession, data: dict, shop_id: str):
                 f"1. Choose any location in the world\n"
                 f"2. Customize colors, style, and text\n"
                 f"3. Download your print-ready files\n\n"
-                f"You can redesign up to 5 times. Enjoy!"
+                f"This is a one-time digital download link for your purchase. Enjoy!"
             )
             sent = await send_buyer_message(
                 access_token=access_token,

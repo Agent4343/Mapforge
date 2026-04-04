@@ -18,6 +18,11 @@ export default function ExportPanel({
   user,
   printDPI,
   etsyShopUrl,
+  onStartEtsyCheckout,
+  checkoutBlockedReason,
+  onOverrideCheckoutBlock,
+  nearbyQualitySuggestions = [],
+  onPickNearbySuggestion,
 }) {
   const [showListForm, setShowListForm] = useState(false);
   const [listTitle, setListTitle] = useState("");
@@ -157,10 +162,23 @@ export default function ExportPanel({
 
   async function handleConnectEtsy() {
     try {
+      setListError(null);
       const { auth_url } = await connectEtsy();
+      if (!auth_url) {
+        throw new Error("Etsy connect did not return an authorization URL.");
+      }
       window.location.href = auth_url;
     } catch (err) {
-      setListError(err.message);
+      const message = err?.message || "Failed to start Etsy connection.";
+      if (/network error|failed to fetch|load failed|timeout/i.test(message)) {
+        const baseHint = `${window.location.origin}/api/v1/etsy/connect`;
+        setListError(
+          `${message} Troubleshooting: 1) Hard refresh this page (Ctrl+Shift+R). ` +
+          `2) Sign out and sign back in. 3) Verify backend endpoint is reachable: ${baseHint}`
+        );
+      } else {
+        setListError(message);
+      }
     }
   }
 
@@ -265,20 +283,22 @@ export default function ExportPanel({
               <label>Theme</label>
               <select value={showcaseTheme} onChange={(e) => setShowcaseTheme(e.target.value)}>
                 <option value="classic">Classic</option>
+                <option value="gallery_premium">Gallery Premium</option>
                 <option value="modern_dark">Modern Dark</option>
                 <option value="midnight">Midnight</option>
                 <option value="rose_gold">Rose Gold</option>
                 <option value="sage">Sage</option>
                 <option value="minimal">Minimal</option>
-                <option value="ocean_depths">Ocean Depths</option>
-                <option value="sunset_warm">Sunset Warm</option>
-                <option value="nordic_frost">Nordic Frost</option>
-                <option value="desert_sand">Desert Sand</option>
-                <option value="forest_green">Forest Green</option>
-                <option value="lavender_mist">Lavender Mist</option>
-                <option value="charcoal_gold">Charcoal Gold</option>
-                <option value="coastal_blue">Coastal Blue</option>
-                <option value="vintage_sepia">Vintage Sepia</option>
+                <option value="navy_gold">Navy &amp; Gold</option>
+                <option value="blush">Blush Pink</option>
+                <option value="ocean">Ocean Blue</option>
+                <option value="charcoal">Charcoal</option>
+                <option value="terracotta">Terracotta</option>
+                <option value="lavender">Lavender</option>
+                <option value="forest">Forest</option>
+                <option value="sunset">Sunset</option>
+                <option value="arctic">Arctic</option>
+                <option value="vintage_map">Vintage Map</option>
               </select>
             </div>
             <div className="control-group">
@@ -363,22 +383,73 @@ export default function ExportPanel({
         </div>
       )}
 
-      {/* Non-admin visitors: show "Buy on Etsy" CTA after they generate a preview */}
+      {/* Non-admin visitors: show Etsy handoff CTA after they generate a preview */}
       {result && !isAdmin && etsyShopUrl && (
         <div className="etsy-cta-section">
           <div className="etsy-cta-card">
             <h3>Love your design?</h3>
             <p>Get your print-ready files — high-resolution PNG, SVG source, and mockup image.</p>
-            <a
-              href={etsyShopUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn btn-etsy btn-full etsy-buy-btn"
-            >
-              Buy on Etsy — Get Your Files
-            </a>
+            {checkoutBlockedReason && (
+              <div
+                className="error-message"
+                style={{ marginBottom: "10px", fontSize: "12px" }}
+              >
+                {checkoutBlockedReason}
+              </div>
+            )}
+            {Array.isArray(nearbyQualitySuggestions) && nearbyQualitySuggestions.length > 0 && (
+              <div style={{ display: "grid", gap: "6px", marginBottom: "10px" }}>
+                {nearbyQualitySuggestions.map((s) => (
+                  <button
+                    key={`${s.osm_type}-${s.osm_id}`}
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ textAlign: "left", fontSize: "11px", padding: "6px 8px" }}
+                    onClick={() => {
+                      if (typeof onPickNearbySuggestion === "function") onPickNearbySuggestion(s);
+                    }}
+                  >
+                    <strong>{String(s.display_name || "").split(",")[0]}</strong>
+                    {" · "}
+                    {s.geometry_quality || "unknown"} geometry
+                    {s.is_recommended ? " · Best Match" : ""}
+                  </button>
+                ))}
+              </div>
+            )}
+            {typeof onStartEtsyCheckout === "function" ? (
+              <button
+                type="button"
+                className="btn btn-etsy btn-full etsy-buy-btn"
+                onClick={onStartEtsyCheckout}
+                disabled={!!checkoutBlockedReason}
+              >
+                Continue to Etsy Checkout
+              </button>
+            ) : (
+              <a
+                href={etsyShopUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-etsy btn-full etsy-buy-btn"
+              >
+                Buy on Etsy — Get Your Files
+              </a>
+            )}
+            {checkoutBlockedReason && typeof onOverrideCheckoutBlock === "function" && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-full"
+                style={{ marginTop: "8px" }}
+                onClick={onOverrideCheckoutBlock}
+              >
+                Continue Anyway
+              </button>
+            )}
             <p className="etsy-cta-note">
-              After purchase, you'll receive a unique link to download your custom print-ready files.
+              {typeof onStartEtsyCheckout === "function"
+                ? "We'll save this design and include a reference so you can continue after Etsy checkout."
+                : "After purchase, you'll receive a unique link to download your custom print-ready files."}
             </p>
           </div>
         </div>

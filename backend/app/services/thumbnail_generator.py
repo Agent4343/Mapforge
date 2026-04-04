@@ -504,24 +504,95 @@ COLOR_THEMES = {
             "text_secondary": "#4a3828",
         },
     },
+    "gallery_premium": {
+        "label": "Gallery Premium",
+        "background": "#f4eee2",
+        "colors": {
+            "#2a2a2a": "#cdbb9b",
+            "#1a1a1a": "#221a14",
+            "#d4e6f1": "#e3d8c2",
+            "#7fb3d3": "#4f4230",
+            "#333333": "#2b2119",
+            "#555555": "#594935",
+            "#444444": "#2b2119",
+            "#cccccc": "#cab899",
+            "#666666": "#5b4b38",
+        },
+        "poster": {
+            "mat": "#f4eee2",
+            "map_bg": "#f4eee2",
+            "land": "#e7dac1",
+            "land_stroke": "#5a4833",
+            "water": "#d8ccb2",
+            "water_stroke": "#4f4230",
+            "street_major": "#221a14",
+            "street_minor": "#5b4b38",
+            "street_label": "#2b2119",
+            "text_primary": "#221a14",
+            "text_secondary": "#5b4b38",
+        },
+    },
 }
+
+
+_COLOR_THEME_ALIASES = {
+    # Human-readable / loose forms
+    "vintage": "vintage_map",
+    "vintage_map": "vintage_map",
+    "gallery": "gallery_premium",
+    "gallery_premium": "gallery_premium",
+    "midnight_blue": "midnight",
+    "sage_green": "sage",
+    "minimal_bw": "minimal",
+    "minimal_b_w": "minimal",
+    "navy_and_gold": "navy_gold",
+    "blush_pink": "blush",
+    "ocean_blue": "ocean",
+    "forest_green": "forest",
+    # Legacy showcase keys from earlier UI variants
+    "ocean_depths": "ocean",
+    "sunset_warm": "sunset",
+    "nordic_frost": "arctic",
+    "desert_sand": "terracotta",
+    "lavender_mist": "lavender",
+    "charcoal_gold": "charcoal",
+    "coastal_blue": "ocean",
+    "vintage_sepia": "vintage_map",
+}
+
+
+def normalize_color_theme(theme_name: str | None) -> str:
+    """Normalize theme identifiers to supported COLOR_THEMES keys.
+
+    Accepts exact keys, common human-readable names (e.g. "Vintage Map"),
+    and legacy aliases used by older UI versions.
+    """
+    raw = str(theme_name or "").strip().lower()
+    if not raw:
+        return "classic"
+    key = re.sub(r"[^a-z0-9]+", "_", raw).strip("_")
+    if key in COLOR_THEMES:
+        return key
+    if key in _COLOR_THEME_ALIASES:
+        return _COLOR_THEME_ALIASES[key]
+    return key
 
 
 def get_theme_colors(theme_name: str) -> dict:
     """Get color map for a theme. Falls back to classic."""
-    theme = COLOR_THEMES.get(theme_name, COLOR_THEMES["classic"])
+    theme = COLOR_THEMES.get(normalize_color_theme(theme_name), COLOR_THEMES["classic"])
     return theme["colors"]
 
 
 def get_theme_background(theme_name: str) -> str:
     """Get background color for a theme."""
-    theme = COLOR_THEMES.get(theme_name, COLOR_THEMES["classic"])
+    theme = COLOR_THEMES.get(normalize_color_theme(theme_name), COLOR_THEMES["classic"])
     return theme["background"]
 
 
 def get_poster_theme(theme_name: str) -> dict:
     """Get poster-specific color palette for print-mode SVG generation."""
-    theme = COLOR_THEMES.get(theme_name, COLOR_THEMES["classic"])
+    theme = COLOR_THEMES.get(normalize_color_theme(theme_name), COLOR_THEMES["classic"])
     return theme.get("poster", COLOR_THEMES["classic"]["poster"])
 
 
@@ -532,8 +603,8 @@ def remap_poster_theme(svg_string: str, source_theme: str, target_theme: str) ->
     streets, text). This replaces every source color with the corresponding
     target color, producing a new themed SVG without re-running geometry.
     """
-    src = get_poster_theme(source_theme)
-    dst = get_poster_theme(target_theme)
+    src = get_poster_theme(normalize_color_theme(source_theme))
+    dst = get_poster_theme(normalize_color_theme(target_theme))
     result = svg_string
     for key in ("mat", "map_bg", "land", "land_stroke", "water", "water_stroke",
                 "street_major", "street_minor", "street_label",
@@ -629,6 +700,39 @@ def generate_print_image(
         output_width=output_width,
     )
     return png_bytes
+
+
+def generate_print_pdf(
+    svg_string: str,
+    *,
+    output_width_px: int = 4800,
+    board_size: str | None = None,
+    dpi: int = PRINT_DPI_STANDARD,
+    color_theme: str = "classic",
+    skip_remap: bool = False,
+) -> bytes:
+    """Render an SVG poster directly to a vector PDF.
+
+    CairoSVG preserves vector paths when converting SVG→PDF, which gives
+    sharper print output than raster-only workflows.
+    """
+    if skip_remap:
+        pdf_svg = svg_string
+    else:
+        colors = get_theme_colors(color_theme)
+        bg = get_theme_background(color_theme)
+        pdf_svg = _remap_colors(svg_string, colors)
+        pdf_svg = _add_background(pdf_svg, bg)
+
+    if board_size and board_size in PRINT_SIZE_PIXELS:
+        base_w, _base_h = PRINT_SIZE_PIXELS[board_size]
+        scale = dpi / PRINT_DPI_STANDARD
+        output_width_px = int(base_w * scale)
+
+    return cairosvg.svg2pdf(
+        bytestring=pdf_svg.encode("utf-8"),
+        output_width=output_width_px,
+    )
 
 
 def _remap_colors(svg_string: str, color_map: dict[str, str]) -> str:

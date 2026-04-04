@@ -52,3 +52,55 @@ async def get_etsy_credentials(db: AsyncSession) -> dict:
         "api_secret": api_secret,
         "redirect_uri": redirect_uri,
     }
+
+
+async def get_maptiler_key(db: AsyncSession) -> str:
+    """Get MapTiler key from DB settings, falling back to environment."""
+    from app.config import settings
+
+    return (
+        (await get_setting(db, "MAPTILER_KEY"))
+        or (await get_setting(db, "VITE_MAPTILER_KEY"))
+        or settings.MAPTILER_KEY
+        or ""
+    ).strip()
+
+
+async def get_maptiler_static_style(db: AsyncSession) -> str:
+    """Resolve MapTiler static style from DB settings with env fallback."""
+    from app.config import settings
+
+    return (
+        (await get_setting(db, "MAPTILER_STATIC_STYLE"))
+        or settings.MAPTILER_STATIC_STYLE
+        or "toner-v2"
+    ).strip()
+
+
+def _parse_bool(raw: str | None) -> bool:
+    """Parse flexible truthy strings used in env/DB settings."""
+    normalized = str(raw or "").strip()
+    if normalized.startswith(("'", '"')) and normalized.endswith(("'", '"')) and len(normalized) >= 2:
+        normalized = normalized[1:-1].strip()
+    return normalized.lower() in {"1", "true", "yes", "on", "enabled"}
+
+
+async def get_maptiler_only_mode(db: AsyncSession) -> bool:
+    """Resolve MapTiler-only mode from DB settings with env fallback.
+
+    Priority:
+      1) MAPFORGE_MAPTILER_ONLY_MODE (DB)
+      2) MAPTILER_ONLY_MODE (DB, legacy)
+      3) settings.MAPFORGE_MAPTILER_ONLY_MODE (env-derived)
+    Blank DB values do not block fallback.
+    """
+    from app.config import settings
+
+    primary = await get_setting(db, "MAPFORGE_MAPTILER_ONLY_MODE")
+    legacy = await get_setting(db, "MAPTILER_ONLY_MODE")
+
+    if primary is not None and str(primary).strip() != "":
+        return _parse_bool(primary)
+    if legacy is not None and str(legacy).strip() != "":
+        return _parse_bool(legacy)
+    return bool(settings.MAPFORGE_MAPTILER_ONLY_MODE)

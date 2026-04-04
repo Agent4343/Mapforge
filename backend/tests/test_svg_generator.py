@@ -6,6 +6,7 @@ from shapely.geometry import Polygon
 from app.models.schemas import CutStyle, ProductType
 from app.services.geometry_processor import process_geometry
 from app.services.svg_generator import generate_svg
+from app.services.thumbnail_generator import normalize_color_theme
 
 
 def _make_processed():
@@ -179,3 +180,274 @@ def test_svg_node_count():
     assert result["node_count"] > 0
     assert result["path_count"] > 0
     assert result["layer_count"] >= 3
+
+
+def test_gallery_premium_fallback_streets_include_land_boundary_and_texture():
+    processed = _make_processed()
+    fallback_streets = {
+        "major_roads": [(
+            [(10.0, 10.0), (40.0, 20.0), (80.0, 35.0)],
+            "boundary",
+            0.9,
+            "Boundary",
+        )],
+        "minor_roads": [],
+    }
+    result = generate_svg(
+        processed=processed,
+        location_name="Little Narrows",
+        style=CutStyle.filled,
+        show_coordinates=True,
+        font_size_mm=14,
+        streets_data=fallback_streets,
+        color_theme="gallery_premium",
+        product_type="city",
+        subtitle="No Forever & Always",
+        show_compass=True,
+        output_mode="print",
+    )
+    svg = result["svg"]
+    assert 'id="geography_base"' in svg
+    assert "terrain_hatch" in svg
+
+
+def test_gallery_premium_hides_placeholder_subtitle_no():
+    processed = _make_processed()
+    result = generate_svg(
+        processed=processed,
+        location_name="Nova Scotia",
+        style=CutStyle.filled,
+        show_coordinates=True,
+        font_size_mm=14,
+        color_theme="gallery_premium",
+        product_type="province",
+        subtitle="No",
+        output_mode="print",
+    )
+    svg = result["svg"]
+    assert ">No<" not in svg
+
+
+def test_gallery_premium_suppresses_short_fallback_segments():
+    processed = _make_processed()
+    fallback_streets = {
+        "major_roads": [
+            ([(10.0, 10.0), (10.8, 10.4)], "boundary", 0.9, "Boundary"),
+            ([(12.0, 12.0), (60.0, 30.0), (120.0, 50.0)], "boundary", 0.9, "Boundary"),
+        ],
+        "minor_roads": [],
+    }
+    result = generate_svg(
+        processed=processed,
+        location_name="Little Narrows",
+        style=CutStyle.filled,
+        show_coordinates=True,
+        font_size_mm=14,
+        streets_data=fallback_streets,
+        color_theme="gallery_premium",
+        product_type="city",
+        output_mode="print",
+    )
+    svg = result["svg"]
+    # Tiny segment should be omitted from fallback rendering. In vintage mode,
+    # each retained major road draws one casing path (opacity 0.58) and one ink path.
+    # Only one of the two fallback boundary segments should remain after filtering.
+    assert svg.count('opacity="0.58"') == 1
+
+
+def test_normalize_color_theme_accepts_human_readable_and_legacy_aliases():
+    assert normalize_color_theme("Vintage Map") == "vintage_map"
+    assert normalize_color_theme("vintage_sepia") == "vintage_map"
+    assert normalize_color_theme("Midnight Blue") == "midnight"
+    assert normalize_color_theme("ocean_depths") == "ocean"
+
+
+def test_generate_svg_accepts_gallery_alias_and_uses_vintage_renderer():
+    processed = _make_processed()
+    result = generate_svg(
+        processed=processed,
+        location_name="Halifax",
+        style=CutStyle.filled,
+        show_coordinates=True,
+        font_size_mm=14,
+        color_theme="Gallery Premium",
+        product_type="city",
+        output_mode="print",
+    )
+    assert "MapForge Vintage Map v1.0" in result["svg"]
+
+
+def test_generate_svg_vintage_map_uses_standard_theme_renderer():
+    processed = _make_processed()
+    result = generate_svg(
+        processed=processed,
+        location_name="Halifax",
+        style=CutStyle.filled,
+        show_coordinates=True,
+        font_size_mm=14,
+        color_theme="vintage_map",
+        product_type="city",
+        output_mode="print",
+    )
+    svg = result["svg"]
+    assert "MapForge Print Poster v1.0 | Theme: vintage_map" in svg
+    assert "MapForge Vintage Map v1.0" not in svg
+
+
+def test_province_print_streets_keeps_major_secondary_structure_and_avoids_white_centerlines():
+    processed = {
+        "polygons": [([(20, 20), (180, 20), (180, 150), (20, 150), (20, 20)], [])],
+        "bounds_mm": (20, 20, 180, 150),
+        "board_mm": (200.0, 260.0),
+        "center_latlon": (44.95, -79.45),
+        "node_count": 5,
+    }
+    streets = {
+        "major_roads": [
+            ([(20.0, 20.0), (120.0, 20.0)], "primary", 1.0, "Primary Hwy"),
+            ([(20.0, 35.0), (120.0, 35.0)], "secondary", 0.8, "Secondary Hwy"),
+        ],
+        "minor_roads": [],
+    }
+    result = generate_svg(
+        processed=processed,
+        location_name="Nova Scotia",
+        style=CutStyle.filled,
+        show_coordinates=True,
+        font_size_mm=14,
+        streets_data=streets,
+        color_theme="classic",
+        product_type="province",
+        output_mode="print",
+    )
+    svg = result["svg"]
+    # Primary + secondary should remain for richer province structure.
+    assert 'd="M20.0,20.0 L120.0,20.0"' in svg
+    assert 'd="M20.0,35.0 L120.0,35.0"' in svg
+    # Province centerline fill should use land color, not bright white.
+    assert 'stroke="#ffffff"' not in svg
+
+
+def test_print_svg_city_hides_boundary_polygon_fill_when_street_data_present():
+    processed = {
+        "polygons": [([(20, 20), (180, 20), (180, 150), (20, 150), (20, 20)], [])],
+        "bounds_mm": (20, 20, 180, 150),
+        "board_mm": (200.0, 260.0),
+        "center_latlon": (44.95, -79.45),
+        "node_count": 5,
+    }
+    streets = {
+        "major_roads": [
+            ([(20.0, 20.0), (120.0, 20.0)], "primary", 1.0, "Primary Hwy"),
+        ],
+        "minor_roads": [
+            ([(24.0, 25.0), (110.0, 40.0)], "residential", 0.4, "Local St"),
+        ],
+    }
+    result = generate_svg(
+        processed=processed,
+        location_name="Boundaryville",
+        style=CutStyle.filled,
+        show_coordinates=True,
+        font_size_mm=14,
+        streets_data=streets,
+        color_theme="classic",
+        product_type="city",
+        output_mode="print",
+    )
+    svg = result["svg"]
+    # City sellable mode should not draw a heavy enclosing admin-boundary fill.
+    assert 'fill="#f5f0e6"' not in svg
+    # And no explicit boundary-clip id should be present for city/community maps.
+    assert 'id="boundary_clip"' not in svg
+
+
+def test_print_svg_city_with_streets_uses_subtle_water_and_clean_stroke_hierarchy():
+    processed = {
+        "polygons": [([(20, 20), (180, 20), (180, 150), (20, 150), (20, 20)], [])],
+        "bounds_mm": (20, 20, 180, 150),
+        "board_mm": (200.0, 260.0),
+        "center_latlon": (44.95, -79.45),
+        "node_count": 5,
+    }
+    streets = {
+        "major_roads": [
+            ([(20.0, 20.0), (120.0, 20.0)], "primary", 1.0, "Primary Hwy"),
+        ],
+        "minor_roads": [
+            ([(24.0, 25.0), (110.0, 40.0)], "residential", 0.4, "Local St"),
+        ],
+    }
+    water = {
+        "water_polygons": [
+            ([(30.0, 40.0), (60.0, 40.0), (60.0, 70.0), (30.0, 70.0), (30.0, 40.0)], "lake", "Test Lake")
+        ],
+        "waterways": [],
+    }
+    result = generate_svg(
+        processed=processed,
+        location_name="Halifax",
+        style=CutStyle.filled,
+        show_coordinates=True,
+        font_size_mm=14,
+        streets_data=streets,
+        water_data=water,
+        color_theme="classic",
+        product_type="city",
+        output_mode="print",
+        show_compass=True,
+    )
+    svg = result["svg"]
+
+    # No city land texture overlay for street-rich city output.
+    assert 'id="land_texture_overlay"' not in svg
+    # City sellable mode removes relation-shell shadow artifacts.
+    assert 'id="land_shadow"' not in svg
+    # City water polygons should be subtle and stroke-light.
+    assert 'id="water_features"' in svg
+    assert 'stroke-width="0.32"' in svg
+    assert 'fill-opacity="0.45"' in svg
+    # City minor road casing/fill should stay light for cleaner premium look.
+    assert 'stroke-width="0.45"' in svg
+    assert 'stroke-width="0.23"' in svg
+    # City output should have a visible map frame and stronger separator for
+    # print-series consistency.
+    assert 'id="map_frame"' in svg
+    assert 'stroke-width="0.48"' in svg
+    # Title weight should be lighter than bold for better series consistency.
+    assert 'font-weight="600"' in svg
+    # Compass should render after frame so it appears anchored to map box.
+    assert 'id="compass_rose"' in svg
+    assert svg.index('id="map_frame"') < svg.index('id="compass_rose"')
+
+
+def test_print_svg_global_layout_quality_rules_apply_to_all_map_types():
+    processed = {
+        "polygons": [([(20, 20), (180, 20), (180, 150), (20, 150), (20, 20)], [])],
+        "bounds_mm": (20, 20, 180, 150),
+        "board_mm": (200.0, 260.0),
+        "center_latlon": (44.95, -79.45),
+        "node_count": 5,
+    }
+    result = generate_svg(
+        processed=processed,
+        location_name="Nova Scotia",
+        style=CutStyle.filled,
+        show_coordinates=True,
+        font_size_mm=14,
+        color_theme="classic",
+        product_type="province",
+        output_mode="print",
+        show_compass=True,
+    )
+    svg = result["svg"]
+    # Global quality rules: every poster gets a visible frame and readable separator.
+    assert 'id="map_frame"' in svg
+    assert 'stroke-width="0.6"' in svg
+    assert 'stroke-width="0.36"' in svg
+    assert 'stroke-width="0.42"' in svg
+    # Global title consistency (avoid extra-heavy bold across product types).
+    assert 'font-weight="600"' in svg
+    # Compass should render after frame for anchored composition.
+    assert 'id="compass_rose"' in svg
+    assert svg.index('id="map_frame"') < svg.index('id="compass_rose"')

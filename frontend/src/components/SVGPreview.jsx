@@ -62,6 +62,14 @@ const THEME_COLOR_MAPS = {
     bg: "#f0f8ff",
     map: { "#2a2a2a": "#85c1e9", "#1a1a1a": "#2c3e50", "#d4e6f1": "#d6eaf8", "#7fb3d3": "#5dade2", "#333333": "#2c3e50", "#555555": "#34495e", "#444444": "#1a252f", "#cccccc": "#aed6f1", "#666666": "#2c3e50" },
   },
+  vintage_map: {
+    bg: "#f0e6d0",
+    map: { "#2a2a2a": "#d8c8a8", "#1a1a1a": "#2a2018", "#d4e6f1": "#e8dcc4", "#7fb3d3": "#3a3020", "#333333": "#2a2018", "#555555": "#4a3828", "#444444": "#2a2018", "#cccccc": "#c8b890", "#666666": "#4a3828" },
+  },
+  gallery_premium: {
+    bg: "#f8f3e8",
+    map: { "#2a2a2a": "#ddd2ba", "#1a1a1a": "#1f1a14", "#d4e6f1": "#c8d8dc", "#7fb3d3": "#7a9aa6", "#333333": "#2f261b", "#555555": "#5b4a36", "#444444": "#3f3124", "#cccccc": "#cdbf9f", "#666666": "#6a5540" },
+  },
 };
 
 function applyPrintColors(svg, themeName) {
@@ -78,7 +86,19 @@ function applyPrintColors(svg, themeName) {
   return result;
 }
 
-export default function SVGPreview({ svgContent, loading, error, colorTheme }) {
+function sanitizeSvg(svg) {
+  if (!svg || typeof svg !== "string") return null;
+  // Client-side safety net; server should sanitize SVG too.
+  let cleaned = svg.replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "");
+  cleaned = cleaned.replace(/\son\w+\s*=\s*"[^"]*"/gi, "");
+  cleaned = cleaned.replace(/\son\w+\s*=\s*'[^']*'/gi, "");
+  cleaned = cleaned.replace(/\son\w+\s*=\s*[^\s>]+/gi, "");
+  cleaned = cleaned.replace(/\s(?:href|xlink:href)\s*=\s*"(?:javascript:|data:)[^"]*"/gi, "");
+  cleaned = cleaned.replace(/\s(?:href|xlink:href)\s*=\s*'(?:javascript:|data:)[^']*'/gi, "");
+  return cleaned;
+}
+
+export default function SVGPreview({ svgContent, previewPngB64 = null, loading, error, colorTheme }) {
   const [zoom, setZoom] = useState(100);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
@@ -95,7 +115,8 @@ export default function SVGPreview({ svgContent, loading, error, colorTheme }) {
   const displaySvg = useMemo(() => {
     if (!svgContent) return null;
 
-    let svg = svgContent;
+    let svg = sanitizeSvg(svgContent);
+    if (!svg) return null;
 
     // Make SVG responsive: set width to 100% and remove fixed height
     // so the viewBox attribute controls aspect ratio naturally
@@ -111,6 +132,11 @@ export default function SVGPreview({ svgContent, loading, error, colorTheme }) {
     // Fallback: apply client-side color remap for older SVGs
     return applyPrintColors(svg, colorTheme || "classic");
   }, [svgContent, isPrint, colorTheme]);
+
+  const displayRasterPreview = useMemo(() => {
+    if (!previewPngB64 || typeof previewPngB64 !== "string") return null;
+    return `data:image/png;base64,${previewPngB64}`;
+  }, [previewPngB64]);
 
   const handleMouseDown = useCallback(
     (e) => {
@@ -226,14 +252,31 @@ export default function SVGPreview({ svgContent, loading, error, colorTheme }) {
         background: isPrint ? theme.bg : undefined,
       }}
     >
-      <div
-        style={{
-          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom / 100})`,
-          transformOrigin: "center center",
-          transition: isPanning ? "none" : "transform 0.15s ease",
-        }}
-        dangerouslySetInnerHTML={{ __html: displaySvg }}
-      />
+      {displayRasterPreview ? (
+        <img
+          src={displayRasterPreview}
+          alt="Map preview"
+          style={{
+            width: "100%",
+            height: "auto",
+            display: "block",
+            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom / 100})`,
+            transformOrigin: "center center",
+            transition: isPanning ? "none" : "transform 0.15s ease",
+            userSelect: "none",
+            pointerEvents: "none",
+          }}
+        />
+      ) : (
+        <div
+          style={{
+            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom / 100})`,
+            transformOrigin: "center center",
+            transition: isPanning ? "none" : "transform 0.15s ease",
+          }}
+          dangerouslySetInnerHTML={{ __html: displaySvg }}
+        />
+      )}
       {/* Toolbar - positioned above the preview */}
       <div className="preview-toolbar">
         <button
