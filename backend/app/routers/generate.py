@@ -276,31 +276,60 @@ def _derive_city_street_focus_bounds_mm(
     if len(xs) < 2 or len(ys) < 2:
         return None
 
-    min_x, max_x = min(xs), max(xs)
-    min_y, max_y = min(ys), max(ys)
+    def _quantile(values: list[float], q: float) -> float:
+        ordered = sorted(values)
+        if not ordered:
+            return 0.0
+        if len(ordered) == 1:
+            return ordered[0]
+        pos = (len(ordered) - 1) * q
+        lo = int(pos)
+        hi = min(lo + 1, len(ordered) - 1)
+        frac = pos - lo
+        return ordered[lo] * (1.0 - frac) + ordered[hi] * frac
+
+    raw_min_x, raw_max_x = min(xs), max(xs)
+    raw_min_y, raw_max_y = min(ys), max(ys)
+    raw_w = max(0.01, raw_max_x - raw_min_x)
+    raw_h = max(0.01, raw_max_y - raw_min_y)
+
+    # Robust street footprint: ignore long-tail outlier segments that can
+    # pull composition off-center in dense metros (e.g. Houston arterials).
+    q_min_x = _quantile(xs, 0.03)
+    q_max_x = _quantile(xs, 0.97)
+    q_min_y = _quantile(ys, 0.03)
+    q_max_y = _quantile(ys, 0.97)
+    q_w = max(0.01, q_max_x - q_min_x)
+    q_h = max(0.01, q_max_y - q_min_y)
+
+    if q_w >= raw_w * 0.45 and q_h >= raw_h * 0.45:
+        min_x, max_x = q_min_x, q_max_x
+        min_y, max_y = q_min_y, q_max_y
+    else:
+        min_x, max_x = raw_min_x, raw_max_x
+        min_y, max_y = raw_min_y, raw_max_y
+
     street_w = max(0.01, max_x - min_x)
     street_h = max(0.01, max_y - min_y)
     board_w, board_h = float(board_mm[0]), float(board_mm[1])
 
-    # Avoid over-zooming into a tiny cluster: keep a healthy minimum composition box.
-    min_focus_w = board_w * 0.50
-    min_focus_h = board_h * 0.45
+    # Avoid over-zooming into a tiny cluster while still keeping city core large.
+    min_focus_w = board_w * 0.42
+    min_focus_h = board_h * 0.40
     focus_w = max(street_w * (1.0 + padding_ratio), min_focus_w)
     focus_h = max(street_h * (1.0 + padding_ratio), min_focus_h)
-    focus_w = min(focus_w, board_w)
-    focus_h = min(focus_h, board_h)
+    focus_w = min(focus_w, board_w * 0.95)
+    focus_h = min(focus_h, board_h * 0.95)
 
     cx = (min_x + max_x) / 2.0
     cy = (min_y + max_y) / 2.0
     half_w = focus_w / 2.0
     half_h = focus_h / 2.0
 
-    candidate = (
-        max(0.0, cx - half_w),
-        max(0.0, cy - half_h),
-        min(board_w, cx + half_w),
-        min(board_h, cy + half_h),
-    )
+    # Clamp by translation (not truncation) to preserve composition size.
+    left = min(max(0.0, cx - half_w), max(0.0, board_w - focus_w))
+    top = min(max(0.0, cy - half_h), max(0.0, board_h - focus_h))
+    candidate = (left, top, left + focus_w, top + focus_h)
 
     # Keep only meaningful refinements.
     orig_min_x, orig_min_y, orig_max_x, orig_max_y = original
@@ -309,8 +338,8 @@ def _derive_city_street_focus_bounds_mm(
     cand_w = max(0.01, float(candidate[2] - candidate[0]))
     cand_h = max(0.01, float(candidate[3] - candidate[1]))
 
-    # If candidate is not tighter than original by at least ~8%, skip.
-    if cand_w >= orig_w * 0.92 and cand_h >= orig_h * 0.92:
+    # If candidate is not tighter than original by at least ~3%, skip.
+    if cand_w >= orig_w * 0.97 and cand_h >= orig_h * 0.97:
         return None
     return candidate
 

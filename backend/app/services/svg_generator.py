@@ -523,10 +523,21 @@ def _generate_print_svg(
     if layout.get("force_font"):
         font_family = layout["force_font"]
 
+    has_city_streets = (
+        product_type in ("city", "community")
+        and bool(streets_data and (streets_data.get("major_roads") or streets_data.get("minor_roads")))
+    )
+
     # Poster layout dimensions from layout config
     mat_pct = layout["mat_pct"]
     text_area_pct = layout["text_area_pct"]
     full_bleed_map = layout.get("full_bleed_map", False)
+    # City/community street art benefits from a slightly larger map window and
+    # a tighter text area to reduce dead whitespace.
+    if has_city_streets and not full_bleed_map:
+        mat_pct = max(0.03, mat_pct * 0.78)
+        if layout.get("text_position") == "bottom":
+            text_area_pct = max(0.12, text_area_pct * 0.82)
 
     if full_bleed_map:
         # Full-bleed: map fills entire board, text overlaid
@@ -724,7 +735,7 @@ def _generate_print_svg(
     # the shape of the lake or province is the main content.
     # Land shadow — render BEFORE geography so it appears behind the land mass
     # Sparse/rural areas get a deeper shadow for more visual depth
-    if land_shadow and not full_bleed_map:
+    if land_shadow and not full_bleed_map and not city_sellable_mode:
         shadow_opacity = "0.18" if is_sparse_area else "0.12"
         lines.append(f'    <g id="land_shadow" opacity="{shadow_opacity}">')
         shadow_scale = 0.006 if is_sparse_area else 0.004
@@ -871,10 +882,6 @@ def _generate_print_svg(
         )
         lines.append("    </g>")
 
-    # Compass rose
-    if show_compass:
-        _add_compass_rose(lines, map_x, map_y, map_w, map_h, theme)
-
     # Scale bar
     if show_scale_bar and latlon:
         _add_scale_bar(lines, map_x, map_y, map_w, map_h, latlon, processed, theme)
@@ -883,21 +890,34 @@ def _generate_print_svg(
     lines.append("")
 
     # Map frame and text — depends on layout
-    if layout.get("map_frame", False) and not full_bleed_map:
+    if (layout.get("map_frame", False) or city_sellable_mode) and not full_bleed_map:
         inset = 1.5
+        frame_color = theme["land_stroke"]
+        frame_primary_w = "0.6"
+        frame_secondary_w = "0.25"
+        frame_secondary_opacity = "0.5"
+        if city_sellable_mode:
+            frame_color = theme.get("text_secondary", theme["land_stroke"])
+            frame_primary_w = "0.9"
+            frame_secondary_w = "0.4"
+            frame_secondary_opacity = "0.72"
         lines.append('  <g id="map_frame">')
         lines.append(
             f'    <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"'
-            f' fill="none" stroke="{theme["land_stroke"]}" stroke-width="0.6"/>'
+            f' fill="none" stroke="{frame_color}" stroke-width="{frame_primary_w}"/>'
         )
         lines.append(
             f'    <rect x="{round(map_x - inset, 2)}" y="{round(map_y - inset, 2)}"'
             f' width="{round(map_w + 2 * inset, 2)}" height="{round(map_h + 2 * inset, 2)}"'
-            f' fill="none" stroke="{theme["land_stroke"]}" stroke-width="0.25"'
-            f' opacity="0.5"/>'
+            f' fill="none" stroke="{frame_color}" stroke-width="{frame_secondary_w}"'
+            f' opacity="{frame_secondary_opacity}"/>'
         )
         lines.append("  </g>")
         lines.append("")
+
+    # Compass rose — render after map frame so it reads as anchored to frame.
+    if show_compass:
+        _add_compass_rose(lines, map_x, map_y, map_w, map_h, theme)
 
     # Ornate corners for vintage layout
     if layout.get("ornate_corners", False):
@@ -912,9 +932,17 @@ def _generate_print_svg(
         else:
             sep_y = round(map_y + map_h + text_area_h * 0.10, 2)
         sep_margin = round(board_w * 0.25, 2)
+        sep_color = theme["land_stroke"]
+        sep_width = "0.3"
+        sep_opacity = "0.4"
+        if city_sellable_mode and text_position == "bottom":
+            sep_margin = round(board_w * 0.22, 2)
+            sep_color = theme.get("text_secondary", theme["land_stroke"])
+            sep_width = "0.48"
+            sep_opacity = "0.7"
         lines.append(
             f'  <line x1="{sep_margin}" y1="{sep_y}" x2="{round(board_w - sep_margin, 2)}" y2="{sep_y}"'
-            f' stroke="{theme["land_stroke"]}" stroke-width="0.3" opacity="0.4"/>'
+            f' stroke="{sep_color}" stroke-width="{sep_width}" opacity="{sep_opacity}"/>'
         )
         lines.append("")
 
@@ -927,6 +955,9 @@ def _generate_print_svg(
     coord_size = round(font_size_mm * 0.45, 2)
 
     title_text = location_name.upper()
+    title_weight = "bold"
+    if city_sellable_mode and text_position == "bottom":
+        title_weight = "600"
     char_width_factor = 0.75
     title_tracking = title_size * 0.2
     est_title_width = len(title_text) * (title_size * char_width_factor + title_tracking)
@@ -957,7 +988,7 @@ def _generate_print_svg(
         lines.append(
             f'    <text x="{text_center_x}" y="{round(text_y, 2)}"'
             f' text-anchor="middle" font-family="{ff}"'
-            f' font-size="{title_size}" font-weight="bold"'
+            f' font-size="{title_size}" font-weight="{title_weight}"'
             f' letter-spacing="{round(title_tracking, 2)}"'
             f' fill="{theme["text_primary"]}">{_escape_xml(title_text)}</text>'
         )
@@ -993,7 +1024,7 @@ def _generate_print_svg(
         lines.append(
             f'    <text x="{text_center_x}" y="{round(text_start_y, 2)}"'
             f' text-anchor="middle" font-family="{ff}"'
-            f' font-size="{title_size}" font-weight="bold"'
+            f' font-size="{title_size}" font-weight="{title_weight}"'
             f' letter-spacing="{round(title_tracking, 2)}"'
             f' fill="{theme["text_primary"]}">{_escape_xml(title_text)}</text>'
         )
@@ -1034,7 +1065,7 @@ def _generate_print_svg(
         lines.append(
             f'    <text x="{text_center_x}" y="{round(text_start_y, 2)}"'
             f' text-anchor="middle" font-family="{ff}"'
-            f' font-size="{title_size}" font-weight="bold"'
+            f' font-size="{title_size}" font-weight="{title_weight}"'
             f' letter-spacing="{round(title_tracking, 2)}"'
             f' fill="{theme["text_primary"]}">{_escape_xml(title_text)}</text>'
         )
@@ -1664,13 +1695,20 @@ def _add_compass_rose(
     theme: dict,
 ) -> None:
     """Add a compass rose indicator in the top-right corner of the map."""
-    size = min(map_w, map_h) * 0.06
-    cx = round(map_x + map_w - size * 2.5, 2)
-    cy = round(map_y + size * 2.5, 2)
+    size = min(map_w, map_h) * 0.054
+    edge_pad = max(6.0, min(map_w, map_h) * 0.028)
+    cx = round(map_x + map_w - edge_pad - size * 0.55, 2)
+    cy = round(map_y + edge_pad + size * 0.62, 2)
     text_color = theme.get("text_primary", "#1a1a1a")
     stroke_color = theme.get("land_stroke", "#333333")
+    backdrop_color = theme.get("map_bg", "#ffffff")
 
-    lines.append(f'    <g id="compass_rose" opacity="0.6">')
+    lines.append(f'    <g id="compass_rose" opacity="0.84">')
+    lines.append(
+        f'      <circle cx="{cx}" cy="{cy}" r="{round(size * 0.96, 2)}"'
+        f' fill="{backdrop_color}" fill-opacity="0.78"'
+        f' stroke="{stroke_color}" stroke-opacity="0.35" stroke-width="0.24"/>'
+    )
 
     # North arrow (filled triangle pointing up)
     n_top = round(cy - size, 2)
@@ -1688,9 +1726,9 @@ def _add_compass_rose(
     )
     # East/West ticks
     lines.append(
-        f'      <line x1="{round(cx - size * 0.6, 2)}" y1="{cy}"'
-        f' x2="{round(cx + size * 0.6, 2)}" y2="{cy}"'
-        f' stroke="{stroke_color}" stroke-width="0.3"/>'
+        f'      <line x1="{round(cx - size * 0.58, 2)}" y1="{cy}"'
+        f' x2="{round(cx + size * 0.58, 2)}" y2="{cy}"'
+        f' stroke="{stroke_color}" stroke-width="0.28"/>'
     )
     # N label
     label_size = round(size * 0.5, 2)
@@ -1985,10 +2023,17 @@ def _render_print_water(
         path_d = _coords_to_path(board_coords)
         # Use gradient for larger water bodies (>6 points suggests a significant feature)
         fill = "url(#water_grad)" if gradient and len(coords) > 6 else theme["water"]
+        stroke_w = "0.5"
+        fill_opacity_attr = ""
+        if street_mode:
+            # City/community street posters should keep water subtle so roads remain
+            # dominant and legible at print scale.
+            stroke_w = "0.32"
+            fill_opacity_attr = ' fill-opacity="0.45"'
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="{fill}" stroke="{theme["water_stroke"]}"'
-            f' stroke-width="0.5" stroke-linejoin="round"/>'
+            f' stroke-width="{stroke_w}" stroke-linejoin="round"{fill_opacity_attr}/>'
         )
 
     for coords, water_type, name in water_data.get("waterways", []):
@@ -1997,6 +2042,8 @@ def _render_print_water(
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_open_path(board_coords)
         width = 1.0 if water_type in ("river", "coastline") else 0.4
+        if street_mode:
+            width = 0.7 if water_type in ("river", "coastline") else 0.28
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="none" stroke="{theme["water_stroke"]}" stroke-width="{width}"'

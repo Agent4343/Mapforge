@@ -395,14 +395,27 @@ def test_print_svg_city_with_streets_uses_subtle_water_and_clean_stroke_hierarch
         color_theme="classic",
         product_type="city",
         output_mode="print",
+        show_compass=True,
     )
     svg = result["svg"]
 
     # No city land texture overlay for street-rich city output.
     assert 'id="land_texture_overlay"' not in svg
+    # City sellable mode removes relation-shell shadow artifacts.
+    assert 'id="land_shadow"' not in svg
     # City water polygons should be subtle and stroke-light.
     assert 'id="water_features"' in svg
-    assert 'stroke-width="0.3"' in svg
+    assert 'stroke-width="0.32"' in svg
+    assert 'fill-opacity="0.45"' in svg
     # City minor road casing/fill should stay light for cleaner premium look.
-    assert 'stroke-width="0.3"' in svg
+    assert 'stroke-width="0.45"' in svg
     assert 'stroke-width="0.23"' in svg
+    # City output should have a visible map frame and stronger separator for
+    # print-series consistency.
+    assert 'id="map_frame"' in svg
+    assert 'stroke-width="0.48"' in svg
+    # Title weight should be lighter than bold for better series consistency.
+    assert 'font-weight="600"' in svg
+    # Compass should render after frame so it appears anchored to map box.
+    assert 'id="compass_rose"' in svg
+    assert svg.index('id="map_frame"') < svg.index('id="compass_rose"')
