@@ -19,7 +19,7 @@ _transformer = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
 
 # Douglas-Peucker tolerances (meters) per product type
 SIMPLIFICATION_TOLERANCES = {
-    ProductType.province: 800.0,
+    ProductType.province: 200.0,
     ProductType.lake: 50.0,
     ProductType.city: 75.0,
     ProductType.community: 30.0,
@@ -60,9 +60,13 @@ def process_geometry(
     polys = list(geom_m.geoms) if isinstance(geom_m, MultiPolygon) else [geom_m]
 
     # Step 4: Filter small polygons
+    # At province scale, tiny islands just look like noise dots on the poster.
+    effective_min_area = min_island_area_m2
+    if product_type == ProductType.province:
+        effective_min_area = max(min_island_area_m2, 500_000.0)  # ~700m x 700m minimum
     if len(polys) > 1:
         largest_area = max(p.area for p in polys)
-        polys = [p for p in polys if p.area >= min_island_area_m2 or p.area >= largest_area * 0.001]
+        polys = [p for p in polys if p.area >= effective_min_area or p.area >= largest_area * 0.005]
 
     if not include_islands and len(polys) > 1:
         largest = max(polys, key=lambda p: p.area)
@@ -173,7 +177,7 @@ def _get_tolerance(geom_m: Polygon | MultiPolygon, product_type: ProductType, si
     elif extent < 500000:   # < 500km
         return base
     else:                   # > 500km (provinces)
-        return base * 1.5
+        return base * 1.2
 
 
 def _scale_to_board(

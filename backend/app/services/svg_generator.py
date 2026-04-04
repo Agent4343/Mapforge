@@ -2078,17 +2078,17 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
 
     # Width multipliers for province vs city scale
     if is_province:
-        # Province: bold, clear highways visible at small scale
+        # Province: bold, clear highways visible at province scale
         casing_widths = {
-            "motorway": 2.4, "motorway_link": 1.8,
-            "trunk": 2.0, "trunk_link": 1.5,
-            "primary": 1.4, "primary_link": 1.1,
-            "secondary": 1.0, "secondary_link": 0.75,
+            "motorway": 3.0, "motorway_link": 2.2,
+            "trunk": 2.6, "trunk_link": 1.8,
+            "primary": 2.0, "primary_link": 1.4,
+            "secondary": 1.4, "secondary_link": 1.0,
             "tertiary": 1.0, "tertiary_link": 0.8,
             "residential": 0.5, "unclassified": 0.5,
             "living_street": 0.5, "service": 0.4, "track": 0.35,
         }
-        fill_ratio = 0.5
+        fill_ratio = 0.45
     elif product_type in ("community", "park"):
         # Community/rural: thicker roads to fill sparse areas
         casing_widths = {
@@ -2141,16 +2141,19 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
     province_keep_major_classes = {
         "motorway", "motorway_link", "trunk", "trunk_link",
         "primary", "primary_link", "secondary", "secondary_link",
+        "tertiary", "tertiary_link",
     }
     province_min_len_by_class = {
-        "motorway": 2.0,
-        "motorway_link": 3.0,
-        "trunk": 2.0,
-        "trunk_link": 3.0,
-        "primary": 2.4,
-        "primary_link": 3.2,
-        "secondary": 4.8,
-        "secondary_link": 4.2,
+        "motorway": 1.5,
+        "motorway_link": 2.0,
+        "trunk": 1.5,
+        "trunk_link": 2.0,
+        "primary": 1.8,
+        "primary_link": 2.2,
+        "secondary": 2.5,
+        "secondary_link": 2.8,
+        "tertiary": 3.0,
+        "tertiary_link": 3.5,
     }
 
     for coords, road_class, _width, name in streets_data.get("major_roads", []):
