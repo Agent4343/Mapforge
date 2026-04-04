@@ -431,10 +431,16 @@ async def test_generate_maptiler_only_mode_applies_to_province_and_skips_overlay
     async def _raise_if_called(*_args, **_kwargs):
         raise AssertionError("Overpass overlay fetch should not run in MapTiler-only mode")
 
+    async def _mock_fetch_streets(*_args, **_kwargs):
+        return {"major_roads": [([(-60.21, 46.08), (-60.15, 46.12)], "primary", 0.9, "Hwy")], "minor_roads": []}
+
+    async def _mock_fetch_water(*_args, **_kwargs):
+        return {"water_polygons": [], "waterways": [([(-60.2, 46.09), (-60.16, 46.11)], "river", "River")]}
+
     with (
         patch("app.routers.generate.fetch_geometry", side_effect=_mock_fetch_geometry),
-        patch("app.routers.generate.fetch_streets", side_effect=_raise_if_called),
-        patch("app.routers.generate.fetch_water_features", side_effect=_raise_if_called),
+        patch("app.routers.generate.fetch_streets", side_effect=_mock_fetch_streets),
+        patch("app.routers.generate.fetch_water_features", side_effect=_mock_fetch_water),
         patch("app.routers.generate.fetch_contour_lines", side_effect=_raise_if_called),
         patch("app.routers.generate.settings.MAPFORGE_MAPTILER_ONLY_MODE", True),
     ):
@@ -442,6 +448,7 @@ async def test_generate_maptiler_only_mode_applies_to_province_and_skips_overlay
 
     joined = " ".join(resp.warnings).lower()
     assert "overpass api may be busy" not in joined
+    assert "maptiler static map render failed" not in joined
 
 
 @pytest.mark.asyncio

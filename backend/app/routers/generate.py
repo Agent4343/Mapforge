@@ -342,7 +342,9 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     need_water = req.product_type.value in water_types or req.product_type.value == "province"
 
     # Strict production mode: rely on MapTiler rendering path, not Overpass overlays.
-    if maptiler_only_mode:
+    # Provinces are intentionally excluded: province map art should keep roads/water
+    # from vector overlays for a sellable poster result.
+    if maptiler_only_mode and not province_svg_art_mode:
         need_streets = False
         need_water = False
     if city_vector_road_art_mode:
@@ -367,9 +369,9 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             )
 
     # Always fetch major highways for provinces — with cased road styling
-    # they look professional and give the map structure
+    # they look professional and give the map structure.
     is_province = req.product_type.value == "province"
-    if is_province and not need_streets and not maptiler_only_mode:
+    if is_province and not need_streets:
         need_streets = True
 
     bounds = geom.bounds  # minx, miny, maxx, maxy
