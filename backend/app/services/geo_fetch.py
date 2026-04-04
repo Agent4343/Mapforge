@@ -26,22 +26,28 @@ OVERPASS_HEADERS = {"User-Agent": "MapForgeCNC/1.0 (https://mapforge-production.
 OSM_TYPE_MAP = {"node": "N", "way": "W", "relation": "R"}
 
 
-async def fetch_geometry(osm_id: int, osm_type: str = "relation") -> MultiPolygon | Polygon | None:
+async def fetch_geometry(osm_id: int, osm_type: str = "relation", *, bust_cache: bool = False) -> MultiPolygon | Polygon | None:
     """Fetch full polygon geometry for an OSM feature.
 
     Checks cache first, then tries Nominatim (fast path), falls back to Overpass.
     """
-    # Check cache
     cache_key = make_geometry_key(osm_id, osm_type)
-    cached = await cache_get(cache_key)
-    if cached is not None:
-        try:
-            geom = shape(cached)
-            if isinstance(geom, (Polygon, MultiPolygon)):
-                log.info(f"Geometry cache hit: {osm_type}/{osm_id}")
-                return geom
-        except Exception:
-            pass
+
+    if bust_cache:
+        await cache_delete(cache_key)
+        log.info(f"Cache busted for geometry: {osm_type}/{osm_id}")
+
+    # Check cache
+    if not bust_cache:
+        cached = await cache_get(cache_key)
+        if cached is not None:
+            try:
+                geom = shape(cached)
+                if isinstance(geom, (Polygon, MultiPolygon)):
+                    log.info(f"Geometry cache hit: {osm_type}/{osm_id}")
+                    return geom
+            except Exception:
+                pass
 
     geom = await _fetch_via_nominatim(osm_id, osm_type)
     if geom is None:
@@ -55,6 +61,12 @@ async def fetch_geometry(osm_id: int, osm_type: str = "relation") -> MultiPolygo
             log.debug(f"Failed to cache geometry: {e}")
 
     return geom
+
+
+async def invalidate_geometry_cache(osm_id: int, osm_type: str = "relation") -> bool:
+    """Invalidate cached geometry for a specific OSM feature."""
+    cache_key = make_geometry_key(osm_id, osm_type)
+    return await cache_delete(cache_key)
 
 
 async def fetch_fallback_geometry(osm_id: int, osm_type: str = "relation") -> Polygon | None:

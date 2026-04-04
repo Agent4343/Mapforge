@@ -429,8 +429,11 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             req = req.model_copy(update={"print_dpi": effective_dpi})
 
     # Fetch geometry
+    # Bust geometry cache for provinces — ensures fresh data from OSM
+    # while province rendering is being refined.
+    is_province_type = req.product_type.value == "province"
     log.info(f"Generating {req.product_type.value} for OSM {req.osm_type}/{req.osm_id}")
-    geom = await fetch_geometry(req.osm_id, req.osm_type)
+    geom = await fetch_geometry(req.osm_id, req.osm_type, bust_cache=is_province_type)
     geometry_fallback_used = False
     if geom is None:
         geom = await fetch_fallback_geometry(req.osm_id, req.osm_type)
