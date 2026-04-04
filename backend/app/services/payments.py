@@ -6,9 +6,7 @@ from fastapi import HTTPException
 from app.config import settings
 from app.logging_config import log
 
-def _ensure_stripe_key():
-    """Set the Stripe API key at call time so runtime config changes take effect."""
-    stripe.api_key = settings.STRIPE_SECRET_KEY
+stripe.api_key = settings.STRIPE_SECRET_KEY
 
 SUBSCRIPTION_PRICES = {
     "maker_monthly": "price_maker_monthly",  # Set via env/Stripe dashboard
@@ -20,7 +18,6 @@ SUBSCRIPTION_PRICES = {
 
 async def create_customer(email: str, name: str) -> str:
     """Create a Stripe customer. Returns customer ID."""
-    _ensure_stripe_key()
     if not settings.STRIPE_SECRET_KEY:
         log.warning("Stripe not configured — returning mock customer ID")
         return f"cus_mock_{email.split('@')[0]}"
@@ -37,7 +34,6 @@ async def create_checkout_session(
     cancel_url: str,
 ) -> str:
     """Create a Stripe Checkout session for subscription. Returns session URL."""
-    _ensure_stripe_key()
     if not settings.STRIPE_SECRET_KEY:
         raise HTTPException(status_code=503, detail="Payments not configured")
 
@@ -59,7 +55,6 @@ async def create_payment_intent(
     transfer_group: str | None = None,
 ) -> dict:
     """Create a payment intent for a marketplace purchase."""
-    _ensure_stripe_key()
     if not settings.STRIPE_SECRET_KEY:
         log.warning("Stripe not configured — returning mock payment intent")
         return {
@@ -92,7 +87,6 @@ async def create_transfer(
     transfer_group: str | None = None,
 ) -> str | None:
     """Transfer funds to a seller's connected account."""
-    _ensure_stripe_key()
     if not settings.STRIPE_SECRET_KEY:
         return None
 
@@ -109,7 +103,6 @@ async def create_transfer(
 
 async def create_connected_account(email: str, country: str = "CA") -> str:
     """Create a Stripe Connect Express account for a seller."""
-    _ensure_stripe_key()
     if not settings.STRIPE_SECRET_KEY:
         log.warning("Stripe not configured — returning mock account ID")
         return f"acct_mock_{email.split('@')[0]}"
@@ -132,7 +125,6 @@ async def create_account_onboarding_link(
     return_url: str,
 ) -> str:
     """Create an onboarding link for a seller to complete Stripe setup."""
-    _ensure_stripe_key()
     if not settings.STRIPE_SECRET_KEY:
         raise HTTPException(status_code=503, detail="Payments not configured")
 
@@ -147,7 +139,6 @@ async def create_account_onboarding_link(
 
 async def get_account_status(account_id: str) -> dict:
     """Check the status of a connected account."""
-    _ensure_stripe_key()
     if not settings.STRIPE_SECRET_KEY:
         return {"charges_enabled": False, "payouts_enabled": False, "details_submitted": False}
 
@@ -165,7 +156,6 @@ async def create_payout(
     description: str = "MapForge marketplace payout",
 ) -> str | None:
     """Create a payout to a seller's connected account bank."""
-    _ensure_stripe_key()
     if not settings.STRIPE_SECRET_KEY:
         return None
 
@@ -184,7 +174,6 @@ async def create_payout(
 
 def verify_webhook_signature(payload: bytes, sig_header: str) -> dict:
     """Verify and parse a Stripe webhook event."""
-    _ensure_stripe_key()
     if not settings.STRIPE_WEBHOOK_SECRET:
         raise HTTPException(status_code=503, detail="Webhook secret not configured")
 
