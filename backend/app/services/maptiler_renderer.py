@@ -259,18 +259,19 @@ def _stylize_map_for_print_art(map_img: Image.Image, product_type: str | None) -
     """Convert city-scale map tiles into cleaner monochrome poster linework."""
     pt = (product_type or "").strip().lower()
     if pt == "province":
-        gray = map_img.convert("L").filter(ImageFilter.GaussianBlur(0.9))
-        edge_mask = gray.filter(ImageFilter.FIND_EDGES).point(lambda p: 255 if p > 34 else 0, mode="L")
-        edge_mask = edge_mask.filter(ImageFilter.MaxFilter(3)).filter(ImageFilter.MinFilter(3))
-        # Remove dense tiny clusters (usually labels/symbol clutter) while
-        # preserving larger geographic line structures.
-        clutter_density = edge_mask.filter(ImageFilter.BoxBlur(1.9))
-        clutter_mask = clutter_density.point(lambda p: 255 if p > 170 else 0, mode="L")
-        edge_mask = ImageChops.subtract(edge_mask, clutter_mask)
-        art = Image.new("RGB", map_img.size, color="#ecebe8")
-        line_layer = Image.new("RGB", map_img.size, color="#6f6f6f")
-        art.paste(line_layer, mask=edge_mask)
-        return art
+        # Province maps should preserve natural geographic features (land, water,
+        # coastline) rather than reducing everything to a faint pencil sketch.
+        # Desaturate slightly and boost contrast for a clean poster aesthetic,
+        # but keep the map readable with visible features.
+        from PIL import ImageEnhance
+        img = map_img.copy()
+        # Reduce saturation for a muted poster tone (not fully grayscale)
+        img = ImageEnhance.Color(img).enhance(0.35)
+        # Boost contrast so roads and coastline stand out
+        img = ImageEnhance.Contrast(img).enhance(1.3)
+        # Slightly brighten to keep a light, airy poster feel
+        img = ImageEnhance.Brightness(img).enhance(1.05)
+        return img
 
     if pt not in {"city", "community", "name_sign"}:
         return map_img
@@ -339,9 +340,9 @@ def _pick_art_style(style: str, product_type: str | None) -> str:
     if pt in _CITY_ART_PRODUCT_TYPES:
         return "basic-v2"
     if pt == "province":
-        # Province posters look cleaner in the backdrop family and avoid dense
-        # label-heavy static styles that resemble screenshot tiles.
-        return "backdrop"
+        # Province posters need a clean style with visible land/water/roads.
+        # basic-v2 provides clear geographic features without dense labels.
+        return "basic-v2"
     return style
 
 
@@ -357,7 +358,8 @@ def _line_ink_ratio(map_img: Image.Image) -> float:
 
 def _should_recover_from_blank_art(raw_img: Image.Image, styled_img: Image.Image, product_type: str | None) -> bool:
     """Detect aggressive post-processing that erased most visible linework."""
-    if (product_type or "").strip().lower() not in _CITY_ART_PRODUCT_TYPES:
+    pt = (product_type or "").strip().lower()
+    if pt not in _CITY_ART_PRODUCT_TYPES and pt != "province":
         return False
     raw_ratio = _line_ink_ratio(raw_img)
     styled_ratio = _line_ink_ratio(styled_img)
