@@ -60,13 +60,26 @@ def process_geometry(
     polys = list(geom_m.geoms) if isinstance(geom_m, MultiPolygon) else [geom_m]
 
     # Step 4: Filter small polygons
-    # At province scale, tiny islands just look like noise dots on the poster.
+    # At province scale, tiny islands look like noise dots — but the threshold
+    # must scale with province size. Small provinces (PEI, NS) need to keep
+    # smaller islands that are part of their visual identity.
     effective_min_area = min_island_area_m2
+    relative_threshold = 0.005  # 0.5% of largest polygon
     if product_type == ProductType.province:
-        effective_min_area = max(min_island_area_m2, 500_000.0)  # ~700m x 700m minimum
+        bounds_m = geom_m.bounds
+        extent_m = max(bounds_m[2] - bounds_m[0], bounds_m[3] - bounds_m[1])
+        if extent_m < 300000:      # Small provinces (NS, NB, PEI)
+            effective_min_area = max(min_island_area_m2, 50_000.0)   # ~220m x 220m
+            relative_threshold = 0.001  # 0.1% — keep more islands
+        elif extent_m < 600000:    # Medium provinces
+            effective_min_area = max(min_island_area_m2, 200_000.0)  # ~450m x 450m
+            relative_threshold = 0.002
+        else:                      # Large provinces
+            effective_min_area = max(min_island_area_m2, 500_000.0)  # ~700m x 700m
+            relative_threshold = 0.005
     if len(polys) > 1:
         largest_area = max(p.area for p in polys)
-        polys = [p for p in polys if p.area >= effective_min_area or p.area >= largest_area * 0.005]
+        polys = [p for p in polys if p.area >= effective_min_area or p.area >= largest_area * relative_threshold]
 
     if not include_islands and len(polys) > 1:
         largest = max(polys, key=lambda p: p.area)
@@ -170,13 +183,29 @@ def _get_tolerance(geom_m: Polygon | MultiPolygon, product_type: ProductType, si
     bounds = geom_m.bounds  # minx, miny, maxx, maxy
     extent = max(bounds[2] - bounds[0], bounds[3] - bounds[1])
 
+    # Province-specific adaptive scaling: smaller provinces need finer detail
+    # because their coastline character (bays, inlets, peninsulas) is their
+    # defining visual feature on a poster. Large provinces can tolerate more
+    # simplification since they're zoomed out further.
+    if product_type == ProductType.province:
+        if extent < 100000:      # < 100km (very small: PEI)
+            return base * 0.15   # 30m — preserve fine coastal detail
+        elif extent < 300000:    # < 300km (small: Nova Scotia, New Brunswick)
+            return base * 0.25   # 50m — keep bays and inlets
+        elif extent < 600000:    # < 600km (medium: Manitoba, Saskatchewan)
+            return base * 0.5    # 100m — balance detail and smoothness
+        elif extent < 1500000:   # < 1500km (large: Ontario, Quebec)
+            return base * 0.75   # 150m — readable at poster scale
+        else:                    # > 1500km (very large: BC, NWT)
+            return base * 1.0    # 200m — max simplification
+
     if extent < 5000:       # < 5km
         return base * 0.3
     elif extent < 50000:    # < 50km
         return base * 0.7
     elif extent < 500000:   # < 500km
         return base
-    else:                   # > 500km (provinces)
+    else:                   # > 500km
         return base * 1.2
 
 

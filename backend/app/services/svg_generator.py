@@ -781,7 +781,8 @@ def _generate_print_svg(
     else:
         # Province/lake/park maps: filled polygon is the main visual.
         # With water-colored background, the land shape pops beautifully.
-        # Use a bold stroke to define the coastline edge.
+        # Bold stroke defines the coastline — the poster's signature feature.
+        coast_stroke_w = "1.6" if product_type == "province" else "1.0"
         for exterior, holes in polygons:
             path_d = _coords_to_path(exterior)
             for hole in holes:
@@ -789,7 +790,7 @@ def _generate_print_svg(
             lines.append(
                 f'      <path d="{path_d}"'
                 f' fill="{theme["land"]}" stroke="{theme["land_stroke"]}"'
-                f' stroke-width="1.0" fill-rule="evenodd" stroke-linejoin="round"/>'
+                f' stroke-width="{coast_stroke_w}" fill-rule="evenodd" stroke-linejoin="round"/>'
             )
     lines.append("    </g>")
 
@@ -1264,7 +1265,13 @@ def _generate_vintage_map_svg(
     is_sparse = density_band == "sparse"
     is_dense = density_band == "dense"
     geography_fill = "#dfcfad" if boundary_fallback_only else "#e4d5b7"
-    geography_stroke_w = 0.8 if boundary_fallback_only else 0.42
+    # Province coastlines need a bold stroke — it's the defining visual feature.
+    if boundary_fallback_only:
+        geography_stroke_w = 0.8
+    elif product_type == "province":
+        geography_stroke_w = 0.7
+    else:
+        geography_stroke_w = 0.42
     # City/community relations often contain many administrative segments that
     # look technical (boxy) when stroked. Keep fill, but suppress those strokes
     # so the poster reads as art instead of GIS boundaries.
