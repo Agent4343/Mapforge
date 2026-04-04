@@ -569,12 +569,16 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         log.info(f"Medium area ({bbox_area_deg2:.1f} deg²) — fetching major roads only")
 
     # Determine minor street inclusion:
+    # - Provinces: ALWAYS major roads only — minor streets produce 250K+ paths
+    #   and 250MB SVGs that take 12+ minutes to render. Not sellable.
     # - Very large/medium areas: major roads only
-    # - Provinces: major roads only (highways) unless user explicitly enabled streets
-    # - Cities: always get full street grid
-    include_minor_streets = not is_medium_area and not is_very_large_area and not (is_province and not req.include_streets)
-    if req.product_type.value in {"city", "community"}:
+    # - Cities/communities: always get full street grid
+    if is_province:
+        include_minor_streets = False
+    elif req.product_type.value in {"city", "community"}:
         include_minor_streets = True
+    else:
+        include_minor_streets = not is_medium_area and not is_very_large_area
 
     # Relation boundaries are often administrative and can produce clipped/boxy
     # street texture. Use bbox mode for cleaner poster context — this applies to

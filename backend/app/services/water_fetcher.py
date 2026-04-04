@@ -271,6 +271,23 @@ async def fetch_water_features(
                 if _is_reasonable_relation_water_polygon(ring, bbox_area_deg2):
                     water_polygons.append((ring, water_type, name))
 
+    # Province-scale queries can return 100K+ water features which produce
+    # massive SVGs (250MB+) that take minutes to render. Cap by keeping only
+    # the largest/most significant features.
+    if bbox_area_deg2 > 5 and (len(water_polygons) > 2000 or len(waterways) > 5000):
+        log.info(
+            f"Capping water features: {len(water_polygons)} polygons → {min(len(water_polygons), 2000)}, "
+            f"{len(waterways)} waterways → {min(len(waterways), 5000)}"
+        )
+        # Keep largest polygons (major lakes, not every pond)
+        if len(water_polygons) > 2000:
+            water_polygons.sort(key=lambda wp: len(wp[0]), reverse=True)
+            water_polygons = water_polygons[:2000]
+        # Keep longest waterways (major rivers, not every stream)
+        if len(waterways) > 5000:
+            waterways.sort(key=lambda ww: len(ww[0]), reverse=True)
+            waterways = waterways[:5000]
+
     log.info(f"Fetched {len(water_polygons)} water polygons, {len(waterways)} waterways")
     return {"water_polygons": water_polygons, "waterways": waterways}
 
