@@ -1011,7 +1011,7 @@ def _generate_print_svg(
             lat, lon = latlon
             lat_dir = "N" if lat >= 0 else "S"
             lon_dir = "W" if lon < 0 else "E"
-            coord_text = f"{abs(lat):.6f}\u00b0 {lat_dir}  /  {abs(lon):.6f}\u00b0 {lon_dir}"
+            coord_text = f"{_format_dms(lat)} {lat_dir} | {_format_dms(lon)} {lon_dir}"
             lines.append(
                 f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
                 f' text-anchor="middle" font-family="{ff}"'
@@ -1047,7 +1047,7 @@ def _generate_print_svg(
             lat, lon = latlon
             lat_dir = "N" if lat >= 0 else "S"
             lon_dir = "W" if lon < 0 else "E"
-            coord_text = f"{abs(lat):.6f}\u00b0 {lat_dir}  /  {abs(lon):.6f}\u00b0 {lon_dir}"
+            coord_text = f"{_format_dms(lat)} {lat_dir} | {_format_dms(lon)} {lon_dir}"
             lines.append(
                 f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
                 f' text-anchor="middle" font-family="{ff}"'
@@ -1088,7 +1088,7 @@ def _generate_print_svg(
             lat, lon = latlon
             lat_dir = "N" if lat >= 0 else "S"
             lon_dir = "W" if lon < 0 else "E"
-            coord_text = f"{abs(lat):.6f}\u00b0 {lat_dir}  /  {abs(lon):.6f}\u00b0 {lon_dir}"
+            coord_text = f"{_format_dms(lat)} {lat_dir} | {_format_dms(lon)} {lon_dir}"
             lines.append(
                 f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
                 f' text-anchor="middle" font-family="{ff}"'
@@ -2047,8 +2047,11 @@ def _render_print_water(
         if street_mode:
             # City/community street posters should keep water subtle so roads remain
             # dominant and legible at print scale.
+            # Monochrome themes (where water is already muted gray) need higher opacity
+            # to make rivers/lakes clearly visible as the reference wall art style shows.
+            is_muted_water = _is_grayscale_color(theme["water"])
             stroke_w = "0.32"
-            fill_opacity_attr = ' fill-opacity="0.45"'
+            fill_opacity_attr = '' if is_muted_water else ' fill-opacity="0.45"'
         lines.append(
             f'      <path d="{path_d}"'
             f' fill="{fill}" stroke="{theme["water_stroke"]}"'
@@ -2951,6 +2954,24 @@ def _path_midpoint_and_angle(coords: list[tuple]) -> tuple[float, float, float]:
         angle = math.degrees(math.atan2(dy, dx))
         return mid_x, mid_y, angle
     return coords[0][0], coords[0][1], 0.0
+
+
+def _format_dms(decimal_deg: float) -> str:
+    """Convert decimal degrees to degrees, minutes, seconds string."""
+    d = abs(decimal_deg)
+    degrees = int(d)
+    minutes = int((d - degrees) * 60)
+    seconds = int(((d - degrees) * 60 - minutes) * 60)
+    return f"{degrees}\u00b0 {minutes}' {seconds}\""
+
+
+def _is_grayscale_color(hex_color: str) -> bool:
+    """Check if a hex color is grayscale (R == G == B or nearly so)."""
+    c = hex_color.strip().lstrip("#")
+    if len(c) != 6:
+        return False
+    r, g, b = int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+    return max(r, g, b) - min(r, g, b) < 15
 
 
 def _escape_xml(text: str) -> str:
