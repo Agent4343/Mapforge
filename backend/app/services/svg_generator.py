@@ -586,9 +586,14 @@ def _generate_print_svg(
     remap_offset_y = map_y
 
     if geo_w > 0 and geo_h > 0:
-        # Scale factor to fit geometry into the map area, preserving aspect ratio
-        poster_scale = min(map_w / geo_w, map_h / geo_h)
-        # Center the remapped geometry within the map area
+        # Internal padding so streets/water at the boundary edge don't bleed
+        # into the frame border. This gives the map content breathing room.
+        map_inset = min(map_w, map_h) * 0.025
+        fit_w = map_w - 2 * map_inset
+        fit_h = map_h - 2 * map_inset
+        # Scale factor to fit geometry into the padded map area, preserving aspect ratio
+        poster_scale = min(fit_w / geo_w, fit_h / geo_h)
+        # Center the remapped geometry within the full map area
         remap_offset_x = map_x + (map_w - geo_w * poster_scale) / 2
         remap_offset_y = map_y + (map_h - geo_h * poster_scale) / 2
 
@@ -1011,7 +1016,7 @@ def _generate_print_svg(
             lat, lon = latlon
             lat_dir = "N" if lat >= 0 else "S"
             lon_dir = "W" if lon < 0 else "E"
-            coord_text = f"{_format_dms(lat)} {lat_dir} | {_format_dms(lon)} {lon_dir}"
+            coord_text = f"{abs(lat):.6f}\u00b0 {lat_dir} | {abs(lon):.6f}\u00b0 {lon_dir}"
             lines.append(
                 f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
                 f' text-anchor="middle" font-family="{ff}"'
@@ -1047,7 +1052,7 @@ def _generate_print_svg(
             lat, lon = latlon
             lat_dir = "N" if lat >= 0 else "S"
             lon_dir = "W" if lon < 0 else "E"
-            coord_text = f"{_format_dms(lat)} {lat_dir} | {_format_dms(lon)} {lon_dir}"
+            coord_text = f"{abs(lat):.6f}\u00b0 {lat_dir} | {abs(lon):.6f}\u00b0 {lon_dir}"
             lines.append(
                 f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
                 f' text-anchor="middle" font-family="{ff}"'
@@ -1088,7 +1093,7 @@ def _generate_print_svg(
             lat, lon = latlon
             lat_dir = "N" if lat >= 0 else "S"
             lon_dir = "W" if lon < 0 else "E"
-            coord_text = f"{_format_dms(lat)} {lat_dir} | {_format_dms(lon)} {lon_dir}"
+            coord_text = f"{abs(lat):.6f}\u00b0 {lat_dir} | {abs(lon):.6f}\u00b0 {lon_dir}"
             lines.append(
                 f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
                 f' text-anchor="middle" font-family="{ff}"'
@@ -1713,46 +1718,47 @@ def _add_compass_rose(
     map_h: float,
     theme: dict,
 ) -> None:
-    """Add a compass rose indicator in the top-right corner of the map."""
-    size = min(map_w, map_h) * 0.054
-    edge_pad = max(6.0, min(map_w, map_h) * 0.028)
-    cx = round(map_x + map_w - edge_pad - size * 0.55, 2)
-    cy = round(map_y + edge_pad + size * 0.62, 2)
+    """Add a compass rose indicator anchored inside the map area (top-right)."""
+    size = min(map_w, map_h) * 0.042
+    # Generous inset so it reads as part of the map, not the border
+    edge_pad = max(8.0, min(map_w, map_h) * 0.055)
+    cx = round(map_x + map_w - edge_pad, 2)
+    cy = round(map_y + edge_pad, 2)
     text_color = theme.get("text_primary", "#1a1a1a")
     stroke_color = theme.get("land_stroke", "#333333")
     backdrop_color = theme.get("map_bg", "#ffffff")
 
-    lines.append(f'    <g id="compass_rose" opacity="0.84">')
+    lines.append(f'    <g id="compass_rose" opacity="0.72">')
     lines.append(
-        f'      <circle cx="{cx}" cy="{cy}" r="{round(size * 0.96, 2)}"'
-        f' fill="{backdrop_color}" fill-opacity="0.78"'
-        f' stroke="{stroke_color}" stroke-opacity="0.35" stroke-width="0.24"/>'
+        f'      <circle cx="{cx}" cy="{cy}" r="{round(size * 1.1, 2)}"'
+        f' fill="{backdrop_color}" fill-opacity="0.85"'
+        f' stroke="{stroke_color}" stroke-opacity="0.25" stroke-width="0.2"/>'
     )
 
     # North arrow (filled triangle pointing up)
     n_top = round(cy - size, 2)
-    n_left = round(cx - size * 0.2, 2)
-    n_right = round(cx + size * 0.2, 2)
+    n_left = round(cx - size * 0.18, 2)
+    n_right = round(cx + size * 0.18, 2)
     lines.append(
         f'      <path d="M{cx},{n_top} L{n_left},{cy} L{n_right},{cy} Z"'
-        f' fill="{text_color}" stroke="{stroke_color}" stroke-width="0.2"/>'
+        f' fill="{text_color}" stroke="{stroke_color}" stroke-width="0.18"/>'
     )
     # South arrow (outline triangle pointing down)
     s_bottom = round(cy + size, 2)
     lines.append(
         f'      <path d="M{cx},{s_bottom} L{n_left},{cy} L{n_right},{cy} Z"'
-        f' fill="none" stroke="{stroke_color}" stroke-width="0.3"/>'
+        f' fill="none" stroke="{stroke_color}" stroke-width="0.25"/>'
     )
     # East/West ticks
     lines.append(
-        f'      <line x1="{round(cx - size * 0.58, 2)}" y1="{cy}"'
-        f' x2="{round(cx + size * 0.58, 2)}" y2="{cy}"'
-        f' stroke="{stroke_color}" stroke-width="0.28"/>'
+        f'      <line x1="{round(cx - size * 0.55, 2)}" y1="{cy}"'
+        f' x2="{round(cx + size * 0.55, 2)}" y2="{cy}"'
+        f' stroke="{stroke_color}" stroke-width="0.22"/>'
     )
     # N label
-    label_size = round(size * 0.5, 2)
+    label_size = round(size * 0.44, 2)
     lines.append(
-        f'      <text x="{cx}" y="{round(n_top - size * 0.15, 2)}"'
+        f'      <text x="{cx}" y="{round(n_top - size * 0.18, 2)}"'
         f' text-anchor="middle" font-family="Arial, sans-serif"'
         f' font-size="{label_size}" font-weight="bold"'
         f' fill="{text_color}">N</text>'
@@ -2956,13 +2962,6 @@ def _path_midpoint_and_angle(coords: list[tuple]) -> tuple[float, float, float]:
     return coords[0][0], coords[0][1], 0.0
 
 
-def _format_dms(decimal_deg: float) -> str:
-    """Convert decimal degrees to degrees, minutes, seconds string."""
-    d = abs(decimal_deg)
-    degrees = int(d)
-    minutes = int((d - degrees) * 60)
-    seconds = int(((d - degrees) * 60 - minutes) * 60)
-    return f"{degrees}\u00b0 {minutes}' {seconds}\""
 
 
 def _is_grayscale_color(hex_color: str) -> bool:
