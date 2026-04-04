@@ -14,6 +14,7 @@ from app.services.app_settings import (
     get_maptiler_only_mode,
 )
 from app.services.auth import get_current_user
+from app.logging_config import log
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
@@ -296,3 +297,46 @@ async def etsy_debug(
         "ping_test": test_result,
         "redirect_uri": creds.get("redirect_uri", ""),
     }
+
+
+# --- Cache Management ---
+
+@router.post("/clear-cache")
+async def clear_geometry_cache(
+    user: User = Depends(get_current_user),
+):
+    """Clear all geometry and overpass caches (admin only).
+
+    Use this after code changes to province rendering to ensure fresh data.
+    """
+    _require_admin(user)
+
+    cleared = []
+
+    # Clear in-memory overpass cache (streets/water)
+    try:
+        from app.routers.generate import _overpass_cache
+        count = len(_overpass_cache)
+        _overpass_cache.clear()
+        cleared.append(f"overpass_memory: {count} entries")
+    except Exception as e:
+        cleared.append(f"overpass_memory: error ({e})")
+
+    # Clear Redis geometry cache (all geom:* keys)
+    try:
+        from app.services.cache import _get_redis
+        client = await _get_redis()
+        if client:
+            keys = []
+            async for key in client.scan_iter(match="geom:*", count=100):
+                keys.append(key)
+            if keys:
+                await client.delete(*keys)
+            cleared.append(f"redis_geometry: {len(keys)} keys")
+        else:
+            cleared.append("redis_geometry: no redis connection")
+    except Exception as e:
+        cleared.append(f"redis_geometry: error ({e})")
+
+    log.info(f"Admin cache clear: {cleared}")
+    return {"status": "cleared", "details": cleared}
