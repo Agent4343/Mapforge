@@ -391,9 +391,12 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     city_vector_road_art_mode = bool(
         maptiler_only_mode and req.product_type.value in {"city", "community"}
     )
-    # Province posters should use the native SVG art renderer (not raster tiles)
+    # Province posters prefer the native SVG art renderer (not raster tiles)
     # so the output doesn't look like a screenshot with tiny label artifacts.
+    # This is a preference — provinces fall back to MapTiler when Overpass data
+    # is unavailable, rather than producing an empty/sparse map.
     province_svg_art_mode = req.product_type.value == "province"
+    province_needs_maptiler_fallback = False
 
     # Resolve board dimensions
     if req.board_width_inches and req.board_height_inches:
@@ -482,13 +485,12 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                 "Fast preview mode: street overlays were skipped for speed. "
                 "Enable Include Streets for a full-detail render."
             )
-        if req.product_type.value != "province":
-            need_water = False
-            preview_overlays_intentionally_skipped = True
-            warnings.append(
-                "Fast preview mode: water overlays were skipped for speed. "
-                "Generate again for full water detail."
-            )
+        need_water = False
+        preview_overlays_intentionally_skipped = True
+        warnings.append(
+            "Fast preview mode: water overlays were skipped for speed. "
+            "Generate again for full water detail."
+        )
 
     # Always fetch major highways for provinces — with cased road styling
     # they look professional and give the map structure.
@@ -542,9 +544,14 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     is_very_large_area = bbox_area_deg2 > 80.0
 
     if is_very_large_area and need_streets:
-        log.info(f"Very large area ({bbox_area_deg2:.1f} deg²) — skipping street fetch entirely")
+        log.info(f"Very large area ({bbox_area_deg2:.1f} deg²) — skipping Overpass street fetch, will use boundary fallback")
         need_streets = False
-        warnings.append("Street overlay is not available for areas this large. Try searching for a specific city or town within this region to get a detailed street map.")
+        # Boundary fallback will be applied after the Overpass fetch phase
+        # so the province still gets outline linework instead of nothing.
+        if is_province:
+            warnings.append("Area is too large for full street data. Using boundary outline for road detail.")
+        else:
+            warnings.append("Street overlay is not available for areas this large. Try searching for a specific city or town within this region to get a detailed street map.")
     elif is_medium_area and need_streets:
         log.info(f"Medium area ({bbox_area_deg2:.1f} deg²) — fetching major roads only")
 
@@ -554,11 +561,12 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     if req.product_type.value in {"city", "community"}:
         include_minor_streets = True
 
-    # City/community relation boundaries are often administrative and produce
-    # clipped/boxy street texture. Use bbox mode there for cleaner poster context.
+    # Relation boundaries are often administrative and can produce clipped/boxy
+    # street texture. Use bbox mode for cleaner poster context — this applies to
+    # cities, communities, AND provinces (province relations can miss roads near edges).
     street_query_osm_id = req.osm_id
     street_query_osm_type = req.osm_type
-    if req.product_type.value in {"city", "community"} and req.osm_type == "relation":
+    if req.osm_type == "relation" and req.product_type.value in {"city", "community", "province"}:
         street_query_osm_id = None
         street_query_osm_type = None
 
@@ -660,19 +668,31 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             elif label == "contours":
                 contour_data = result
 
-    # If Overpass street data is unavailable, synthesize outline linework so the poster
-    # still renders with a clean silhouette instead of looking broken/sparse.
+    # If street data is unavailable or was skipped (e.g. very large area),
+    # synthesize outline linework so the poster still renders with a clean
+    # silhouette instead of looking broken/sparse.
     street_fallback_used = False
     allow_boundary_line_fallback = req.product_type.value == "province"
-    if need_streets and not streets_data and allow_boundary_line_fallback:
+    if not streets_data and allow_boundary_line_fallback:
         synthesized = _synthesize_boundary_streets(processed)
         if synthesized:
             streets_data = synthesized
             street_fallback_used = True
 
+    # If province Overpass data came back empty/sparse, or the area was too large
+    # to fetch streets, enable MapTiler fallback so the province still gets a usable
+    # rendered output instead of a bare outline.
+    if province_svg_art_mode and (
+        street_overpass_unavailable
+        or water_overpass_unavailable
+        or (is_very_large_area and street_fallback_used)
+    ):
+        province_needs_maptiler_fallback = True
+        log.info("Province data incomplete — enabling MapTiler fallback")
+
     suppress_overlay_outage_warnings = bool(
         maptiler_only_mode and req.product_type.value in {"city", "community", "name_sign"}
-    )
+    ) or province_needs_maptiler_fallback
     if street_overpass_unavailable and not suppress_overlay_outage_warnings:
         if street_fallback_used:
             warnings.append(
@@ -788,7 +808,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     )
     # In MapTiler-only mode, final linework/detail comes from MapTiler tiles,
     # so OSM polygon node count should not trigger sparse-detail repick warnings.
-    low_node_detail = result["node_count"] < quality_floor["min_nodes"] and not maptiler_only_mode
+    low_node_detail = result["node_count"] < quality_floor["min_nodes"] and not maptiler_only_mode and not province_needs_maptiler_fallback
     # In MapTiler-only mode, line detail is rendered from MapTiler raster tiles,
     # so Overpass-derived path density should not drive sparse-detail warnings.
     low_path_quality = (
@@ -825,7 +845,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     maptiler_raster_enabled = (
         (maptiler_only_mode or is_preview_request)
         and not city_vector_road_art_mode
-        and not province_svg_art_mode
+        and (not province_svg_art_mode or province_needs_maptiler_fallback)
     )
     if maptiler_raster_enabled:
         try:
@@ -888,7 +908,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             raise HTTPException(status_code=500, detail="Failed to save generated file. Please try again.")
 
         maptiler_print_png: bytes | None = None
-        if maptiler_only_mode and maptiler_key_runtime and not city_vector_road_art_mode and not province_svg_art_mode:
+        if maptiler_only_mode and maptiler_key_runtime and not city_vector_road_art_mode and (not province_svg_art_mode or province_needs_maptiler_fallback):
             try:
                 maptiler_print_png = await _render_maptiler_poster_png(
                     db=db,
