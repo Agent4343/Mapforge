@@ -385,8 +385,16 @@ async def _fetch_static_map_image(
     try:
         async with httpx.AsyncClient(timeout=25.0) as client:
             resp = await client.get(static_url)
-            resp.raise_for_status()
+            if resp.status_code != 200:
+                body_preview = resp.text[:300] if resp.text else "(empty)"
+                log.warning(
+                    f"MapTiler static API HTTP {resp.status_code} for style={style}: {body_preview}"
+                )
+                return None
             return Image.open(io.BytesIO(resp.content)).convert("RGB")
+    except httpx.TimeoutException:
+        log.warning(f"MapTiler static render timed out ({style})")
+        return None
     except Exception as e:
         log.warning(f"MapTiler static render failed ({style}): {type(e).__name__}: {e}")
         return None
@@ -476,6 +484,20 @@ async def render_maptiler_print_png(
         height=fetch_h,
         key=key,
     )
+    # If the preferred style failed (e.g. "basic-v2-nolabels" may not exist
+    # on all MapTiler plans), retry with a safe fallback style.
+    if map_img is None and style not in ("basic-v2", "backdrop"):
+        fallback = "basic-v2"
+        log.info(f"Retrying MapTiler with fallback style: {fallback} (was {style})")
+        map_img = await _fetch_static_map_image(
+            style=fallback,
+            lon=lon,
+            lat=lat,
+            zoom=zoom,
+            width=fetch_w,
+            height=fetch_h,
+            key=key,
+        )
     if map_img is None:
         return None
 
