@@ -52,6 +52,7 @@ export default function ExportPanel({
   const [showcasePrice, setShowcasePrice] = useState("9.99");
 
   const isPrint = true;
+  const isAdmin = user?.tier === "admin";
 
   useEffect(() => {
     if (user) {
@@ -213,8 +214,6 @@ export default function ExportPanel({
   }
 
   const canSell = user && (user.tier === "maker" || user.tier === "pro" || user.tier === "admin");
-
-  const isAdmin = user?.tier === "admin";
 
   return (
     <div className="export-section">

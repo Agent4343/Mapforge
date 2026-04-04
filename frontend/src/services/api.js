@@ -319,25 +319,25 @@ async function batchGenerate(items) {
 // --- Download ---
 
 async function downloadSVG(fileId) {
-  const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}?format=svg`);
+  const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}?format=svg`, { timeout: DOWNLOAD_TIMEOUT_MS });
   if (!resp.ok) throw new Error("Download failed");
   return resp.blob();
 }
 
 async function downloadDXF(fileId) {
-  const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}?format=dxf`);
+  const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}?format=dxf`, { timeout: DOWNLOAD_TIMEOUT_MS });
   if (!resp.ok) throw new Error("DXF download failed");
   return resp.blob();
 }
 
 async function downloadSTL(fileId) {
-  const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}?format=stl`);
+  const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}?format=stl`, { timeout: DOWNLOAD_TIMEOUT_MS });
   if (!resp.ok) throw new Error("STL download failed");
   return resp.blob();
 }
 
 async function downloadThumbnail(fileId) {
-  const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}/thumbnail`);
+  const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}/thumbnail`, { timeout: DOWNLOAD_TIMEOUT_MS });
   if (!resp.ok) throw new Error("Thumbnail download failed");
   return resp.blob();
 }
@@ -354,13 +354,13 @@ async function downloadPrintPNG(fileId) {
 }
 
 async function downloadEtsyListing(fileId) {
-  const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}/etsy`);
+  const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}/etsy`, { timeout: DOWNLOAD_TIMEOUT_MS });
   if (!resp.ok) throw new Error("Etsy listing image download failed");
   return resp.blob();
 }
 
 async function downloadPreview(fileId) {
-  const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}/preview`);
+  const resp = await fetchWithTimeout(`${API_BASE}/download/${fileId}/preview`, { timeout: DOWNLOAD_TIMEOUT_MS });
   if (!resp.ok) throw new Error("Preview download failed");
   return resp.blob();
 }

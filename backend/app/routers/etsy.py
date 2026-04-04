@@ -267,7 +267,7 @@ async def etsy_publish(
     if not file_record:
         raise HTTPException(status_code=404, detail="File not found.")
 
-    if file_record.owner_id and file_record.owner_id != user.id:
+    if file_record.owner_id != user.id:
         raise HTTPException(status_code=403, detail="You don't own this file.")
 
     # Get a valid access token (refreshes if expired)

@@ -204,7 +204,7 @@ async def purchase_listing(
     purchase.stripe_payment_intent_id = payment["id"]
     if payment["status"] == "succeeded":
         purchase.status = "completed"
-        listing.sale_count += 1  # only increment on immediate success
+        # sale_count is incremented by the webhook handler to avoid double-counting
 
     await db.commit()
     await db.refresh(purchase)

@@ -38,6 +38,7 @@ class RenderJob:
 _jobs: dict[str, RenderJob] = {}
 _jobs_lock = asyncio.Lock()
 _MAX_JOBS = 500
+_RENDER_TIMEOUT_SECONDS = 300  # 5 minute hard limit per render job
 
 
 def _utc_iso() -> str:
@@ -202,6 +203,36 @@ async def _run_render_job(
     maptiler_key: str | None = None,
 ) -> None:
     await _set_job_state(job_id, status="running")
+    try:
+        await asyncio.wait_for(_do_render(
+            job_id=job_id, svg=svg, file_id=file_id, board_size=board_size,
+            dpi=dpi, color_theme=color_theme, outputs=outputs, engine=engine,
+            center_latlon=center_latlon, bounds_latlon=bounds_latlon,
+            product_type=product_type, maptiler_key=maptiler_key,
+        ), timeout=_RENDER_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        log.error(f"Render job {job_id} timed out after {_RENDER_TIMEOUT_SECONDS}s")
+        await _set_job_state(job_id, status="failed", error="Render timed out")
+    except Exception as e:
+        log.error(f"Render job {job_id} failed: {type(e).__name__}: {e}")
+        await _set_job_state(job_id, status="failed", error=f"{type(e).__name__}: {e}")
+
+
+async def _do_render(
+    *,
+    job_id: str,
+    svg: str,
+    file_id: str,
+    board_size: str,
+    dpi: int,
+    color_theme: str,
+    outputs: list[str],
+    engine: str = "svg_v1",
+    center_latlon: tuple[float, float] | None = None,
+    bounds_latlon: tuple[float, float, float, float] | None = None,
+    product_type: str = "city",
+    maptiler_key: str | None = None,
+) -> None:
     result: dict[str, str] = {}
     try:
         use_maptiler_engine = engine == "maptiler_static_v1"

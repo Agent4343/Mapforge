@@ -231,7 +231,7 @@ async def fetch_water_features(
         # Closed ways (polygons) vs open ways (rivers/streams)
         is_area = (
             tags.get("natural") == "water"
-            or tags.get("water") in ("lake", "reservoir", "pond", "river")
+            or tags.get("water") in ("lake", "reservoir", "pond")
         )
         is_closed = len(coords) >= 4 and coords[0] == coords[-1]
 

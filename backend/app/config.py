@@ -38,8 +38,10 @@ class Settings:
     # Database
     DATABASE_URL: str = _fixup_db_url(os.getenv("DATABASE_URL", "sqlite+aiosqlite:////tmp/mapforge.db"))
 
-    # Auth — SECRET_KEY must be set in production via environment variable
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "")
+    # Auth — SECRET_KEY must be set in production via environment variable.
+    # Falls back to a random key in development so JWT signing always works,
+    # but tokens won't survive server restarts.
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "") or os.urandom(32).hex()
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
     ALGORITHM: str = "HS256"
 

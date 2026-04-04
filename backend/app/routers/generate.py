@@ -446,9 +446,12 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             include_islands=req.include_islands,
             min_island_area_m2=req.min_island_area_m2,
         )
-    except (ValueError, Exception) as e:
-        log.error(f"Geometry processing error for {req.osm_type}/{req.osm_id}: {type(e).__name__}: {e}")
+    except ValueError as e:
+        log.warning(f"Geometry validation error for {req.osm_type}/{req.osm_id}: {e}")
         raise HTTPException(status_code=422, detail="Geometry processing failed. This location may not have sufficient map data. Please try a different location.")
+    except Exception as e:
+        log.error(f"Unexpected geometry error for {req.osm_type}/{req.osm_id}: {type(e).__name__}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal error during geometry processing. Please try again.")
 
     # Fetch streets and water concurrently for faster generation
     streets_data = None

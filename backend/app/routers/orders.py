@@ -160,7 +160,9 @@ async def generate_design(token: str, req: GenerateDesignRequest):
         result = await db.execute(
             select(DesignCredit).where(DesignCredit.redeem_token == token)
         )
-        credit = result.scalar_one()
+        credit = result.scalar_one_or_none()
+        if not credit:
+            raise HTTPException(status_code=404, detail="Design credit not found")
         credit.design_config = json.dumps(req.design_config)
         credit.location_name = location_name
         credit.status = "generating"
@@ -169,7 +171,8 @@ async def generate_design(token: str, req: GenerateDesignRequest):
         credit_id = credit.id
 
     # Run generation (may take 30-60s)
-    asyncio.create_task(_fulfill_credit(credit_id))
+    task = asyncio.create_task(_fulfill_credit(credit_id))
+    task.add_done_callback(lambda t: log.error("Credit fulfillment task error: %s", t.exception()) if t.exception() else None)
 
     return CreditStatusResponse(
         token=token,
@@ -228,9 +231,6 @@ async def download_files(token: str, format: str = Query("png")):
 
     if not credit.file_id:
         raise HTTPException(status_code=400, detail="Files have not been generated yet")
-
-    if credit.status == "downloaded":
-        raise HTTPException(status_code=410, detail="This design has already been downloaded.")
 
     if _is_credit_expired(credit):
         raise HTTPException(status_code=410, detail="Credit has expired")
