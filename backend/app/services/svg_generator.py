@@ -1273,7 +1273,14 @@ def _generate_vintage_map_svg(
         and not boundary_fallback_only
         and total_roads > 0
     )
-    use_land_hatch = boundary_fallback_only or total_roads < 40 or (is_sparse and product_type in ("province", "park"))
+    # Land hatch adds engraving-style lines for visual density in sparse maps.
+    # Provinces rely on their land shape + water contrast as the primary visual,
+    # so only use hatch when there are truly no roads (boundary-only fallback).
+    # Parks and other types use it more liberally for sparse coverage.
+    if product_type == "province":
+        use_land_hatch = boundary_fallback_only and total_roads < 20
+    else:
+        use_land_hatch = boundary_fallback_only or total_roads < 40 or (is_sparse and product_type == "park")
 
     lines = []
     lines.append('<?xml version="1.0" encoding="UTF-8"?>')
@@ -1438,6 +1445,7 @@ def _generate_vintage_map_svg(
                 "tertiary": 0.6, "tertiary_link": 0.5,
                 "residential": 0.4, "unclassified": 0.4,
                 "living_street": 0.4, "service": 0.3, "track": 0.25,
+                "boundary": 1.0,
                 "pedestrian": 0.2, "footway": 0.15, "cycleway": 0.15,
                 "path": 0.15, "steps": 0.12, "bridleway": 0.15,
             }
@@ -1462,6 +1470,7 @@ def _generate_vintage_map_svg(
                 "tertiary": 0.4, "tertiary_link": 0.3,
                 "residential": 0.22, "unclassified": 0.22,
                 "living_street": 0.22, "service": 0.15, "track": 0.15,
+                "boundary": 0.8,
                 "pedestrian": 0.12, "footway": 0.1, "cycleway": 0.1,
                 "path": 0.1, "steps": 0.08, "bridleway": 0.1,
             }
@@ -1479,7 +1488,7 @@ def _generate_vintage_map_svg(
             # Keep service/living streets in dense urban outputs so downtown grids
             # feel complete, while micro pedestrian classes remain filtered below.
             keep_minor_classes.update({"service", "living_street"})
-        keep_major_classes = {"motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link", "secondary"}
+        keep_major_classes = {"motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link", "secondary", "boundary"}
 
         # Draw roads with subtle contrast separation.
         drop_minor_classes: set[str] = {"track", "steps", "bridleway"}
@@ -2085,6 +2094,7 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
             "primary": 2.0, "primary_link": 1.4,
             "secondary": 1.4, "secondary_link": 1.0,
             "tertiary": 1.0, "tertiary_link": 0.8,
+            "boundary": 1.6,
             "residential": 0.5, "unclassified": 0.5,
             "living_street": 0.5, "service": 0.4, "track": 0.35,
         }
@@ -2141,7 +2151,7 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
     province_keep_major_classes = {
         "motorway", "motorway_link", "trunk", "trunk_link",
         "primary", "primary_link", "secondary", "secondary_link",
-        "tertiary", "tertiary_link",
+        "tertiary", "tertiary_link", "boundary",
     }
     province_min_len_by_class = {
         "motorway": 1.5,

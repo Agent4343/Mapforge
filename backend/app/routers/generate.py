@@ -104,15 +104,24 @@ def _cache_overpass(key: str, data: dict) -> dict:
 
 
 def _synthesize_boundary_streets(processed: dict) -> dict | None:
-    """Build minimal fallback linework from boundary polygons when Overpass is unavailable."""
+    """Build fallback linework from boundary polygons when Overpass is unavailable.
+
+    For provinces, the boundary IS the coastline — the most important visual feature.
+    We include both exterior boundaries AND hole boundaries (islands, inland water edges)
+    to give the map depth even without Overpass data.
+    """
     polygons = processed.get("polygons") or []
     if not polygons:
         return None
     major_roads = []
-    for exterior, _holes in polygons:
+    for exterior, holes in polygons:
         if not exterior or len(exterior) < 4:
             continue
-        major_roads.append((exterior, "boundary", 0.9, "Boundary"))
+        major_roads.append((exterior, "boundary", 1.2, "Coastline"))
+        # Include hole boundaries (lakes, island edges) for additional detail
+        for hole in holes:
+            if hole and len(hole) >= 4:
+                major_roads.append((hole, "boundary", 0.8, ""))
     if not major_roads:
         return None
     return {"major_roads": major_roads, "minor_roads": []}
@@ -477,6 +486,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         need_water = False
 
     # Preview mode prioritizes speed: default auto overlays off unless explicitly enabled.
+    # Exception: provinces ALWAYS fetch water — coastlines/lakes define the shape identity.
     if is_preview_request and not maptiler_only_mode:
         if not req.include_streets and auto_streets:
             need_streets = False
@@ -485,12 +495,13 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                 "Fast preview mode: street overlays were skipped for speed. "
                 "Enable Include Streets for a full-detail render."
             )
-        need_water = False
-        preview_overlays_intentionally_skipped = True
-        warnings.append(
-            "Fast preview mode: water overlays were skipped for speed. "
-            "Generate again for full water detail."
-        )
+        if req.product_type.value != "province":
+            need_water = False
+            preview_overlays_intentionally_skipped = True
+            warnings.append(
+                "Fast preview mode: water overlays were skipped for speed. "
+                "Generate again for full water detail."
+            )
 
     # Always fetch major highways for provinces — with cased road styling
     # they look professional and give the map structure.
@@ -534,7 +545,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     #   Cities (<1 deg²): full streets with all road types
     #   Small provinces (1-30 deg²): full streets — PEI, Nova Scotia, New Brunswick
     #   Medium provinces (30-80 deg²): major roads only — Saskatchewan, Manitoba
-    #   Very large provinces (>80 deg²): skip streets — Ontario, Quebec, BC, Alberta
+    #   Very large provinces (>80 deg²): major roads with short timeout, boundary fallback if fetch fails
+    #   Very large non-provinces (>80 deg²): skip streets entirely
     active_street_bbox = street_fetch_bbox if city_vector_road_art_mode else bbox
     bbox_area_deg2 = (
         (active_street_bbox[3] - active_street_bbox[1])
@@ -544,20 +556,23 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     is_very_large_area = bbox_area_deg2 > 80.0
 
     if is_very_large_area and need_streets:
-        log.info(f"Very large area ({bbox_area_deg2:.1f} deg²) — skipping Overpass street fetch, will use boundary fallback")
-        need_streets = False
-        # Boundary fallback will be applied after the Overpass fetch phase
-        # so the province still gets outline linework instead of nothing.
         if is_province:
-            warnings.append("Area is too large for full street data. Using boundary outline for road detail.")
+            # Very large provinces (Ontario, Quebec, BC): still try major highways
+            # with a short timeout — Trans-Canada, major highways give structure.
+            # Boundary fallback is a safety net if this fails.
+            log.info(f"Very large province ({bbox_area_deg2:.1f} deg²) — will attempt major-roads-only fetch with short timeout")
         else:
+            log.info(f"Very large area ({bbox_area_deg2:.1f} deg²) — skipping Overpass street fetch")
+            need_streets = False
             warnings.append("Street overlay is not available for areas this large. Try searching for a specific city or town within this region to get a detailed street map.")
     elif is_medium_area and need_streets:
         log.info(f"Medium area ({bbox_area_deg2:.1f} deg²) — fetching major roads only")
 
-    # Provinces get major roads only (highways) unless user explicitly enabled streets.
-    # Cities always get full street grid.
-    include_minor_streets = not is_medium_area and not (is_province and not req.include_streets)
+    # Determine minor street inclusion:
+    # - Very large/medium areas: major roads only
+    # - Provinces: major roads only (highways) unless user explicitly enabled streets
+    # - Cities: always get full street grid
+    include_minor_streets = not is_medium_area and not is_very_large_area and not (is_province and not req.include_streets)
     if req.product_type.value in {"city", "community"}:
         include_minor_streets = True
 
@@ -575,12 +590,15 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         if cache_key in _overpass_cache:
             log.info("Using cached street data")
             return _overpass_cache[cache_key]
+        # Very large provinces use fast_mode to keep Overpass timeouts short —
+        # we'd rather get partial major highways than wait 30s and fail.
+        use_fast = is_preview_request or (is_province and is_very_large_area)
         result = await fetch_streets(
             bbox=street_fetch_bbox,
             include_minor=include_minor_streets,
             osm_id=street_query_osm_id,
             osm_type=street_query_osm_type,
-            fast_mode=is_preview_request,
+            fast_mode=use_fast,
         )
         has_data = result and (result.get("major_roads") or result.get("minor_roads"))
         if has_data:
@@ -589,11 +607,20 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         return None
 
     async def _get_water():
-        cache_key = _bbox_cache_key("water", bbox)
+        # For very large provinces (Ontario, Quebec, BC), a full-bbox water fetch
+        # will timeout on Overpass. Use fast mode to keep timeouts short — we'd
+        # rather get partial water data than none. The water-colored SVG background
+        # already provides the ocean contrast even without explicit water polygons.
+        water_fast = is_preview_request or (is_province and is_very_large_area)
+        water_bbox = bbox
+        # For medium/large provinces, limit water to major features only
+        if is_province and is_medium_area:
+            water_fast = True
+        cache_key = _bbox_cache_key("water", water_bbox)
         if cache_key in _overpass_cache:
             log.info("Using cached water data")
             return _overpass_cache[cache_key]
-        result = await fetch_water_features(bbox=bbox, fast_mode=is_preview_request)
+        result = await fetch_water_features(bbox=water_bbox, fast_mode=water_fast)
         has_data = result and (result.get("water_polygons") or result.get("waterways"))
         if has_data:
             _cache_overpass(cache_key, result)
