@@ -225,6 +225,96 @@ def _derive_city_context_bbox(
     )
 
 
+def _is_boundary_dominant_city_extent(
+    relation_bbox: tuple[float, float, float, float],
+    streets_bbox: tuple[float, float, float, float],
+) -> bool:
+    """Return True when relation extent is much larger than street footprint."""
+    rel_s, rel_w, rel_n, rel_e = relation_bbox
+    st_s, st_w, st_n, st_e = streets_bbox
+    rel_area = max(1e-9, (rel_n - rel_s) * (rel_e - rel_w))
+    st_area = max(0.0, (st_n - st_s) * (st_e - st_w))
+    coverage_ratio = st_area / rel_area
+    return coverage_ratio < 0.62
+
+
+def _derive_city_street_focus_bounds_mm(
+    streets_data: dict | None,
+    processed: dict,
+    *,
+    padding_ratio: float = 0.14,
+) -> tuple[float, float, float, float] | None:
+    """Derive poster composition bounds from actual street footprint.
+
+    City/community admin relations can be much larger than the visual street core.
+    This computes a street-driven bounds box in board-mm space so render composition
+    centers on where linework exists (sellable map-art framing).
+    """
+    if not streets_data:
+        return None
+    transform = processed.get("transform")
+    board_mm = processed.get("board_mm")
+    original = processed.get("bounds_mm")
+    if not transform or not board_mm or not original:
+        return None
+
+    road_sets = []
+    road_sets.extend(streets_data.get("major_roads", []) or [])
+    road_sets.extend(streets_data.get("minor_roads", []) or [])
+    if not road_sets:
+        return None
+
+    xs: list[float] = []
+    ys: list[float] = []
+    for coords, _road_class, _width, _name in road_sets:
+        if not coords or len(coords) < 2:
+            continue
+        board_coords = transform_wgs84_to_board(coords, transform)
+        for x, y in board_coords:
+            xs.append(float(x))
+            ys.append(float(y))
+    if len(xs) < 2 or len(ys) < 2:
+        return None
+
+    min_x, max_x = min(xs), max(xs)
+    min_y, max_y = min(ys), max(ys)
+    street_w = max(0.01, max_x - min_x)
+    street_h = max(0.01, max_y - min_y)
+    board_w, board_h = float(board_mm[0]), float(board_mm[1])
+
+    # Avoid over-zooming into a tiny cluster: keep a healthy minimum composition box.
+    min_focus_w = board_w * 0.50
+    min_focus_h = board_h * 0.45
+    focus_w = max(street_w * (1.0 + padding_ratio), min_focus_w)
+    focus_h = max(street_h * (1.0 + padding_ratio), min_focus_h)
+    focus_w = min(focus_w, board_w)
+    focus_h = min(focus_h, board_h)
+
+    cx = (min_x + max_x) / 2.0
+    cy = (min_y + max_y) / 2.0
+    half_w = focus_w / 2.0
+    half_h = focus_h / 2.0
+
+    candidate = (
+        max(0.0, cx - half_w),
+        max(0.0, cy - half_h),
+        min(board_w, cx + half_w),
+        min(board_h, cy + half_h),
+    )
+
+    # Keep only meaningful refinements.
+    orig_min_x, orig_min_y, orig_max_x, orig_max_y = original
+    orig_w = max(0.01, float(orig_max_x - orig_min_x))
+    orig_h = max(0.01, float(orig_max_y - orig_min_y))
+    cand_w = max(0.01, float(candidate[2] - candidate[0]))
+    cand_h = max(0.01, float(candidate[3] - candidate[1]))
+
+    # If candidate is not tighter than original by at least ~8%, skip.
+    if cand_w >= orig_w * 0.92 and cand_h >= orig_h * 0.92:
+        return None
+    return candidate
+
+
 async def _is_maptiler_only_mode(db: AsyncSession | None = None) -> bool:
     """Production toggle: bypass Overpass overlays for reliability.
 
@@ -586,6 +676,15 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             heart_coords = transform_wgs84_to_board([(req.heart_lon, req.heart_lat)], transform)
             if heart_coords:
                 heart_mm = heart_coords[0]
+
+    # City/community sellable-composition pass:
+    # frame poster by street footprint (not large admin-relation extents).
+    if req.product_type.value in {"city", "community"} and streets_data:
+        street_focus_bounds = _derive_city_street_focus_bounds_mm(streets_data, processed)
+        if street_focus_bounds is not None:
+            processed = dict(processed)
+            processed["bounds_mm"] = street_focus_bounds
+            warnings.append("Using street-centered composition for cleaner city map framing.")
 
     resolved_color_theme = normalize_color_theme(req.color_theme)
 

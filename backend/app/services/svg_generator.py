@@ -124,6 +124,45 @@ def _get_vintage_density_profile(product_type: str, total_roads: int) -> dict[st
     }
 
 
+def _coords_bounds(coords: list[tuple[float, float]]) -> tuple[float, float, float, float] | None:
+    if not coords:
+        return None
+    xs = [p[0] for p in coords]
+    ys = [p[1] for p in coords]
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def _merge_bounds(
+    a: tuple[float, float, float, float] | None,
+    b: tuple[float, float, float, float] | None,
+) -> tuple[float, float, float, float] | None:
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return (
+        min(a[0], b[0]),
+        min(a[1], b[1]),
+        max(a[2], b[2]),
+        max(a[3], b[3]),
+    )
+
+
+def _street_footprint_bounds(streets_data: dict | None, transform: dict | None) -> tuple[float, float, float, float] | None:
+    """Return bounds of rendered street network in board coordinates (mm)."""
+    if not streets_data:
+        return None
+
+    bounds: tuple[float, float, float, float] | None = None
+    for key in ("major_roads", "minor_roads"):
+        for coords, _road_class, _width, _name in streets_data.get(key, []):
+            if len(coords) < 2:
+                continue
+            board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
+            bounds = _merge_bounds(bounds, _coords_bounds(board_coords))
+    return bounds
+
+
 def generate_svg(
     processed: dict,
     location_name: str,
@@ -628,6 +667,10 @@ def _generate_print_svg(
     lines.append("  </g>")
     lines.append("")
 
+    # Product group flags (used for clipping/fill logic)
+    is_street_map = product_type in ("city", "community", "name_sign")
+    is_city_community = product_type in ("city", "community")
+
     # Clip path for map content (keeps streets/water inside the map area)
     lines.append("  <defs>")
     lines.append(
@@ -644,7 +687,7 @@ def _generate_print_svg(
         for hole in holes:
             path_d += " " + _coords_to_path(hole)
         boundary_paths.append(path_d)
-    if boundary_paths:
+    if boundary_paths and not is_city_community:
         lines.append('    <clipPath id="boundary_clip">')
         for bp in boundary_paths:
             lines.append(f'      <path d="{bp}" fill-rule="evenodd"/>')
@@ -677,7 +720,6 @@ def _generate_print_svg(
     #
     # For lake/province/park maps, the filled polygon IS the visual —
     # the shape of the lake or province is the main content.
-    is_street_map = product_type in ("city", "community", "name_sign")
     has_streets = streets_data and (streets_data.get("major_roads") or streets_data.get("minor_roads"))
 
     # Land shadow — render BEFORE geography so it appears behind the land mass
@@ -746,7 +788,11 @@ def _generate_print_svg(
 
     # Clip streets and water to the boundary polygon so they don't bleed
     # outside the geographic area (applies to cities AND provinces with streets)
-    clip_to_boundary = boundary_paths and (is_street_map or (streets_data and (streets_data.get("major_roads") or streets_data.get("minor_roads"))))
+    clip_to_boundary = (
+        (not is_city_community)
+        and boundary_paths
+        and (is_street_map or (streets_data and (streets_data.get("major_roads") or streets_data.get("minor_roads"))))
+    )
     if clip_to_boundary:
         lines.append('    <g clip-path="url(#boundary_clip)">')
 

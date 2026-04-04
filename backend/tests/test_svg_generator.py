@@ -326,3 +326,37 @@ def test_province_print_streets_keeps_major_secondary_structure_and_avoids_white
     assert 'd="M20.0,35.0 L120.0,35.0"' in svg
     # Province centerline fill should use land color, not bright white.
     assert 'stroke="#ffffff"' not in svg
+
+
+def test_print_svg_city_hides_boundary_polygon_fill_when_street_data_present():
+    processed = {
+        "polygons": [([(20, 20), (180, 20), (180, 150), (20, 150), (20, 20)], [])],
+        "bounds_mm": (20, 20, 180, 150),
+        "board_mm": (200.0, 260.0),
+        "center_latlon": (44.95, -79.45),
+        "node_count": 5,
+    }
+    streets = {
+        "major_roads": [
+            ([(20.0, 20.0), (120.0, 20.0)], "primary", 1.0, "Primary Hwy"),
+        ],
+        "minor_roads": [
+            ([(24.0, 25.0), (110.0, 40.0)], "residential", 0.4, "Local St"),
+        ],
+    }
+    result = generate_svg(
+        processed=processed,
+        location_name="Boundaryville",
+        style=CutStyle.filled,
+        show_coordinates=True,
+        font_size_mm=14,
+        streets_data=streets,
+        color_theme="classic",
+        product_type="city",
+        output_mode="print",
+    )
+    svg = result["svg"]
+    # City sellable mode should not draw a heavy enclosing admin-boundary fill.
+    assert 'fill="#f5f0e6"' not in svg
+    # And no explicit boundary-clip id should be present for city/community maps.
+    assert 'id="boundary_clip"' not in svg

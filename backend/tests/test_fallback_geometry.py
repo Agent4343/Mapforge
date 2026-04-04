@@ -11,6 +11,7 @@ from app.routers.generate import (
     _derive_city_context_bbox,
     _do_generate,
     _is_maptiler_only_mode,
+    _is_boundary_dominant_city_extent,
     _resolve_display_center,
 )
 from app.services.geo_fetch import fetch_fallback_geometry
@@ -82,6 +83,20 @@ def test_derive_city_context_bbox_keeps_compact_city_bounds():
     center = (46.1464, -60.1819)
     resolved = _derive_city_context_bbox(compact_bbox, center)
     assert resolved == compact_bbox
+
+
+def test_is_boundary_dominant_city_extent_detects_sparse_relation_shell():
+    # Large relation shell with compact urban roads should be treated as
+    # boundary-dominant so composition can switch to street-focused framing.
+    relation_bbox = (44.58, -63.72, 44.71, -63.54)
+    streets_bbox = (44.62, -63.64, 44.67, -63.54)
+    assert _is_boundary_dominant_city_extent(relation_bbox, streets_bbox) is True
+
+
+def test_is_boundary_dominant_city_extent_ignores_well_filled_city_extent():
+    relation_bbox = (44.58, -63.72, 44.71, -63.54)
+    streets_bbox = (44.59, -63.71, 44.70, -63.55)
+    assert _is_boundary_dominant_city_extent(relation_bbox, streets_bbox) is False
 
 
 @pytest.mark.asyncio
