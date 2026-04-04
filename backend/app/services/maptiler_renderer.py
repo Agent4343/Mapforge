@@ -210,7 +210,7 @@ def _apply_product_zoom_bias(zoom: float, product_type: str | None) -> float:
     pt = (product_type or "").strip().lower()
     # Regions need to zoom out slightly; city/name_sign can zoom in.
     bias = {
-        "province": -0.8,
+        "province": -0.15,
         "park": -0.45,
         "lake": -0.25,
         "community": 0.15,
@@ -340,9 +340,9 @@ def _pick_art_style(style: str, product_type: str | None) -> str:
     if pt in _CITY_ART_PRODUCT_TYPES:
         return "basic-v2"
     if pt == "province":
-        # Province posters need a clean style with visible land/water/roads.
-        # basic-v2 provides clear geographic features without dense labels.
-        return "basic-v2"
+        # Province posters need clean land/water/roads without city name labels.
+        # The -nolabels variant removes all text labels from the tiles.
+        return "basic-v2-nolabels"
     return style
 
 
