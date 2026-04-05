@@ -45,13 +45,13 @@ limiter = Limiter(key_func=get_remote_address)
 
 def _compute_street_viewport(streets_data: dict, transform: dict, bounds_mm: tuple,
                               center_latlon: tuple | None = None,
+                              board_mm: tuple | None = None,
                               padding_pct: float = 0.10) -> tuple | None:
     """Compute a zoomed viewport that fits the dense street grid.
 
     Uses per-axis percentiles (10th-90th) to find where streets are concentrated,
-    then ensures the city center (from Nominatim) is within the viewport.
-    This handles coastal cities (Toronto, Miami) where one side is water —
-    the viewport naturally excludes the empty water area.
+    then adjusts the viewport aspect ratio to match the poster's map area so
+    streets fill the entire frame without empty space.
     Returns new bounds_mm tuple or None if not enough data.
     """
     if not streets_data or not transform:
@@ -88,7 +88,6 @@ def _compute_street_viewport(streets_data: dict, transform: dict, bounds_mm: tup
             [(center_latlon[1], center_latlon[0])], transform
         )
         cx, cy = center_board[0]
-        # Expand viewport if needed to include city center with margin
         margin_x = (x_max - x_min) * 0.15
         margin_y = (y_max - y_min) * 0.15
         if cx < x_min:
@@ -112,6 +111,53 @@ def _compute_street_viewport(streets_data: dict, transform: dict, bounds_mm: tup
     x_max += pad_x
     y_min -= pad_y
     y_max += pad_y
+
+    # Match viewport aspect ratio to poster's map area so streets fill the frame.
+    # Without this, a landscape street grid (Toronto) on a portrait poster leaves
+    # half the map empty because poster_scale = min(map_w/geo_w, map_h/geo_h).
+    if board_mm:
+        board_w, board_h = board_mm
+        # city_art layout: mat_pct=0.025, text_area_pct=0.28, text at bottom
+        map_w = board_w * 0.95
+        map_h = board_h * 0.67
+        target_ratio = map_h / map_w  # height / width of poster map area
+
+        vp_w = x_max - x_min
+        vp_h = y_max - y_min
+        vp_ratio = vp_h / vp_w
+
+        # Use median of street coords as expansion bias center —
+        # expand toward where more streets exist
+        median_x = all_x[n // 2]
+        median_y = all_y[n // 2]
+
+        if vp_ratio < target_ratio:
+            # Viewport too wide (landscape) — need more height
+            needed_h = vp_w * target_ratio
+            extra = needed_h - vp_h
+            # Bias expansion toward the median (where streets are denser)
+            vp_center_y = (y_min + y_max) / 2
+            if median_y < vp_center_y:
+                # More streets toward top (smaller Y) — expand upward more
+                y_min -= extra * 0.7
+                y_max += extra * 0.3
+            else:
+                # More streets toward bottom — expand downward more
+                y_min -= extra * 0.3
+                y_max += extra * 0.7
+            log.info(f"Expanded viewport height by {extra:.0f}mm to match poster aspect ratio")
+        elif vp_ratio > target_ratio * 1.05:
+            # Viewport too tall — need more width
+            needed_w = vp_h / target_ratio
+            extra = needed_w - vp_w
+            vp_center_x = (x_min + x_max) / 2
+            if median_x < vp_center_x:
+                x_min -= extra * 0.7
+                x_max += extra * 0.3
+            else:
+                x_min -= extra * 0.3
+                x_max += extra * 0.7
+            log.info(f"Expanded viewport width by {extra:.0f}mm to match poster aspect ratio")
 
     # Only zoom if viewport is meaningfully different from full boundary
     orig_min_x, orig_min_y, orig_max_x, orig_max_y = bounds_mm
@@ -438,6 +484,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         street_viewport = _compute_street_viewport(
             streets_data, processed.get("transform"), processed.get("bounds_mm"),
             center_latlon=processed.get("center_latlon"),
+            board_mm=processed.get("board_mm"),
         )
         if street_viewport:
             processed = dict(processed)  # don't mutate original

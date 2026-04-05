@@ -5,7 +5,7 @@ WORKDIR /frontend
 COPY frontend/package.json ./
 RUN npm install
 COPY frontend/ .
-ARG FRONTEND_VERSION=6
+ARG FRONTEND_VERSION=7
 RUN npm run build
 
 # Stage 2: Python backend + built frontend
