@@ -603,6 +603,9 @@ def _generate_print_svg(
     is_city_community = product_type in ("city", "community")
     is_street_map = product_type in ("city", "community", "name_sign")
     has_streets = streets_data and (streets_data.get("major_roads") or streets_data.get("minor_roads"))
+    # Province/lake/park in city_art mode: inverted rendering
+    # Dark land fill, white roads and water as negative space
+    is_city_art_province = is_city_art and not is_street_map
 
     _total_roads = 0
     if streets_data:
@@ -625,13 +628,32 @@ def _generate_print_svg(
         else:
             city_sellable_mode = _total_roads >= 200
 
+    # For city_art provinces: override theme to inverted colors
+    # (dark land, white roads/water on white background)
+    if is_city_art_province:
+        theme = dict(theme)  # avoid mutating original
+        theme["mat"] = "#FFFFFF"
+        theme["map_bg"] = "#FFFFFF"
+        theme["land"] = "#333333"
+        theme["land_stroke"] = "#333333"
+        theme["water"] = "#FFFFFF"
+        theme["water_stroke"] = "#FFFFFF"
+        theme["street_major"] = "#FFFFFF"
+        theme["street_minor"] = "#E0E0E0"
+
     # Layer: map area background
     # For provinces/lakes, use water color as background (ocean visible).
     # For sparse city/community maps, also use water so the land shape shows.
+    # For city_art provinces, use white (inverted rendering).
     is_coastal_map = product_type in ("province", "lake", "park") or (
         is_city_community and not city_sellable_mode
     )
-    map_area_bg = theme["water"] if is_coastal_map else theme["map_bg"]
+    if is_city_art_province:
+        map_area_bg = "#FFFFFF"
+    elif is_coastal_map:
+        map_area_bg = theme["water"]
+    else:
+        map_area_bg = theme["map_bg"]
     lines.append('  <g id="map_area">')
     lines.append(
         f'    <rect x="{map_x}" y="{map_y}" width="{map_w}" height="{map_h}"'
@@ -703,6 +725,17 @@ def _generate_print_svg(
     # the streets alone define the map shape against the background.
     if is_city_art and city_sellable_mode:
         pass  # No geography polygon — streets are the visual
+    elif is_city_art_province:
+        # Province in city_art: dark fill, no stroke — roads/water cut through
+        for exterior, holes in polygons:
+            path_d = _coords_to_path(exterior)
+            for hole in holes:
+                path_d += " " + _coords_to_path(hole)
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="{theme["land"]}" stroke="none"'
+                f' fill-rule="evenodd"/>'
+            )
     elif is_street_map:
         # Street maps: fill the boundary polygon with land color to create
         # visible contrast between the city area and the white mat border.
@@ -757,8 +790,10 @@ def _generate_print_svg(
         lines.append('    <g clip-path="url(#boundary_clip)">')
 
     # Water features — filled with water color (optional gradient)
+    # For city_art provinces, skip gradient (white water as negative space)
     if water_data:
-        _render_print_water(lines, water_data, processed, theme, gradient=gradient_water)
+        _render_print_water(lines, water_data, processed, theme,
+                            gradient=gradient_water and not is_city_art_province)
 
     # Contour bands
     if contour_data:
@@ -767,7 +802,8 @@ def _generate_print_svg(
     # Streets
     if streets_data:
         if is_city_art:
-            _render_city_art_streets(lines, streets_data, processed)
+            _render_city_art_streets(lines, streets_data, processed,
+                                    province_mode=is_city_art_province)
         else:
             _render_print_streets(lines, streets_data, processed, theme, product_type=product_type)
 
@@ -2209,26 +2245,37 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
     lines.append("    </g>")
 
 
-def _render_city_art_streets(lines: list[str], streets_data: dict, processed: dict):
-    """Render streets in minimalist grayscale for city map art prints.
+def _render_city_art_streets(lines: list[str], streets_data: dict, processed: dict,
+                             province_mode: bool = False):
+    """Render streets in minimalist style for city map art prints.
 
-    No casing — single strokes only. 4-tier road hierarchy:
-    Tier 1 (motorway/trunk): #1A1A1A, bold
-    Tier 2 (primary): #444444, medium
-    Tier 3 (secondary/tertiary): #888888, light
-    Tier 4 (residential/service): #BBBBBB, fine
+    City mode: dark strokes on light background (4-tier grayscale hierarchy).
+    Province mode: white/light strokes on dark land (negative space texture).
+    No casing — single strokes only.
     """
     transform = processed.get("transform")
 
-    city_art_styles = {
-        "motorway": (1.1, "#1A1A1A"), "motorway_link": (0.8, "#1A1A1A"),
-        "trunk": (0.9, "#1A1A1A"), "trunk_link": (0.7, "#1A1A1A"),
-        "primary": (0.7, "#444444"), "primary_link": (0.55, "#444444"),
-        "secondary": (0.5, "#888888"), "secondary_link": (0.4, "#888888"),
-        "tertiary": (0.35, "#888888"), "tertiary_link": (0.3, "#888888"),
-        "residential": (0.2, "#BBBBBB"), "unclassified": (0.2, "#BBBBBB"),
-        "living_street": (0.2, "#BBBBBB"), "service": (0.15, "#BBBBBB"),
-    }
+    if province_mode:
+        # Inverted: white roads on dark land — creates textured relief look
+        city_art_styles = {
+            "motorway": (1.6, "#FFFFFF"), "motorway_link": (1.2, "#FFFFFF"),
+            "trunk": (1.4, "#FFFFFF"), "trunk_link": (1.0, "#FFFFFF"),
+            "primary": (1.1, "#FFFFFF"), "primary_link": (0.8, "#FFFFFF"),
+            "secondary": (0.8, "#F0F0F0"), "secondary_link": (0.6, "#F0F0F0"),
+            "tertiary": (0.6, "#E8E8E8"), "tertiary_link": (0.5, "#E8E8E8"),
+            "residential": (0.35, "#E0E0E0"), "unclassified": (0.35, "#E0E0E0"),
+            "living_street": (0.35, "#E0E0E0"), "service": (0.25, "#E0E0E0"),
+        }
+    else:
+        city_art_styles = {
+            "motorway": (1.1, "#1A1A1A"), "motorway_link": (0.8, "#1A1A1A"),
+            "trunk": (0.9, "#1A1A1A"), "trunk_link": (0.7, "#1A1A1A"),
+            "primary": (0.7, "#444444"), "primary_link": (0.55, "#444444"),
+            "secondary": (0.5, "#888888"), "secondary_link": (0.4, "#888888"),
+            "tertiary": (0.35, "#888888"), "tertiary_link": (0.3, "#888888"),
+            "residential": (0.2, "#BBBBBB"), "unclassified": (0.2, "#BBBBBB"),
+            "living_street": (0.2, "#BBBBBB"), "service": (0.15, "#BBBBBB"),
+        }
 
     lines.append('    <g id="streets">')
 
