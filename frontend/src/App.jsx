@@ -60,19 +60,11 @@ function loadSavedConfig() {
     const saved = localStorage.getItem("mapforge_config");
     if (saved) {
       const parsed = JSON.parse(saved);
-      // Only restore user preferences that matter, force city_art defaults
+      // Only restore text/subtitle preferences — force all other defaults
       return {
         ...DEFAULT_CONFIG,
         text: parsed.text || "",
         subtitle: parsed.subtitle || "",
-        boardSize: parsed.boardSize || DEFAULT_CONFIG.boardSize,
-        colorTheme: parsed.colorTheme || DEFAULT_CONFIG.colorTheme,
-        showCoordinates: parsed.showCoordinates ?? true,
-        heartLat: parsed.heartLat ?? null,
-        heartLon: parsed.heartLon ?? null,
-        printDPI: parsed.printDPI || 300,
-        includeBleed: parsed.includeBleed || false,
-        includeCropMarks: parsed.includeCropMarks || false,
       };
     }
   } catch {}
