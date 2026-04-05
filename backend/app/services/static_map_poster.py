@@ -39,8 +39,8 @@ MAPTILER_STYLES = {
     "minimal": "basic-v2",
     "streets": "streets-v2",
 }
-# Style for poster art — backdrop has NO labels (clean for map art)
-POSTER_STYLE = "backdrop-light"
+# Base style — streets-v2-light has clean roads + water distinction
+POSTER_STYLE = "streets-v2-light"
 
 # Color theme definitions for poster rendering
 # Each theme: (bg_color, text_color, sub_text_color, border_color, map_style)
@@ -120,32 +120,46 @@ POSTER_THEMES = {
 
 
 def _stylize_map(map_img: Image.Image, theme: dict) -> Image.Image:
-    """Apply color theme to the map image using Pillow post-processing.
+    """Apply color theme to the map image for Etsy-quality map art.
 
-    Converts to grayscale then applies theme-appropriate styling.
+    Pipeline: grayscale → levels adjustment → push background white,
+    streets dark → remove label clutter → apply theme colors.
     """
-    from PIL import ImageFilter
+    import numpy as np
 
     # Convert to grayscale
     gray = ImageOps.grayscale(map_img)
+    arr = np.array(gray, dtype=np.float32)
 
-    # Sharpen to make roads/streets crisp
-    gray = gray.filter(ImageFilter.SHARPEN)
+    # Aggressive levels: push light areas (background, labels) to white
+    # and dark areas (roads, coastlines) to black.
+    # Labels are typically mid-gray (150-200), roads are darker (50-130).
+    # Water features are light blue → becomes light gray (180-220).
 
-    # Boost contrast so streets stand out clearly
-    enhancer = ImageEnhance.Contrast(gray)
-    gray = enhancer.enhance(2.2)
+    # Step 1: Push anything above threshold toward white (kills labels + terrain noise)
+    label_threshold = 160  # pixels lighter than this → push to white
+    mask_light = arr > label_threshold
+    arr[mask_light] = arr[mask_light] * 0.3 + 255 * 0.7  # fade toward white
 
-    # Brighten slightly to push background lighter
-    bright = ImageEnhance.Brightness(gray)
-    gray = bright.enhance(1.15)
+    # Step 2: Make dark features (roads) even darker
+    road_threshold = 140
+    mask_dark = arr < road_threshold
+    arr[mask_dark] = arr[mask_dark] * 0.7  # darken roads
+
+    # Step 3: Keep water distinction — mid-tones stay as subtle gray
+    # (water on streets-v2-light is light blue → ~200 gray, which stays visible)
+
+    arr = np.clip(arr, 0, 255).astype(np.uint8)
+    gray = Image.fromarray(arr)
+
+    # Auto-contrast to maximize range
+    gray = ImageOps.autocontrast(gray, cutoff=1)
 
     if theme.get("map_mode") == "dark":
-        # Dark mode: invert so streets are light on dark background
+        # Dark mode: invert
         gray = ImageOps.invert(gray)
-        # Boost contrast for dark themes
         enhancer = ImageEnhance.Contrast(gray)
-        gray = enhancer.enhance(1.4)
+        gray = enhancer.enhance(1.3)
 
     # Apply tint if theme has one
     tint = theme.get("tint")
