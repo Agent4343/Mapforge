@@ -463,7 +463,13 @@ def _generate_print_svg(
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # Apply poster layout configuration
-    layout = POSTER_LAYOUTS.get(poster_layout, POSTER_LAYOUTS["classic"])
+    # Auto-apply city_art layout when city_art theme is selected,
+    # regardless of what poster_layout the frontend sends. This prevents
+    # stale localStorage configs from breaking the rendering.
+    if color_theme in ("city_art", "city_map_art", "cityart"):
+        layout = POSTER_LAYOUTS["city_art"]
+    else:
+        layout = POSTER_LAYOUTS.get(poster_layout, POSTER_LAYOUTS["classic"])
     # Vintage layout forces serif font
     if layout.get("force_font"):
         font_family = layout["force_font"]
