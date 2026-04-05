@@ -39,8 +39,8 @@ MAPTILER_STYLES = {
     "minimal": "basic-v2",
     "streets": "streets-v2",
 }
-# Style for poster art — positron-nolabels gives clean lines without text clutter
-POSTER_STYLE = "positron-nolabels"
+# Style for poster art — basic-v2 is clean and minimal
+POSTER_STYLE = "basic-v2"
 
 
 def _choose_zoom(product_type: str, bbox_area: float = 0) -> int:
