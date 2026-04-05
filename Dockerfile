@@ -5,7 +5,7 @@ WORKDIR /frontend
 COPY frontend/package.json ./
 RUN npm install
 COPY frontend/ .
-ARG FRONTEND_VERSION=9
+ARG FRONTEND_VERSION=10
 RUN npm run build
 
 # Stage 2: Python backend + built frontend
@@ -21,6 +21,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgdk-pixbuf-2.0-dev \
     build-essential \
     fonts-dejavu-core \
+    fonts-liberation \
+    fonts-freefont-ttf \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt .
