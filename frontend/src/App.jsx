@@ -438,12 +438,19 @@ export default function App() {
   const handleDownload = useCallback(async () => {
     if (!result) return;
     try {
+      // If MapTiler PNG, download that instead of SVG
+      if (svgContent && svgContent.startsWith("data:image/")) {
+        const resp = await fetch(svgContent);
+        const blob = await resp.blob();
+        _triggerDownload(blob, config.text, "png");
+        return;
+      }
       const blob = await downloadSVG(result.file_id);
       _triggerDownload(blob, config.text, "svg");
     } catch (err) {
       setError(err.message);
     }
-  }, [result, config.text]);
+  }, [result, config.text, svgContent]);
 
   const handleDownloadThumbnail = useCallback(async () => {
     if (!result) return;
@@ -458,13 +465,20 @@ export default function App() {
   const handleDownloadPrintPNG = useCallback(async () => {
     if (!result) return;
     try {
+      // If we have a MapTiler preview image, download it directly
+      if (svgContent && svgContent.startsWith("data:image/")) {
+        const resp = await fetch(svgContent);
+        const blob = await resp.blob();
+        _triggerDownload(blob, config.text + "_print", "png");
+        return;
+      }
       const blob = await downloadPrintPNG(result.file_id);
       const dpiLabel = config.printDPI || 300;
       _triggerDownload(blob, config.text + `_print_${dpiLabel}dpi`, "png");
     } catch (err) {
       setError(err.message);
     }
-  }, [result, config.text]);
+  }, [result, config.text, svgContent]);
 
   const handleDownloadDXF = useCallback(async () => {
     if (!result) return;
@@ -509,12 +523,18 @@ export default function App() {
   const handleDownloadPreview = useCallback(async () => {
     if (!result) return;
     try {
+      if (svgContent && svgContent.startsWith("data:image/")) {
+        const resp = await fetch(svgContent);
+        const blob = await resp.blob();
+        _triggerDownload(blob, config.text + "_preview", "png");
+        return;
+      }
       const blob = await downloadPreview(result.file_id);
       _triggerDownload(blob, config.text + "_preview", "png");
     } catch (err) {
       setError(err.message);
     }
-  }, [result, config.text]);
+  }, [result, config.text, svgContent]);
 
   const handleDownloadWallMockup = useCallback(async (style = "light_wall") => {
     if (!result) return;
