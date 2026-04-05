@@ -47,13 +47,11 @@ def _compute_street_viewport(streets_data: dict, transform: dict, bounds_mm: tup
                               center_latlon: tuple | None = None,
                               board_mm: tuple | None = None,
                               padding_pct: float = 0.05) -> tuple | None:
-    """Compute a zoomed viewport centered on the city center.
+    """Compute a zoomed viewport centered on the street grid median.
 
-    Strategy: center on the Nominatim city center (or street median),
-    then expand outward to fill the poster's map area aspect ratio.
-    Uses the 80th percentile radius from center as the base size,
-    ensuring dense streets fill the frame while keeping the city
-    center in the middle of the poster.
+    Strategy: center on the MEDIAN of street coordinates (not Nominatim center),
+    which naturally avoids water for coastal cities. Then use per-axis percentiles
+    to determine extent and match the poster's map area aspect ratio.
     Returns new bounds_mm tuple or None if not enough data.
     """
     if not streets_data or not transform:
@@ -72,21 +70,28 @@ def _compute_street_viewport(streets_data: dict, transform: dict, bounds_mm: tup
     if len(all_x) < 100:
         return None  # Not enough data points
 
-    # Determine center point: prefer Nominatim city center, fall back to median
     all_x.sort()
     all_y.sort()
     n = len(all_x)
 
-    if center_latlon and center_latlon[0] is not None:
-        center_board = transform_wgs84_to_board(
-            [(center_latlon[1], center_latlon[0])], transform
-        )
-        cx, cy = center_board[0]
-    else:
-        cx = all_x[n // 2]
-        cy = all_y[n // 2]
+    # Use median of street coords as center — this naturally avoids water
+    # for coastal cities (Toronto, Miami, Vancouver) since streets only
+    # exist on land.
+    cx = all_x[n // 2]
+    cy = all_y[n // 2]
 
-    # Compute the poster map area aspect ratio
+    # Per-axis percentiles to find the dense core extent
+    p15 = int(n * 0.15)
+    p85 = int(n * 0.85)
+    extent_x = (all_x[p85] - all_x[p15]) / 2
+    extent_y = (all_y[p85] - all_y[p15]) / 2
+
+    # Ensure minimum extent
+    min_extent = 20.0
+    extent_x = max(extent_x, min_extent)
+    extent_y = max(extent_y, min_extent)
+
+    # Match poster's map area aspect ratio
     if board_mm:
         board_w, board_h = board_mm
         map_w = board_w * 0.95
@@ -95,44 +100,21 @@ def _compute_street_viewport(streets_data: dict, transform: dict, bounds_mm: tup
     else:
         target_ratio = 1.0
 
-    # Use the 75th percentile distance from center to determine viewport size.
-    # This captures the dense urban core while excluding sparse outlying roads.
-    distances_x = [abs(x - cx) for x in all_x]
-    distances_y = [abs(y - cy) for y in all_y]
-    distances_x.sort()
-    distances_y.sort()
-
-    # Use 75th percentile as the base radius in each axis
-    p75 = int(n * 0.75)
-    radius_x = distances_x[p75]
-    radius_y = distances_y[p75]
-
-    # Ensure minimum radius (prevent degenerate viewport)
-    min_radius = 20.0  # 20mm minimum
-    radius_x = max(radius_x, min_radius)
-    radius_y = max(radius_y, min_radius)
-
-    # Now adjust to match the poster's map area aspect ratio.
-    # We want: viewport_h / viewport_w = target_ratio
-    # viewport_w = 2 * final_rx, viewport_h = 2 * final_ry
-    # So: final_ry / final_rx = target_ratio
-    current_ratio = radius_y / radius_x
-
+    # Adjust extents to match target ratio: extent_y / extent_x = target_ratio
+    current_ratio = extent_y / extent_x
     if current_ratio < target_ratio:
-        # Need more height — expand radius_y
-        radius_y = radius_x * target_ratio
+        extent_y = extent_x * target_ratio
     else:
-        # Need more width — expand radius_x
-        radius_x = radius_y / target_ratio
+        extent_x = extent_y / target_ratio
 
     # Add padding
-    radius_x *= (1 + padding_pct)
-    radius_y *= (1 + padding_pct)
+    extent_x *= (1 + padding_pct)
+    extent_y *= (1 + padding_pct)
 
-    x_min = cx - radius_x
-    x_max = cx + radius_x
-    y_min = cy - radius_y
-    y_max = cy + radius_y
+    x_min = cx - extent_x
+    x_max = cx + extent_x
+    y_min = cy - extent_y
+    y_max = cy + extent_y
 
     # Log viewport info
     orig_min_x, orig_min_y, orig_max_x, orig_max_y = bounds_mm
@@ -142,7 +124,7 @@ def _compute_street_viewport(streets_data: dict, transform: dict, bounds_mm: tup
         return None
 
     log.info(f"Street viewport: centered on ({cx:.0f},{cy:.0f}), "
-             f"radius {radius_x:.0f}x{radius_y:.0f}mm, "
+             f"extent {extent_x:.0f}x{extent_y:.0f}mm, "
              f"{street_area / orig_area:.0%} of boundary area")
     return (x_min, y_min, x_max, y_max)
 
