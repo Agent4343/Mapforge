@@ -261,3 +261,45 @@ async def clear_maptiler_settings(
     await delete_setting(db, "MAPTILER_API_KEY")
 
     return {"status": "cleared"}
+
+
+@router.get("/maptiler-test")
+async def test_maptiler(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Test MapTiler API key by fetching a tiny static map (admin only)."""
+    _require_admin(user)
+
+    from app.services.app_settings import get_maptiler_key
+
+    db_key = await get_setting(db, "MAPTILER_API_KEY")
+    env_key = __import__("os").getenv("MAPTILER_API_KEY", "")
+    effective_key = await get_maptiler_key(db)
+
+    result = {
+        "db_key_found": bool(db_key),
+        "db_key_preview": f"{db_key[:8]}..." if db_key and len(db_key) > 8 else db_key or "",
+        "env_key_found": bool(env_key),
+        "effective_key_found": bool(effective_key),
+        "effective_key_preview": f"{effective_key[:8]}..." if effective_key and len(effective_key) > 8 else effective_key or "",
+    }
+
+    if effective_key:
+        import httpx
+        test_url = f"https://api.maptiler.com/maps/streets-v2-light/static/-60.9,46.3,8/64x64.png?key={effective_key}"
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(test_url)
+                result["test_status"] = resp.status_code
+                result["test_content_type"] = resp.headers.get("content-type", "")
+                result["test_bytes"] = len(resp.content)
+                result["test_ok"] = resp.status_code == 200 and "image" in resp.headers.get("content-type", "")
+        except Exception as e:
+            result["test_error"] = str(e)
+            result["test_ok"] = False
+    else:
+        result["test_ok"] = False
+        result["test_error"] = "No MapTiler API key found in DB or environment"
+
+    return result

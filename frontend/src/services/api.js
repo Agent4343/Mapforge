@@ -601,6 +601,15 @@ async function clearMaptilerSettings() {
   return resp.json();
 }
 
+async function testMaptiler() {
+  const resp = await fetchWithTimeout(`${API_BASE}/admin/maptiler-test`);
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "MapTiler test failed"));
+  }
+  return resp.json();
+}
+
 // --- Design Credits (Etsy-paid customers) ---
 
 async function redeemCredit(token) {
@@ -656,6 +665,6 @@ export {
   getEtsyStatus, connectEtsy, disconnectEtsy, publishToEtsy,
   getShowcaseCities, showcasePublish,
   getEtsyDebug, getAdminStats, getEtsySettings, saveEtsySettings, clearEtsySettings,
-  getMaptilerSettings, saveMaptilerSettings, clearMaptilerSettings,
+  getMaptilerSettings, saveMaptilerSettings, clearMaptilerSettings, testMaptiler,
   redeemCredit, generateForCredit, getCreditStatus, downloadCreditFile,
 };

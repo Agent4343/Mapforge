@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { getAdminStats, getEtsySettings, saveEtsySettings, clearEtsySettings, getEtsyDebug, getMaptilerSettings, saveMaptilerSettings, clearMaptilerSettings } from "../services/api.js";
+import { getAdminStats, getEtsySettings, saveEtsySettings, clearEtsySettings, getEtsyDebug, getMaptilerSettings, saveMaptilerSettings, clearMaptilerSettings, testMaptiler } from "../services/api.js";
 
 export default function AdminDashboard({ onBack }) {
   const [stats, setStats] = useState(null);
@@ -23,6 +23,8 @@ export default function AdminDashboard({ onBack }) {
   const [maptilerSaving, setMaptilerSaving] = useState(false);
   const [maptilerMsg, setMaptilerMsg] = useState(null);
   const [showMaptilerForm, setShowMaptilerForm] = useState(false);
+  const [maptilerTest, setMaptilerTest] = useState(null);
+  const [maptilerTesting, setMaptilerTesting] = useState(false);
 
   async function handleTestEtsy() {
     setEtsyTesting(true);
@@ -121,6 +123,19 @@ export default function AdminDashboard({ onBack }) {
       setMaptilerMsg({ type: "success", text: "MapTiler key cleared." });
     } catch (err) {
       setMaptilerMsg({ type: "error", text: err.message });
+    }
+  }
+
+  async function handleTestMaptiler() {
+    setMaptilerTesting(true);
+    setMaptilerTest(null);
+    try {
+      const result = await testMaptiler();
+      setMaptilerTest(result);
+    } catch (err) {
+      setMaptilerTest({ test_ok: false, test_error: err.message });
+    } finally {
+      setMaptilerTesting(false);
     }
   }
 
@@ -329,7 +344,21 @@ export default function AdminDashboard({ onBack }) {
               <button className="btn btn-secondary btn-sm" onClick={handleClearMaptiler}>
                 Clear Key
               </button>
+              <button className="btn btn-primary btn-sm" onClick={handleTestMaptiler} disabled={maptilerTesting}>
+                {maptilerTesting ? "Testing..." : "Test Connection"}
+              </button>
             </div>
+            {maptilerTest && (
+              <div style={{ marginTop: "10px", padding: "10px", background: "var(--bg-input)", borderRadius: "6px", fontSize: "11px", fontFamily: "monospace", lineHeight: "1.6" }}>
+                <div>DB key found: <strong>{maptilerTest.db_key_found ? "YES" : "NO"}</strong></div>
+                <div>Env key found: <strong>{maptilerTest.env_key_found ? "YES" : "NO"}</strong></div>
+                <div>Effective key: <strong>{maptilerTest.effective_key_preview || "NONE"}</strong></div>
+                <div>Test: <strong style={{ color: maptilerTest.test_ok ? "var(--success)" : "var(--error)" }}>
+                  {maptilerTest.test_ok ? "OK — MapTiler is working!" : `FAILED${maptilerTest.test_status ? ` (HTTP ${maptilerTest.test_status})` : ""}`}
+                </strong></div>
+                {maptilerTest.test_error && <div style={{ color: "var(--error)" }}>{maptilerTest.test_error}</div>}
+              </div>
+            )}
           </div>
         ) : (
           <div className="etsy-settings-status">
