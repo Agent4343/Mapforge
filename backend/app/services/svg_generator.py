@@ -886,11 +886,12 @@ def _generate_print_svg(
         lines.append('    <g clip-path="url(#boundary_clip)">')
 
     # Water features — filled with water color (optional gradient)
-    # For city_art cities, skip water entirely — streets are the only visual.
+    # For city_art: render water flat (no gradient) so lakes/rivers show as subtle
+    # tonal contrast rather than blank white voids.
     # For city_art provinces, render water as negative space (no gradient).
-    if water_data and not (is_city_art and is_city_community):
+    if water_data:
         _render_print_water(lines, water_data, processed, theme,
-                            gradient=gradient_water and not is_city_art_province)
+                            gradient=gradient_water and not is_city_art_province and not (is_city_art and is_city_community))
 
     # Contour bands
     if contour_data:
