@@ -634,12 +634,12 @@ def _generate_print_svg(
         theme = dict(theme)  # avoid mutating original
         theme["mat"] = "#FFFFFF"
         theme["map_bg"] = "#FFFFFF"
-        theme["land"] = "#333333"
-        theme["land_stroke"] = "#333333"
+        theme["land"] = "#444444"
+        theme["land_stroke"] = "#444444"
         theme["water"] = "#FFFFFF"
         theme["water_stroke"] = "#FFFFFF"
-        theme["street_major"] = "#FFFFFF"
-        theme["street_minor"] = "#E0E0E0"
+        theme["street_major"] = "#CCCCCC"
+        theme["street_minor"] = "#999999"
 
     # Layer: map area background
     # For provinces/lakes, use water color as background (ocean visible).
@@ -2256,15 +2256,16 @@ def _render_city_art_streets(lines: list[str], streets_data: dict, processed: di
     transform = processed.get("transform")
 
     if province_mode:
-        # Inverted: white roads on dark land — creates textured relief look
+        # Inverted: subtle light roads on dark land — creates smooth textured relief
+        # Roads should be fine and delicate, creating texture not bold lines
         city_art_styles = {
-            "motorway": (1.6, "#FFFFFF"), "motorway_link": (1.2, "#FFFFFF"),
-            "trunk": (1.4, "#FFFFFF"), "trunk_link": (1.0, "#FFFFFF"),
-            "primary": (1.1, "#FFFFFF"), "primary_link": (0.8, "#FFFFFF"),
-            "secondary": (0.8, "#F0F0F0"), "secondary_link": (0.6, "#F0F0F0"),
-            "tertiary": (0.6, "#E8E8E8"), "tertiary_link": (0.5, "#E8E8E8"),
-            "residential": (0.35, "#E0E0E0"), "unclassified": (0.35, "#E0E0E0"),
-            "living_street": (0.35, "#E0E0E0"), "service": (0.25, "#E0E0E0"),
+            "motorway": (0.8, "#CCCCCC"), "motorway_link": (0.6, "#CCCCCC"),
+            "trunk": (0.7, "#CCCCCC"), "trunk_link": (0.5, "#CCCCCC"),
+            "primary": (0.5, "#BBBBBB"), "primary_link": (0.4, "#BBBBBB"),
+            "secondary": (0.35, "#AAAAAA"), "secondary_link": (0.3, "#AAAAAA"),
+            "tertiary": (0.25, "#999999"), "tertiary_link": (0.2, "#999999"),
+            "residential": (0.15, "#888888"), "unclassified": (0.15, "#888888"),
+            "living_street": (0.15, "#888888"), "service": (0.1, "#888888"),
         }
     else:
         city_art_styles = {
