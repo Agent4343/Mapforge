@@ -419,7 +419,7 @@ export default function App() {
         data = await generateSVG(params);
       }
 
-      setSvgContent(data.svg);
+      setSvgContent(data.preview_image || data.svg);
       setResult(data);
 
       // Quality/generation warnings

@@ -248,6 +248,7 @@ class PinGenerateRequest(BaseModel):
 
 class GenerateResponse(BaseModel):
     svg: Optional[str] = None
+    preview_image: Optional[str] = None  # base64 data URI PNG for map art preview
     thumbnail_available: bool = False
     print_png_available: bool = False
     etsy_listing_available: bool = False

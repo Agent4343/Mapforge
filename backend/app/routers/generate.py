@@ -476,12 +476,12 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             processed["bounds_mm"] = street_viewport
             log.info(f"Zoomed viewport to urban street grid")
 
-    # Generate print poster SVG (the primary and only output)
+    # Generate map art output
     location_name = req.text or f"Location {req.osm_id}"
     board_w, board_h = processed["board_mm"]
 
-    # For city_art maps: try MapTiler static map first (much higher quality)
-    result = None
+    # For city_art maps: generate PNG directly using MapTiler static map (no SVG)
+    preview_image = None
     is_city_art = req.color_theme in ("city_art", "city_map_art", "cityart")
     is_city_type = req.product_type.value in ("city", "community")
     if settings.MAPTILER_API_KEY and is_city_art and is_city_type:
@@ -490,50 +490,50 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             lat_span = bounds[3] - bounds[1] if bounds else 0
             lon_span = bounds[2] - bounds[0] if bounds else 0
             try:
-                result = await generate_maptiler_poster_svg(
-                    board_w=board_w,
-                    board_h=board_h,
+                import base64
+                poster_bytes = await generate_static_map_poster(
                     lat=center[0],
                     lng=center[1],
-                    location_name=location_name,
+                    city_name=location_name,
                     subtitle=req.subtitle or "",
+                    board_size=req.board_size.value,
                     show_coordinates=req.show_coordinates,
                     product_type=req.product_type.value,
                     bbox_area=lat_span * lon_span,
                 )
-                if result:
-                    log.info("Using MapTiler static map for SVG poster")
+                if poster_bytes:
+                    b64 = base64.b64encode(poster_bytes).decode("ascii")
+                    preview_image = f"data:image/png;base64,{b64}"
+                    log.info(f"MapTiler PNG poster generated: {len(poster_bytes)} bytes")
             except Exception as e:
-                log.warning(f"MapTiler poster SVG failed, falling back to road rendering: {e}")
-                result = None
+                log.warning(f"MapTiler PNG poster failed, falling back to SVG: {e}")
 
-    # Fallback: generate SVG from road paths
-    if result is None:
-        result = generate_svg(
-            processed=processed,
-            location_name=location_name,
-            style=req.style,
-            show_coordinates=req.show_coordinates,
-            font_size_mm=req.font_size_mm,
-            streets_data=streets_data,
-            contour_data=contour_data,
-            water_data=water_data,
-            markers=board_markers,
-            subtitle=req.subtitle,
-            font_family=req.font_family.value,
-            border_style=req.border_style.value,
-            heart_location=heart_mm,
-            output_mode="print",
-            color_theme=req.color_theme,
-            product_type=req.product_type.value,
-            include_bleed=req.include_bleed,
-            include_crop_marks=req.include_crop_marks,
-            poster_layout=req.poster_layout,
-            show_compass=req.show_compass,
-            show_scale_bar=req.show_scale_bar,
-            gradient_water=req.gradient_water,
-            land_shadow=req.land_shadow,
-        )
+    # Generate SVG (used as fallback or for non-city_art maps)
+    result = generate_svg(
+        processed=processed,
+        location_name=location_name,
+        style=req.style,
+        show_coordinates=req.show_coordinates,
+        font_size_mm=req.font_size_mm,
+        streets_data=streets_data,
+        contour_data=contour_data,
+        water_data=water_data,
+        markers=board_markers,
+        subtitle=req.subtitle,
+        font_family=req.font_family.value,
+        border_style=req.border_style.value,
+        heart_location=heart_mm,
+        output_mode="print",
+        color_theme=req.color_theme,
+        product_type=req.product_type.value,
+        include_bleed=req.include_bleed,
+        include_crop_marks=req.include_crop_marks,
+        poster_layout=req.poster_layout,
+        show_compass=req.show_compass,
+        show_scale_bar=req.show_scale_bar,
+        gradient_water=req.gradient_water,
+        land_shadow=req.land_shadow,
+    )
 
     # Store files + generate derivatives (only for authenticated users)
     # Visitors just get the SVG preview — no file storage needed
@@ -729,7 +729,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         log.info(f"Preview generated (visitor): {location_name} ({result['node_count']} nodes)")
 
     return GenerateResponse(
-        svg=result["svg"],
+        svg=result["svg"] if not preview_image else None,
+        preview_image=preview_image,
         thumbnail_available=thumbnail_key is not None,
         print_png_available=print_png_key is not None,
         etsy_listing_available=etsy_key is not None,

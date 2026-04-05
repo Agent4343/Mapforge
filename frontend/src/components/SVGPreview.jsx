@@ -92,8 +92,11 @@ export default function SVGPreview({ svgContent, loading, error, colorTheme }) {
   // (width="406.4mm") render at full physical size (~1536px) which overflows
   // the preview container. Replace with responsive attributes while keeping
   // the viewBox for correct aspect ratio.
+  // Check if content is a PNG data URI (MapTiler poster) vs SVG markup
+  const isImageDataUri = svgContent && svgContent.startsWith("data:image/");
+
   const displaySvg = useMemo(() => {
-    if (!svgContent) return null;
+    if (!svgContent || isImageDataUri) return null;
 
     let svg = svgContent;
 
@@ -110,7 +113,7 @@ export default function SVGPreview({ svgContent, loading, error, colorTheme }) {
 
     // Fallback: apply client-side color remap for older SVGs
     return applyPrintColors(svg, colorTheme || "classic");
-  }, [svgContent, isPrint, colorTheme]);
+  }, [svgContent, isPrint, colorTheme, isImageDataUri]);
 
   const handleMouseDown = useCallback(
     (e) => {
@@ -232,8 +235,18 @@ export default function SVGPreview({ svgContent, loading, error, colorTheme }) {
           transformOrigin: "center center",
           transition: isPanning ? "none" : "transform 0.15s ease",
         }}
-        dangerouslySetInnerHTML={{ __html: displaySvg }}
-      />
+      >
+        {isImageDataUri ? (
+          <img
+            src={svgContent}
+            alt="Map poster"
+            style={{ width: "100%", height: "auto", display: "block" }}
+            draggable={false}
+          />
+        ) : (
+          <div dangerouslySetInnerHTML={{ __html: displaySvg }} />
+        )}
+      </div>
       {/* Toolbar - positioned above the preview */}
       <div className="preview-toolbar">
         <button
