@@ -46,12 +46,14 @@ limiter = Limiter(key_func=get_remote_address)
 def _compute_street_viewport(streets_data: dict, transform: dict, bounds_mm: tuple,
                               center_latlon: tuple | None = None,
                               board_mm: tuple | None = None,
-                              padding_pct: float = 0.10) -> tuple | None:
-    """Compute a zoomed viewport that fits the dense street grid.
+                              padding_pct: float = 0.05) -> tuple | None:
+    """Compute a zoomed viewport centered on the city center.
 
-    Uses per-axis percentiles (10th-90th) to find where streets are concentrated,
-    then adjusts the viewport aspect ratio to match the poster's map area so
-    streets fill the entire frame without empty space.
+    Strategy: center on the Nominatim city center (or street median),
+    then expand outward to fill the poster's map area aspect ratio.
+    Uses the 80th percentile radius from center as the base size,
+    ensuring dense streets fill the frame while keeping the city
+    center in the middle of the poster.
     Returns new bounds_mm tuple or None if not enough data.
     """
     if not streets_data or not transform:
@@ -70,103 +72,78 @@ def _compute_street_viewport(streets_data: dict, transform: dict, bounds_mm: tup
     if len(all_x) < 100:
         return None  # Not enough data points
 
-    # Per-axis percentiles to find the dense area
+    # Determine center point: prefer Nominatim city center, fall back to median
     all_x.sort()
     all_y.sort()
     n = len(all_x)
-    p10 = int(n * 0.10)
-    p90 = int(n * 0.90)
 
-    x_min = all_x[p10]
-    x_max = all_x[p90]
-    y_min = all_y[p10]
-    y_max = all_y[p90]
-
-    # Ensure city center is included in the viewport
     if center_latlon and center_latlon[0] is not None:
         center_board = transform_wgs84_to_board(
             [(center_latlon[1], center_latlon[0])], transform
         )
         cx, cy = center_board[0]
-        margin_x = (x_max - x_min) * 0.15
-        margin_y = (y_max - y_min) * 0.15
-        if cx < x_min:
-            x_min = cx - margin_x
-        elif cx > x_max:
-            x_max = cx + margin_x
-        if cy < y_min:
-            y_min = cy - margin_y
-        elif cy > y_max:
-            y_max = cy + margin_y
+    else:
+        cx = all_x[n // 2]
+        cy = all_y[n // 2]
 
-    w = x_max - x_min
-    h = y_max - y_min
-    if w <= 0 or h <= 0:
-        return None
-
-    # Add padding
-    pad_x = w * padding_pct
-    pad_y = h * padding_pct
-    x_min -= pad_x
-    x_max += pad_x
-    y_min -= pad_y
-    y_max += pad_y
-
-    # Match viewport aspect ratio to poster's map area so streets fill the frame.
-    # Without this, a landscape street grid (Toronto) on a portrait poster leaves
-    # half the map empty because poster_scale = min(map_w/geo_w, map_h/geo_h).
+    # Compute the poster map area aspect ratio
     if board_mm:
         board_w, board_h = board_mm
-        # city_art layout: mat_pct=0.025, text_area_pct=0.28, text at bottom
         map_w = board_w * 0.95
         map_h = board_h * 0.67
-        target_ratio = map_h / map_w  # height / width of poster map area
+        target_ratio = map_h / map_w  # height / width
+    else:
+        target_ratio = 1.0
 
-        vp_w = x_max - x_min
-        vp_h = y_max - y_min
-        vp_ratio = vp_h / vp_w
+    # Use the 75th percentile distance from center to determine viewport size.
+    # This captures the dense urban core while excluding sparse outlying roads.
+    distances_x = [abs(x - cx) for x in all_x]
+    distances_y = [abs(y - cy) for y in all_y]
+    distances_x.sort()
+    distances_y.sort()
 
-        # Use median of street coords as expansion bias center —
-        # expand toward where more streets exist
-        median_x = all_x[n // 2]
-        median_y = all_y[n // 2]
+    # Use 75th percentile as the base radius in each axis
+    p75 = int(n * 0.75)
+    radius_x = distances_x[p75]
+    radius_y = distances_y[p75]
 
-        if vp_ratio < target_ratio:
-            # Viewport too wide (landscape) — need more height
-            needed_h = vp_w * target_ratio
-            extra = needed_h - vp_h
-            # Bias expansion toward the median (where streets are denser)
-            vp_center_y = (y_min + y_max) / 2
-            if median_y < vp_center_y:
-                # More streets toward top (smaller Y) — expand upward more
-                y_min -= extra * 0.7
-                y_max += extra * 0.3
-            else:
-                # More streets toward bottom — expand downward more
-                y_min -= extra * 0.3
-                y_max += extra * 0.7
-            log.info(f"Expanded viewport height by {extra:.0f}mm to match poster aspect ratio")
-        elif vp_ratio > target_ratio * 1.05:
-            # Viewport too tall — need more width
-            needed_w = vp_h / target_ratio
-            extra = needed_w - vp_w
-            vp_center_x = (x_min + x_max) / 2
-            if median_x < vp_center_x:
-                x_min -= extra * 0.7
-                x_max += extra * 0.3
-            else:
-                x_min -= extra * 0.3
-                x_max += extra * 0.7
-            log.info(f"Expanded viewport width by {extra:.0f}mm to match poster aspect ratio")
+    # Ensure minimum radius (prevent degenerate viewport)
+    min_radius = 20.0  # 20mm minimum
+    radius_x = max(radius_x, min_radius)
+    radius_y = max(radius_y, min_radius)
 
-    # Only zoom if viewport is meaningfully different from full boundary
+    # Now adjust to match the poster's map area aspect ratio.
+    # We want: viewport_h / viewport_w = target_ratio
+    # viewport_w = 2 * final_rx, viewport_h = 2 * final_ry
+    # So: final_ry / final_rx = target_ratio
+    current_ratio = radius_y / radius_x
+
+    if current_ratio < target_ratio:
+        # Need more height — expand radius_y
+        radius_y = radius_x * target_ratio
+    else:
+        # Need more width — expand radius_x
+        radius_x = radius_y / target_ratio
+
+    # Add padding
+    radius_x *= (1 + padding_pct)
+    radius_y *= (1 + padding_pct)
+
+    x_min = cx - radius_x
+    x_max = cx + radius_x
+    y_min = cy - radius_y
+    y_max = cy + radius_y
+
+    # Log viewport info
     orig_min_x, orig_min_y, orig_max_x, orig_max_y = bounds_mm
     orig_area = (orig_max_x - orig_min_x) * (orig_max_y - orig_min_y)
     street_area = (x_max - x_min) * (y_max - y_min)
     if orig_area <= 0:
         return None
 
-    log.info(f"Street viewport: {street_area / orig_area:.0%} of boundary area")
+    log.info(f"Street viewport: centered on ({cx:.0f},{cy:.0f}), "
+             f"radius {radius_x:.0f}x{radius_y:.0f}mm, "
+             f"{street_area / orig_area:.0%} of boundary area")
     return (x_min, y_min, x_max, y_max)
 
 # In-memory cache for Overpass API results (streets, water) keyed by bbox.
