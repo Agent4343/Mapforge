@@ -2378,13 +2378,13 @@ def _render_city_art_streets(lines: list[str], streets_data: dict, processed: di
         }
     else:
         city_art_styles = {
-            "motorway": (1.0, "#000000"), "motorway_link": (0.6, "#111111"),
-            "trunk": (0.9, "#000000"), "trunk_link": (0.55, "#111111"),
-            "primary": (0.7, "#111111"), "primary_link": (0.5, "#222222"),
-            "secondary": (0.5, "#222222"), "secondary_link": (0.4, "#333333"),
-            "tertiary": (0.38, "#333333"), "tertiary_link": (0.3, "#444444"),
-            "residential": (0.25, "#444444"), "unclassified": (0.25, "#444444"),
-            "living_street": (0.25, "#444444"), "service": (0.15, "#555555"),
+            "motorway": (1.0, "#000000"), "motorway_link": (0.6, "#000000"),
+            "trunk": (0.9, "#000000"), "trunk_link": (0.55, "#000000"),
+            "primary": (0.7, "#111111"), "primary_link": (0.5, "#111111"),
+            "secondary": (0.5, "#222222"), "secondary_link": (0.4, "#222222"),
+            "tertiary": (0.38, "#333333"), "tertiary_link": (0.3, "#333333"),
+            "residential": (0.22, "#555555"), "unclassified": (0.22, "#555555"),
+            "living_street": (0.22, "#555555"), "service": (0.15, "#777777"),
         }
 
     lines.append('    <g id="streets">')
