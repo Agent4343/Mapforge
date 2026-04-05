@@ -16,6 +16,89 @@ from app.models.schemas import CutStyle
 from app.services.geometry_processor import transform_wgs84_to_board
 
 
+# Road classes suitable for CNC cutting — skip residential/service/tertiary
+# which are too fine for most CNC machines and make the file unmanageable
+CNC_ROAD_CLASSES = {
+    "motorway", "motorway_link", "trunk", "trunk_link",
+    "primary", "primary_link", "secondary", "secondary_link",
+}
+
+# Maximum roads for CNC output (much lower than print)
+CNC_MAX_MAJOR = 2000
+CNC_MAX_MINOR = 500
+
+
+def _simplify_line(coords: list[tuple], tolerance: float = 0.3) -> list[tuple]:
+    """Douglas-Peucker line simplification for road geometries.
+
+    Reduces point count while preserving shape. tolerance is in mm
+    (board coordinates). Default 0.3mm is invisible at CNC scale.
+    """
+    if len(coords) <= 2:
+        return coords
+
+    # Find point with max distance from line between start and end
+    start, end = coords[0], coords[-1]
+    max_dist = 0.0
+    max_idx = 0
+    dx, dy = end[0] - start[0], end[1] - start[1]
+    line_len_sq = dx * dx + dy * dy
+
+    for i in range(1, len(coords) - 1):
+        px, py = coords[i][0] - start[0], coords[i][1] - start[1]
+        if line_len_sq > 0:
+            t = max(0, min(1, (px * dx + py * dy) / line_len_sq))
+            proj_x, proj_y = t * dx, t * dy
+        else:
+            proj_x, proj_y = 0, 0
+        dist = math.hypot(px - proj_x, py - proj_y)
+        if dist > max_dist:
+            max_dist = dist
+            max_idx = i
+
+    if max_dist > tolerance:
+        left = _simplify_line(coords[:max_idx + 1], tolerance)
+        right = _simplify_line(coords[max_idx:], tolerance)
+        return left[:-1] + right
+    else:
+        return [coords[0], coords[-1]]
+
+
+def _filter_streets_for_cnc(streets_data: dict) -> dict:
+    """Filter and simplify street data for CNC machine output.
+
+    - Keeps only major road classes (motorway, trunk, primary, secondary)
+    - Simplifies road geometries with Douglas-Peucker
+    - Caps total road count to CNC-appropriate limits
+    """
+    if not streets_data:
+        return streets_data
+
+    cnc_major = []
+    cnc_minor = []
+
+    for coords, road_class, width, name in streets_data.get("major_roads", []):
+        if road_class in CNC_ROAD_CLASSES and len(coords) >= 2:
+            cnc_major.append((coords, road_class, width, name))
+
+    for coords, road_class, width, name in streets_data.get("minor_roads", []):
+        if road_class in CNC_ROAD_CLASSES and len(coords) >= 2:
+            cnc_minor.append((coords, road_class, width, name))
+
+    # Cap counts
+    if len(cnc_major) > CNC_MAX_MAJOR:
+        cnc_major.sort(key=lambda r: len(r[0]), reverse=True)
+        cnc_major = cnc_major[:CNC_MAX_MAJOR]
+    if len(cnc_minor) > CNC_MAX_MINOR:
+        cnc_minor.sort(key=lambda r: len(r[0]), reverse=True)
+        cnc_minor = cnc_minor[:CNC_MAX_MINOR]
+
+    return {
+        "major_roads": cnc_major,
+        "minor_roads": cnc_minor,
+    }
+
+
 # Print production constants — bleed and crop marks for professional printing
 BLEED_MM = 3.0        # Standard bleed margin in mm
 CROP_MARK_LENGTH = 5.0  # Length of crop mark lines in mm
@@ -263,9 +346,10 @@ def _generate_cnc_svg(
         _render_contour_bands(lines, contour_data, processed)
         lines.append("")
 
-    # Layer: detail_lines (streets)
+    # Layer: detail_lines (streets) — filtered for CNC: major roads only
     if streets_data:
-        _render_streets(lines, streets_data, processed, output_mode="cnc")
+        cnc_streets = _filter_streets_for_cnc(streets_data)
+        _render_streets(lines, cnc_streets, processed, output_mode="cnc")
         lines.append("")
 
     # Layer: pin_marker (for name_sign / location pin)

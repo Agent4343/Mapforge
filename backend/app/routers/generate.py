@@ -398,6 +398,33 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             log.error(f"Failed to store SVG: {e}")
             raise HTTPException(status_code=500, detail="Failed to save generated file. Please try again.")
 
+        # Generate CNC-optimized SVG (simplified: major roads only, fewer paths)
+        try:
+            cnc_result = generate_svg(
+                processed=processed,
+                location_name=location_name,
+                style=req.style,
+                show_coordinates=req.show_coordinates,
+                font_size_mm=req.font_size_mm,
+                streets_data=streets_data,
+                contour_data=contour_data,
+                water_data=water_data,
+                markers=board_markers,
+                subtitle=req.subtitle,
+                font_family=req.font_family.value,
+                border_style=req.border_style.value,
+                heart_location=heart_mm,
+                output_mode="cnc",
+                color_theme=req.color_theme,
+                product_type=req.product_type.value,
+            )
+            cnc_svg_key = svg_key.replace("svg/", "cnc/").replace(".svg", "_cnc.svg")
+            await store_file(cnc_svg_key, cnc_result["svg"].encode("utf-8"))
+            log.info(f"CNC SVG generated: {cnc_result['path_count']} paths")
+        except Exception as e:
+            log.warning(f"CNC SVG generation failed (non-fatal): {e}")
+            cnc_svg_key = None
+
         # Generate DXF (CNC-ready vector) alongside SVG
         try:
             dxf_bytes = generate_dxf(
@@ -1200,7 +1227,13 @@ async def download_etsy_package(
         if svg_bytes:
             zf.writestr(f"{seo_name}.svg", svg_bytes)
 
-        # 2. DXF source (CNC-ready)
+        # 2. CNC-optimized SVG (simplified: major roads only)
+        cnc_key = file_record.svg_storage_key.replace("svg/", "cnc/").replace(".svg", "_cnc.svg")
+        cnc_bytes = await retrieve_file(cnc_key)
+        if cnc_bytes:
+            zf.writestr(f"{seo_name}-cnc.svg", cnc_bytes)
+
+        # 2b. DXF source (CNC-ready)
         if file_record.dxf_storage_key:
             dxf_bytes = await retrieve_file(file_record.dxf_storage_key)
             if dxf_bytes:
@@ -1263,8 +1296,9 @@ async def download_etsy_package(
             "",
             "---",
             "Files included in this package:",
-            f"  - {seo_name}.svg (CNC-ready vector source)",
-            f"  - {seo_name}.dxf (VCarve Pro / CAM import)",
+            f"  - {seo_name}.svg (full detail vector — wall art prints)",
+            f"  - {seo_name}-cnc.svg (CNC-optimized — major roads only, clean toolpaths)",
+            f"  - {seo_name}.dxf (VCarve Pro / CAM import — major roads only)",
             f"  - {seo_name}-print.png (high-res print)",
             f"  - {seo_name}-etsy-listing-2700x2025.png (listing image)",
             f"  - {seo_name}-mockup.png (product mockup)",
