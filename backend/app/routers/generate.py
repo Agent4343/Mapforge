@@ -484,7 +484,9 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     preview_image = None
     is_city_art = req.color_theme in ("city_art", "city_map_art", "cityart")
     is_city_type = req.product_type.value in ("city", "community")
-    if settings.MAPTILER_API_KEY and is_city_art and is_city_type:
+    from app.services.app_settings import get_maptiler_key
+    maptiler_key = await get_maptiler_key(db)
+    if maptiler_key and is_city_art and is_city_type:
         center = processed.get("center_latlon")
         if center and center[0] is not None:
             lat_span = bounds[3] - bounds[1] if bounds else 0
@@ -500,6 +502,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                     show_coordinates=req.show_coordinates,
                     product_type=req.product_type.value,
                     bbox_area=lat_span * lon_span,
+                    api_key=maptiler_key,
                 )
                 if poster_bytes:
                     b64 = base64.b64encode(poster_bytes).decode("ascii")
@@ -621,7 +624,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
 
         # Generate high-res print PNG — prefer MapTiler static map for city maps
         static_poster_bytes = None
-        if (settings.MAPTILER_API_KEY
+        if (maptiler_key
                 and req.color_theme in ("city_art", "city_map_art", "cityart")
                 and req.product_type.value in ("city", "community")):
             center = processed.get("center_latlon", (None, None))
@@ -638,6 +641,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                         show_coordinates=req.show_coordinates,
                         product_type=req.product_type.value,
                         bbox_area=lat_span * lon_span,
+                        api_key=maptiler_key,
                     )
                 except Exception as e:
                     log.warning(f"Static map poster failed (non-fatal): {e}")

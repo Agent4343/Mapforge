@@ -52,3 +52,10 @@ async def get_etsy_credentials(db: AsyncSession) -> dict:
         "api_secret": api_secret,
         "redirect_uri": redirect_uri,
     }
+
+
+async def get_maptiler_key(db: AsyncSession) -> str:
+    """Get MapTiler API key, preferring DB value over env var."""
+    from app.config import settings
+
+    return (await get_setting(db, "MAPTILER_API_KEY") or settings.MAPTILER_API_KEY or "").strip()

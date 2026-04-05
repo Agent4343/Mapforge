@@ -210,3 +210,54 @@ async def etsy_debug(
         "ping_test": test_result,
         "redirect_uri": creds.get("redirect_uri", ""),
     }
+
+
+# --- MapTiler API Settings ---
+
+
+class MaptilerSettingsRequest(BaseModel):
+    api_key: str = ""
+
+
+@router.get("/maptiler-settings")
+async def get_maptiler_settings(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get current MapTiler API settings (admin only)."""
+    _require_admin(user)
+
+    api_key = await get_setting(db, "MAPTILER_API_KEY") or ""
+
+    return {
+        "api_key": api_key[:8] + "..." if len(api_key) > 8 else api_key,
+        "configured": bool(api_key),
+    }
+
+
+@router.post("/maptiler-settings")
+async def save_maptiler_settings(
+    req: MaptilerSettingsRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Save MapTiler API key to the database (admin only)."""
+    _require_admin(user)
+
+    if req.api_key:
+        await set_setting(db, "MAPTILER_API_KEY", req.api_key.strip())
+
+    return {"status": "saved"}
+
+
+@router.delete("/maptiler-settings")
+async def clear_maptiler_settings(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Clear MapTiler API key from the database (admin only)."""
+    _require_admin(user)
+
+    await delete_setting(db, "MAPTILER_API_KEY")
+
+    return {"status": "cleared"}

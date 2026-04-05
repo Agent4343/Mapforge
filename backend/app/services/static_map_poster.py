@@ -102,6 +102,7 @@ async def fetch_static_map(
     width: int = 2048,
     height: int = 2048,
     style: str = "streets-v2-light",
+    api_key: str = "",
 ) -> bytes | None:
     """Fetch a static map image from MapTiler API.
 
@@ -109,7 +110,7 @@ async def fetch_static_map(
     MapTiler free tier supports up to 2048x2048.
     The @2x parameter doubles the resolution for retina quality.
     """
-    api_key = settings.MAPTILER_API_KEY
+    api_key = api_key or settings.MAPTILER_API_KEY
     if not api_key:
         log.warning("MAPTILER_API_KEY not set")
         return None
@@ -311,12 +312,14 @@ async def generate_static_map_poster(
     show_coordinates: bool = True,
     product_type: str = "city",
     bbox_area: float = 0,
+    api_key: str = "",
 ) -> bytes | None:
     """Full pipeline: fetch MapTiler static map → compose poster → return PNG.
 
     Returns high-resolution PNG bytes or None if MapTiler is unavailable.
     """
-    if not settings.MAPTILER_API_KEY:
+    api_key = api_key or settings.MAPTILER_API_KEY
+    if not api_key:
         return None
 
     zoom = _choose_zoom(product_type, bbox_area)
@@ -330,6 +333,7 @@ async def generate_static_map_poster(
         width=1280,   # @2x → 2560px actual
         height=1024,  # @2x → 2048px actual
         style="streets-v2-light",
+        api_key=api_key,
     )
 
     if not map_bytes:
