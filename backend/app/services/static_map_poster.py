@@ -9,7 +9,7 @@ import io
 import math
 
 import httpx
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageEnhance
 
 from app.config import settings
 from app.logging_config import log
@@ -39,8 +39,117 @@ MAPTILER_STYLES = {
     "minimal": "basic-v2",
     "streets": "streets-v2",
 }
-# Style for poster art — toner-v2 gives black & white minimalist look
-POSTER_STYLE = "toner-v2"
+# Style for poster art — streets-v2-light for clean base, post-processed per theme
+POSTER_STYLE = "streets-v2-light"
+
+# Color theme definitions for poster rendering
+# Each theme: (bg_color, text_color, sub_text_color, border_color, map_style)
+# map_style: "light" = grayscale light bg, "dark" = inverted dark bg
+POSTER_THEMES = {
+    "city_art": {
+        "bg": (240, 240, 240), "map_bg": (255, 255, 255),
+        "title": (0, 0, 0), "subtitle": (80, 80, 80), "border": (170, 170, 170),
+        "map_mode": "light",
+    },
+    "classic": {
+        "bg": (250, 248, 245), "map_bg": (250, 248, 245),
+        "title": (42, 42, 42), "subtitle": (100, 100, 100), "border": (200, 190, 175),
+        "map_mode": "light",
+    },
+    "modern_dark": {
+        "bg": (26, 26, 46), "map_bg": (20, 20, 35),
+        "title": (230, 230, 240), "subtitle": (160, 170, 190), "border": (60, 60, 80),
+        "map_mode": "dark",
+    },
+    "midnight": {
+        "bg": (15, 25, 35), "map_bg": (10, 20, 30),
+        "title": (200, 215, 230), "subtitle": (140, 165, 185), "border": (40, 60, 80),
+        "map_mode": "dark",
+    },
+    "minimal": {
+        "bg": (255, 255, 255), "map_bg": (255, 255, 255),
+        "title": (30, 30, 30), "subtitle": (100, 100, 100), "border": (220, 220, 220),
+        "map_mode": "light",
+    },
+    "navy_gold": {
+        "bg": (10, 22, 40), "map_bg": (10, 22, 40),
+        "title": (212, 175, 55), "subtitle": (180, 150, 60), "border": (50, 60, 80),
+        "map_mode": "dark", "tint": (212, 175, 55),
+    },
+    "charcoal": {
+        "bg": (45, 45, 45), "map_bg": (35, 35, 35),
+        "title": (230, 230, 230), "subtitle": (170, 170, 170), "border": (80, 80, 80),
+        "map_mode": "dark",
+    },
+    "rose_gold": {
+        "bg": (253, 242, 240), "map_bg": (255, 248, 245),
+        "title": (180, 120, 100), "subtitle": (160, 130, 120), "border": (220, 195, 185),
+        "map_mode": "light", "tint": (200, 150, 130),
+    },
+    "sage": {
+        "bg": (245, 247, 242), "map_bg": (248, 250, 245),
+        "title": (70, 95, 65), "subtitle": (100, 125, 95), "border": (190, 205, 180),
+        "map_mode": "light", "tint": (120, 155, 110),
+    },
+    "ocean": {
+        "bg": (235, 245, 250), "map_bg": (240, 248, 255),
+        "title": (30, 70, 100), "subtitle": (60, 110, 140), "border": (170, 200, 220),
+        "map_mode": "light", "tint": (50, 120, 170),
+    },
+    "blush": {
+        "bg": (255, 240, 245), "map_bg": (255, 245, 248),
+        "title": (150, 80, 100), "subtitle": (170, 110, 130), "border": (230, 200, 210),
+        "map_mode": "light", "tint": (200, 130, 150),
+    },
+    "terracotta": {
+        "bg": (250, 240, 230), "map_bg": (252, 245, 238),
+        "title": (160, 90, 50), "subtitle": (140, 100, 70), "border": (210, 185, 160),
+        "map_mode": "light", "tint": (180, 110, 70),
+    },
+    "lavender": {
+        "bg": (245, 240, 255), "map_bg": (248, 244, 255),
+        "title": (100, 70, 150), "subtitle": (130, 100, 170), "border": (210, 195, 230),
+        "map_mode": "light", "tint": (140, 110, 190),
+    },
+    "arctic": {
+        "bg": (240, 248, 255), "map_bg": (245, 250, 255),
+        "title": (44, 62, 80), "subtitle": (52, 73, 94), "border": (175, 215, 240),
+        "map_mode": "light",
+    },
+}
+
+
+def _stylize_map(map_img: Image.Image, theme: dict) -> Image.Image:
+    """Apply color theme to the map image using Pillow post-processing.
+
+    Converts to grayscale then applies theme-appropriate styling.
+    """
+    # Convert to grayscale
+    gray = ImageOps.grayscale(map_img)
+
+    # Increase contrast so streets stand out
+    enhancer = ImageEnhance.Contrast(gray)
+    gray = enhancer.enhance(1.8)
+
+    if theme.get("map_mode") == "dark":
+        # Dark mode: invert so streets are light on dark background
+        gray = ImageOps.invert(gray)
+        # Boost contrast further for dark themes
+        enhancer = ImageEnhance.Contrast(gray)
+        gray = enhancer.enhance(1.3)
+
+    # Apply tint if theme has one
+    tint = theme.get("tint")
+    if tint:
+        # Colorize: map dark pixels to dark tint, light pixels to light version
+        dark_color = tuple(max(0, c - 80) for c in tint)
+        light_color = tuple(min(255, c + 80) for c in tint)
+        result = ImageOps.colorize(gray, black=dark_color, white=light_color)
+    else:
+        # No tint — use plain grayscale converted to RGB
+        result = gray.convert("RGB")
+
+    return result
 
 
 def _choose_zoom(product_type: str, bbox_area: float = 0) -> int:
@@ -166,50 +275,52 @@ def compose_poster(
     subtitle: str = "",
     board_size: str = "18x24",
     show_coordinates: bool = True,
+    color_theme: str = "city_art",
 ) -> bytes:
     """Compose a print-ready poster from a map image and text.
 
     Layout matches the city_art SVG layout:
     - Top 70%: map image (cropped/scaled to fit)
-    - Bottom 30%: city name, subtitle, coordinates on light gray
+    - Bottom 30%: city name, subtitle, coordinates
 
     Returns high-resolution PNG bytes.
     """
+    theme = POSTER_THEMES.get(color_theme, POSTER_THEMES["city_art"])
     poster_w, poster_h = POSTER_SIZES.get(board_size, POSTER_SIZES["18x24"])
 
     # Create poster canvas
-    bg_color = (240, 240, 240)  # #F0F0F0 mat color
-    poster = Image.new("RGB", (poster_w, poster_h), bg_color)
+    poster = Image.new("RGB", (poster_w, poster_h), theme["bg"])
 
     # Calculate layout areas
     mat = int(min(poster_w, poster_h) * MAT_PCT)
     map_area_h = int(poster_h * MAP_AREA_PCT)
     text_area_h = poster_h - map_area_h
 
-    # Map area: white background
+    # Map area
     map_x = mat
     map_y = mat
     map_w = poster_w - 2 * mat
     map_h = map_area_h - mat
 
-    # Draw white map background
+    # Draw map background
     draw = ImageDraw.Draw(poster)
-    draw.rectangle([map_x, map_y, map_x + map_w, map_y + map_h], fill=(255, 255, 255))
+    draw.rectangle([map_x, map_y, map_x + map_w, map_y + map_h], fill=theme["map_bg"])
 
-    # Load and place map image
+    # Load, stylize, and place map image
     try:
         map_img = Image.open(io.BytesIO(map_image_bytes))
+
+        # Apply color theme to the map
+        map_img = _stylize_map(map_img, theme)
 
         # Scale map to fill the map area while maintaining aspect ratio
         img_ratio = map_img.width / map_img.height
         area_ratio = map_w / map_h
 
         if img_ratio > area_ratio:
-            # Image is wider — fit height, crop width
             new_h = map_h
             new_w = int(map_h * img_ratio)
         else:
-            # Image is taller — fit width, crop height
             new_w = map_w
             new_h = int(map_w / img_ratio)
 
@@ -224,21 +335,21 @@ def compose_poster(
 
     except Exception as e:
         log.warning(f"Failed to process map image: {e}")
-        # Leave white rectangle as fallback
 
     # Text area
     text_center_x = poster_w // 2
     text_start_y = map_area_h + int(text_area_h * 0.15)
 
+    title_color = theme["title"]
+    sub_color = theme["subtitle"]
+
     # City name — bold, large, wide letter spacing
     title_size = int(poster_h * 0.065)
     title_font = _load_font(title_size, bold=True)
 
-    # Add letter spacing by drawing each character individually
     title_text = city_name.upper()
     spacing = int(title_size * 0.35)
 
-    # Calculate total width with spacing
     char_widths = []
     for ch in title_text:
         bbox = draw.textbbox((0, 0), ch, font=title_font)
@@ -258,10 +369,9 @@ def compose_poster(
             char_widths.append(bbox[2] - bbox[0])
         total_width = sum(char_widths) + spacing * (len(title_text) - 1)
 
-    # Draw title characters with spacing
     x = text_center_x - total_width // 2
     for i, ch in enumerate(title_text):
-        draw.text((x, text_start_y), ch, fill=(0, 0, 0), font=title_font)
+        draw.text((x, text_start_y), ch, fill=title_color, font=title_font)
         x += char_widths[i] + spacing
 
     next_y = text_start_y + int(title_size * 1.4)
@@ -270,7 +380,6 @@ def compose_poster(
     if subtitle:
         sub_size = int(title_size * 0.38)
         sub_font = _load_font(sub_size, bold=False)
-        # Letter spacing for subtitle
         sub_spacing = int(sub_size * 0.25)
         sub_chars = list(subtitle)
         sub_widths = []
@@ -281,7 +390,7 @@ def compose_poster(
 
         sx = text_center_x - sub_total // 2
         for i, ch in enumerate(sub_chars):
-            draw.text((sx, next_y), ch, fill=(51, 51, 51), font=sub_font)
+            draw.text((sx, next_y), ch, fill=sub_color, font=sub_font)
             sx += sub_widths[i] + sub_spacing
 
         next_y += int(sub_size * 2.0)
@@ -298,7 +407,7 @@ def compose_poster(
         draw.text(
             (text_center_x - coord_w // 2, next_y),
             coord_text,
-            fill=(51, 51, 51),
+            fill=sub_color,
             font=coord_font,
         )
 
@@ -306,7 +415,7 @@ def compose_poster(
     border_inset = int(min(poster_w, poster_h) * 0.025)
     draw.rectangle(
         [border_inset, border_inset, poster_w - border_inset, poster_h - border_inset],
-        outline=(170, 170, 170),
+        outline=theme["border"],
         width=2,
     )
 
@@ -326,6 +435,7 @@ async def generate_static_map_poster(
     product_type: str = "city",
     bbox_area: float = 0,
     api_key: str = "",
+    color_theme: str = "city_art",
 ) -> bytes | None:
     """Full pipeline: fetch MapTiler static map → compose poster → return PNG.
 
@@ -336,9 +446,8 @@ async def generate_static_map_poster(
         return None
 
     zoom = _choose_zoom(product_type, bbox_area)
-    log.info(f"MapTiler poster: zoom={zoom}, bbox_area={bbox_area:.4f}, product={product_type}")
+    log.info(f"MapTiler poster: zoom={zoom}, bbox_area={bbox_area:.4f}, product={product_type}, theme={color_theme}")
 
-    # Fetch map — use no-labels style for clean art poster
     map_bytes = await fetch_static_map(
         lat=lat,
         lng=lng,
@@ -361,6 +470,7 @@ async def generate_static_map_poster(
         subtitle=subtitle,
         board_size=board_size,
         show_coordinates=show_coordinates,
+        color_theme=color_theme,
     )
 
     log.info(f"Static map poster generated: {len(poster_bytes)} bytes")

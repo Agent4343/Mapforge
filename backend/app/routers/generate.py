@@ -482,7 +482,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
 
     # For city_art maps: generate PNG directly using MapTiler static map (no SVG)
     preview_image = None
-    is_city_art = req.color_theme in ("city_art", "city_map_art", "cityart")
+    from app.services.static_map_poster import POSTER_THEMES
+    is_city_art = req.color_theme in POSTER_THEMES or req.color_theme in ("city_map_art", "cityart")
     is_city_type = req.product_type.value in ("city", "community")
     from app.services.app_settings import get_maptiler_key
     maptiler_key = await get_maptiler_key(db)
@@ -504,11 +505,12 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                     product_type=req.product_type.value,
                     bbox_area=lat_span * lon_span,
                     api_key=maptiler_key,
+                    color_theme=req.color_theme,
                 )
                 if poster_bytes:
                     b64 = base64.b64encode(poster_bytes).decode("ascii")
                     preview_image = f"data:image/png;base64,{b64}"
-                    log.info(f"MapTiler PNG poster generated: {len(poster_bytes)} bytes")
+                    log.info(f"MapTiler PNG poster generated: {len(poster_bytes)} bytes, theme={req.color_theme}")
             except Exception as e:
                 log.warning(f"MapTiler PNG poster failed, falling back to SVG: {e}")
 
@@ -625,9 +627,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
 
         # Generate high-res print PNG — prefer MapTiler static map for city maps
         static_poster_bytes = None
-        if (maptiler_key
-                and req.color_theme in ("city_art", "city_map_art", "cityart")
-                and req.product_type.value in ("city", "community")):
+        if (maptiler_key and is_city_art and is_city_type):
             center = processed.get("center_latlon", (None, None))
             if center and center[0] is not None:
                 lat_span = bounds[3] - bounds[1] if bounds else 0
@@ -643,6 +643,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                         product_type=req.product_type.value,
                         bbox_area=lat_span * lon_span,
                         api_key=maptiler_key,
+                        color_theme=req.color_theme,
                     )
                 except Exception as e:
                     log.warning(f"Static map poster failed (non-fatal): {e}")
