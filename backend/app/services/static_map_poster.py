@@ -132,49 +132,54 @@ POSTER_THEMES = {
 def _stylize_map(map_img: Image.Image, theme: dict) -> Image.Image:
     """Convert MapTiler image into Etsy-quality map art.
 
-    1. Separate water from land using blue channel detection
-    2. Convert to high-contrast grayscale (roads bold, bg clean)
-    3. Apply theme colors for water areas
-    4. Apply tint / dark-mode inversion
+    1. Detect water via blue channel
+    2. Nuke ALL labels with aggressive thresholding
+    3. Smooth land texture with median filter (removes noise/grain)
+    4. Bold roads, clean white background
+    5. Apply theme colors + water tint
     """
     img_arr = np.array(map_img.convert("RGB"), dtype=np.float32)
     r, g, b = img_arr[:, :, 0], img_arr[:, :, 1], img_arr[:, :, 2]
 
-    # Detect water: MapTiler streets-v2-light water is blue-ish
-    # Water pixels have higher blue channel relative to red/green
-    water_mask = (b > r + 15) & (b > g) & (b > 160)
+    # Detect water: blue channel > red+15 and blue > green and blue > 150
+    water_mask = (b > r + 12) & (b > g - 5) & (b > 150)
 
-    # Convert to grayscale using luminance
+    # Convert to grayscale
     gray = 0.299 * r + 0.587 * g + 0.114 * b
 
-    # ── Label removal + contrast boost ──
-    # Labels are mid-gray text (140-210). Roads are dark (30-120).
-    # Push light pixels → pure white, darken roads further.
+    # ── AGGRESSIVE label removal ──
+    # Roads are dark (30-130). Labels are lighter gray text (140-210).
+    # Background/land is very light (220-255).
+    # Strategy: HARD threshold — anything above 140 → nearly white
 
-    # Strong threshold: anything > 155 fades toward white
-    light_mask = gray > 155
-    gray[light_mask] = gray[light_mask] * 0.15 + 255 * 0.85
+    # Kill everything lighter than roads
+    light_mask = gray > 140
+    gray[light_mask] = gray[light_mask] * 0.05 + 255 * 0.95  # 95% white
 
-    # Darken roads (anything < 145)
-    dark_mask = gray < 145
-    gray[dark_mask] = gray[dark_mask] * 0.55
+    # Bold dark features (roads, coastlines)
+    dark_mask = gray < 140
+    gray[dark_mask] = gray[dark_mask] * 0.45  # darken aggressively
 
     gray = np.clip(gray, 0, 255).astype(np.uint8)
     result = Image.fromarray(gray)
 
-    # Auto-contrast for maximum tonal range
-    result = ImageOps.autocontrast(result, cutoff=2)
+    # ── SMOOTH land texture ── removes grain/noise from terrain
+    result = result.filter(ImageFilter.MedianFilter(size=3))
 
-    # Sharpen roads
+    # Auto-contrast for max range
+    result = ImageOps.autocontrast(result, cutoff=3)
+
+    # Sharpen to keep roads crisp after smoothing
     result = result.filter(ImageFilter.SHARPEN)
+    result = result.filter(ImageFilter.SHARPEN)  # double sharpen
 
-    # Dark mode inversion
+    # Dark mode
     if theme.get("map_mode") == "dark":
         result = ImageOps.invert(result)
         enhancer = ImageEnhance.Contrast(result)
-        result = enhancer.enhance(1.4)
+        result = enhancer.enhance(1.5)
 
-    # Convert to RGB
+    # Apply tint or convert to RGB
     if theme.get("tint"):
         tint = theme["tint"]
         dark_c = tuple(max(0, c - 90) for c in tint)
@@ -183,7 +188,7 @@ def _stylize_map(map_img: Image.Image, theme: dict) -> Image.Image:
     else:
         result = result.convert("RGB")
 
-    # Apply water color from theme
+    # Paint water areas with theme water color
     water_color = theme.get("water", (230, 230, 230))
     result_arr = np.array(result)
     for i in range(3):
@@ -196,27 +201,30 @@ def _stylize_map(map_img: Image.Image, theme: dict) -> Image.Image:
 # ── Zoom calculation ──────────────────────────────────────────────────
 
 def _choose_zoom(product_type: str, bbox_area: float = 0) -> int:
-    """Choose zoom level based on bounding box area (square degrees)."""
+    """Choose zoom level based on bounding box area (square degrees).
+
+    Zoomed in slightly (+1) vs geographic zoom for tighter framing.
+    """
     if bbox_area > 2.0:
-        return 8
+        return 9   # Large island/region
     elif bbox_area > 0.5:
-        return 9
-    elif bbox_area > 0.1:
         return 10
-    elif bbox_area > 0.03:
+    elif bbox_area > 0.1:
         return 11
+    elif bbox_area > 0.03:
+        return 12  # Large city
     elif bbox_area > 0.005:
-        return 12
+        return 13  # Medium city
     elif bbox_area > 0.001:
-        return 13
+        return 14  # Small city / town
     elif product_type == "province":
         return 9
     elif product_type == "community":
-        return 11
+        return 12
     elif product_type == "city":
-        return 12
+        return 13
     else:
-        return 12
+        return 13
 
 
 # ── Text helpers ──────────────────────────────────────────────────────
@@ -363,23 +371,41 @@ def compose_poster(
     except Exception as e:
         log.warning(f"Map image processing failed: {e}")
 
-    # ── Decorative line separator between map and text ──
-    line_y = map_area_h + int(text_area_h * 0.02)
-    line_margin = int(poster_w * 0.15)
+    # ── Location pin at map center ──
+    pin_cx = map_x + map_w // 2
+    pin_cy = map_y + map_h // 2
+    pin_r = int(min(map_w, map_h) * 0.012)  # small circle
+    pin_color = theme["title"]  # matches title for coherence
+    # Outer circle (pin body)
+    draw.ellipse(
+        [pin_cx - pin_r, pin_cy - pin_r, pin_cx + pin_r, pin_cy + pin_r],
+        fill=pin_color,
+    )
+    # Inner dot (white center)
+    inner_r = max(pin_r // 3, 2)
+    inner_color = theme["map_bg"]
+    draw.ellipse(
+        [pin_cx - inner_r, pin_cy - inner_r, pin_cx + inner_r, pin_cy + inner_r],
+        fill=inner_color,
+    )
+
+    # ── Decorative line separator ──
+    line_y = map_area_h + int(text_area_h * 0.03)
+    line_margin = int(poster_w * 0.20)
     line_color = theme.get("line", theme["border"])
     draw.line(
         [(line_margin, line_y), (poster_w - line_margin, line_y)],
-        fill=line_color, width=3,
+        fill=line_color, width=2,
     )
 
-    # ── Title (city name) ──
+    # ── Title (city name) — bold, wide tracking ──
     text_cx = poster_w // 2
-    title_y = map_area_h + int(text_area_h * 0.12)
+    title_y = map_area_h + int(text_area_h * 0.14)
 
-    title_size = int(poster_h * 0.058)
+    title_size = int(poster_h * 0.052)
     title_font = _load_font(title_size, bold=True)
     title_text = city_name.upper()
-    title_spacing = int(title_size * 0.40)
+    title_spacing = int(title_size * 0.45)  # wide tracking
 
     # Measure and auto-shrink
     test_w = _draw_spaced_text(
@@ -394,23 +420,23 @@ def compose_poster(
         title_font = _load_font(title_size, bold=True)
 
     _draw_spaced_text(draw, text_cx, title_y, title_text, title_font, theme["title"], title_spacing)
-    next_y = title_y + int(title_size * 1.5)
+    next_y = title_y + int(title_size * 1.6)
 
-    # ── Subtitle ──
+    # ── Subtitle — lighter weight, moderate tracking ──
     if subtitle:
-        sub_size = int(title_size * 0.36)
+        sub_size = int(title_size * 0.40)
         sub_font = _load_font(sub_size, bold=False)
-        sub_spacing = int(sub_size * 0.22)
+        sub_spacing = int(sub_size * 0.30)
         _draw_spaced_text(draw, text_cx, next_y, subtitle, sub_font, theme["subtitle"], sub_spacing)
-        next_y += int(sub_size * 2.2)
+        next_y += int(sub_size * 2.5)
 
-    # ── Coordinates ──
+    # ── Coordinates — small, refined ──
     if show_coordinates:
-        coord_size = int(title_size * 0.26)
+        coord_size = int(title_size * 0.28)
         coord_font = _load_font(coord_size, bold=False)
         lat_dms = _format_dms(lat, "N", "S")
         lon_dms = _format_dms(lng, "E", "W")
-        coord_text = f"{lat_dms}  |  {lon_dms}"
+        coord_text = f"{lat_dms}   |   {lon_dms}"
         bbox = draw.textbbox((0, 0), coord_text, font=coord_font)
         cw = bbox[2] - bbox[0]
         draw.text((text_cx - cw // 2, next_y), coord_text, fill=theme["subtitle"], font=coord_font)
