@@ -193,6 +193,8 @@ class GenerateRequest(BaseModel):
     markers: list[MapMarker] = Field(default_factory=list, max_length=10)
     color_theme: str = "classic"  # classic, modern_dark, rose_gold, midnight, sage, minimal
     poster_layout: str = "classic"  # classic, minimal, editorial, bold, vintage
+    center_lat: Optional[float] = Field(None, ge=-90, le=90, description="City center latitude from search (overrides polygon centroid)")
+    center_lon: Optional[float] = Field(None, ge=-180, le=180, description="City center longitude from search (overrides polygon centroid)")
     heart_lat: Optional[float] = Field(None, ge=-90, le=90)
     heart_lon: Optional[float] = Field(None, ge=-180, le=180)
     # Professional map elements

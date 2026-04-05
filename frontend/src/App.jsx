@@ -379,6 +379,8 @@ export default function App() {
         const params = {
           osm_id: selectedResult.osm_id,
           osm_type: selectedResult.osm_type,
+          center_lat: selectedResult.lat || undefined,
+          center_lon: selectedResult.lon || undefined,
           product_type: config.productType,
           board_size: config.boardSize,
           style: "filled",

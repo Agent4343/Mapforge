@@ -318,6 +318,10 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     if streets_data:
         _road_count = len(streets_data.get("major_roads", [])) + len(streets_data.get("minor_roads", []))
 
+    # Override center_latlon with accurate city center from Nominatim search
+    if req.center_lat is not None and req.center_lon is not None:
+        processed["center_latlon"] = (req.center_lat, req.center_lon)
+
     # Cap road count to prevent massive SVGs that timeout the browser.
     # Dense cities like Toronto can have 300K+ roads — we keep all major roads
     # and sample minor roads down to a reasonable limit.
