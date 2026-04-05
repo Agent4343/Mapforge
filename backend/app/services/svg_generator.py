@@ -886,12 +886,13 @@ def _generate_print_svg(
         lines.append('    <g clip-path="url(#boundary_clip)">')
 
     # Water features — filled with water color (optional gradient)
-    # For city_art: render water flat (no gradient) so lakes/rivers show as subtle
-    # tonal contrast rather than blank white voids.
-    # For city_art provinces, render water as negative space (no gradient).
+    # For city_art cities: subtle flat fill, no strokes — water as quiet backdrop
+    # For city_art provinces: render water as negative space (no gradient).
     if water_data:
+        use_gradient = gradient_water and not is_city_art_province and not (is_city_art and is_city_community)
+        minimal_water = is_city_art and is_city_community
         _render_print_water(lines, water_data, processed, theme,
-                            gradient=gradient_water and not is_city_art_province and not (is_city_art and is_city_community))
+                            gradient=use_gradient, minimal=minimal_water)
 
     # Contour bands
     if contour_data:
@@ -2156,11 +2157,13 @@ def _render_geography(lines: list[str], polygons: list, style: CutStyle):
         lines.append("  </g>")
 
 
-def _render_print_water(lines: list[str], water_data: dict, processed: dict, theme: dict, gradient: bool = True):
+def _render_print_water(lines: list[str], water_data: dict, processed: dict, theme: dict, gradient: bool = True, minimal: bool = False):
     """Render water features with themed poster colors.
 
     When gradient=True, larger water bodies get a radial gradient fill
     for a subtle depth perception effect.
+    When minimal=True (city_art cities), render only polygon fills with
+    no strokes and skip small waterways — water as quiet backdrop.
     """
     transform = processed.get("transform")
 
@@ -2184,25 +2187,33 @@ def _render_print_water(lines: list[str], water_data: dict, processed: dict, the
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
         path_d = _coords_to_path(board_coords)
-        # Use gradient for larger water bodies (>6 points suggests a significant feature)
         fill = "url(#water_grad)" if gradient and len(coords) > 6 else theme["water"]
-        lines.append(
-            f'      <path d="{path_d}"'
-            f' fill="{fill}" stroke="{theme["water_stroke"]}"'
-            f' stroke-width="0.5" stroke-linejoin="round"/>'
-        )
+        if minimal:
+            # City art: fill only, no stroke outline
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="{fill}" stroke="none"/>'
+            )
+        else:
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="{fill}" stroke="{theme["water_stroke"]}"'
+                f' stroke-width="0.5" stroke-linejoin="round"/>'
+            )
 
-    for coords, water_type, name in water_data.get("waterways", []):
-        if len(coords) < 2:
-            continue
-        board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
-        path_d = _coords_to_open_path(board_coords)
-        width = 1.0 if water_type in ("river", "coastline") else 0.4
-        lines.append(
-            f'      <path d="{path_d}"'
-            f' fill="none" stroke="{theme["water_stroke"]}" stroke-width="{width}"'
-            f' stroke-linecap="round" stroke-linejoin="round"/>'
-        )
+    if not minimal:
+        # Waterway lines (rivers, streams) — skip entirely in minimal mode
+        for coords, water_type, name in water_data.get("waterways", []):
+            if len(coords) < 2:
+                continue
+            board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
+            path_d = _coords_to_open_path(board_coords)
+            width = 1.0 if water_type in ("river", "coastline") else 0.4
+            lines.append(
+                f'      <path d="{path_d}"'
+                f' fill="none" stroke="{theme["water_stroke"]}" stroke-width="{width}"'
+                f' stroke-linecap="round" stroke-linejoin="round"/>'
+            )
 
     lines.append("    </g>")
 
