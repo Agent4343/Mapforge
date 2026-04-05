@@ -130,54 +130,47 @@ POSTER_THEMES = {
 # ── Image processing ──────────────────────────────────────────────────
 
 def _stylize_map(map_img: Image.Image, theme: dict) -> Image.Image:
-    """Convert MapTiler image into Etsy-quality map art.
+    """Convert MapTiler image into clean map art.
 
-    1. Detect water via blue channel
-    2. Nuke ALL labels with aggressive thresholding
-    3. Smooth land texture with median filter (removes noise/grain)
-    4. Bold roads, clean white background
-    5. Apply theme colors + water tint
+    Gentle processing: grayscale → slight contrast → smooth → water color.
+    Avoids aggressive thresholding that destroys the image.
     """
     img_arr = np.array(map_img.convert("RGB"), dtype=np.float32)
     r, g, b = img_arr[:, :, 0], img_arr[:, :, 1], img_arr[:, :, 2]
 
-    # Detect water: blue channel > red+15 and blue > green and blue > 150
+    # Detect water via blue channel
     water_mask = (b > r + 12) & (b > g - 5) & (b > 150)
 
     # Convert to grayscale
     gray = 0.299 * r + 0.587 * g + 0.114 * b
 
-    # ── AGGRESSIVE label removal ──
-    # Roads are dark (30-130). Labels are lighter gray text (140-210).
-    # Background/land is very light (220-255).
-    # Strategy: HARD threshold — anything above 140 → nearly white
+    # Gentle levels: lighten background, keep roads dark
+    # Only push very light pixels (>200) toward white (fades faint labels)
+    light_mask = gray > 200
+    gray[light_mask] = gray[light_mask] * 0.3 + 255 * 0.7
 
-    # Kill everything lighter than roads
-    light_mask = gray > 140
-    gray[light_mask] = gray[light_mask] * 0.05 + 255 * 0.95  # 95% white
-
-    # Bold dark features (roads, coastlines)
-    dark_mask = gray < 140
-    gray[dark_mask] = gray[dark_mask] * 0.45  # darken aggressively
+    # Slightly darken mid-dark pixels (roads: 50-160) for more pop
+    road_mask = gray < 160
+    gray[road_mask] = gray[road_mask] * 0.85
 
     gray = np.clip(gray, 0, 255).astype(np.uint8)
     result = Image.fromarray(gray)
 
-    # ── SMOOTH land texture ── removes grain/noise from terrain
+    # Smooth terrain texture
     result = result.filter(ImageFilter.MedianFilter(size=3))
 
-    # Auto-contrast for max range
-    result = ImageOps.autocontrast(result, cutoff=3)
+    # Gentle contrast boost
+    enhancer = ImageEnhance.Contrast(result)
+    result = enhancer.enhance(1.4)
 
-    # Sharpen to keep roads crisp after smoothing
+    # Sharpen roads
     result = result.filter(ImageFilter.SHARPEN)
-    result = result.filter(ImageFilter.SHARPEN)  # double sharpen
 
     # Dark mode
     if theme.get("map_mode") == "dark":
         result = ImageOps.invert(result)
         enhancer = ImageEnhance.Contrast(result)
-        result = enhancer.enhance(1.5)
+        result = enhancer.enhance(1.3)
 
     # Apply tint or convert to RGB
     if theme.get("tint"):
@@ -188,7 +181,7 @@ def _stylize_map(map_img: Image.Image, theme: dict) -> Image.Image:
     else:
         result = result.convert("RGB")
 
-    # Paint water areas with theme water color
+    # Paint water areas
     water_color = theme.get("water", (230, 230, 230))
     result_arr = np.array(result)
     for i in range(3):
