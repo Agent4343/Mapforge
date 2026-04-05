@@ -259,6 +259,8 @@ class GenerateResponse(BaseModel):
     layer_count: int
     print_dpi: Optional[int] = None
     print_pixels: Optional[tuple[int, int]] = None
+    road_count: int = 0
+    quality_ok: bool = True
     warnings: list[str] = Field(default_factory=list)
 
 

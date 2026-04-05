@@ -313,6 +313,21 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             if heart_coords:
                 heart_mm = heart_coords[0]
 
+    # Count roads for quality validation
+    _road_count = 0
+    if streets_data:
+        _road_count = len(streets_data.get("major_roads", [])) + len(streets_data.get("minor_roads", []))
+
+    # Quality gate: warn if too few roads for a good city map print
+    MIN_ROADS_FOR_QUALITY = 150
+    _quality_ok = _road_count >= MIN_ROADS_FOR_QUALITY
+    if not _quality_ok and req.product_type.value == "city":
+        warnings.append(
+            f"This location has only {_road_count} roads. City map art prints look best with "
+            f"dense street grids (200+ roads). Consider searching for a larger city or a "
+            f"more urban area for the best result."
+        )
+
     # Generate print poster SVG (the primary and only output)
     location_name = req.text or f"Location {req.osm_id}"
     result = generate_svg(
@@ -494,6 +509,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         node_count=result["node_count"],
         path_count=result["path_count"],
         layer_count=result["layer_count"],
+        road_count=_road_count,
+        quality_ok=_quality_ok,
         print_dpi=req.print_dpi,
         print_pixels=print_pixels,
         warnings=warnings,
