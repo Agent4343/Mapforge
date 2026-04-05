@@ -29,6 +29,7 @@ from app.services.geo_fetch import fetch_area_around_point, fetch_geometry
 from app.services.geometry_processor import process_geometry, transform_wgs84_to_board
 from app.services.svg_generator import generate_svg
 from app.services.street_fetcher import fetch_streets
+from app.services.maptiler_fetcher import fetch_streets_maptiler
 from app.services.water_fetcher import fetch_water_features
 from app.services.contour_fetcher import fetch_contour_lines, generate_depth_bands
 from app.services.file_storage import store_file, retrieve_file
@@ -301,6 +302,25 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         if cache_key in _overpass_cache:
             log.info("Using cached street data")
             return _overpass_cache[cache_key]
+
+        # Try MapTiler first (faster, more reliable), fall back to Overpass
+        result = None
+        if settings.MAPTILER_API_KEY:
+            log.info("Trying MapTiler for street data")
+            result = await fetch_streets_maptiler(
+                bbox=street_bbox,
+                include_minor=include_minor_streets,
+                skip_detail=is_large_city,
+            )
+            has_data = result and (result.get("major_roads") or result.get("minor_roads"))
+            if has_data:
+                log.info("MapTiler street fetch succeeded")
+                _cache_overpass(cache_key, result)
+                return result
+            else:
+                log.warning("MapTiler returned no data — falling back to Overpass")
+                result = None
+
         result = await fetch_streets(
             bbox=street_bbox,
             include_minor=include_minor_streets,
