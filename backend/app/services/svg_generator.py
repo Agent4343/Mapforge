@@ -801,8 +801,9 @@ def _generate_print_svg(
         lines.append('    <g clip-path="url(#boundary_clip)">')
 
     # Water features — filled with water color (optional gradient)
-    # For city_art provinces, skip gradient (white water as negative space)
-    if water_data:
+    # For city_art dense cities, skip water entirely — streets are the only visual.
+    # For city_art provinces, render water as negative space (no gradient).
+    if water_data and not (is_city_art and city_sellable_mode):
         _render_print_water(lines, water_data, processed, theme,
                             gradient=gradient_water and not is_city_art_province)
 
