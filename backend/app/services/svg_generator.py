@@ -2378,13 +2378,13 @@ def _render_city_art_streets(lines: list[str], streets_data: dict, processed: di
         }
     else:
         city_art_styles = {
-            "motorway": (1.0, "#000000"), "motorway_link": (0.6, "#000000"),
-            "trunk": (0.9, "#000000"), "trunk_link": (0.55, "#000000"),
-            "primary": (0.7, "#111111"), "primary_link": (0.5, "#111111"),
-            "secondary": (0.5, "#222222"), "secondary_link": (0.4, "#222222"),
-            "tertiary": (0.38, "#333333"), "tertiary_link": (0.3, "#333333"),
-            "residential": (0.22, "#555555"), "unclassified": (0.22, "#555555"),
-            "living_street": (0.22, "#555555"), "service": (0.15, "#777777"),
+            "motorway": (0.6, "#000000"), "motorway_link": (0.35, "#000000"),
+            "trunk": (0.55, "#000000"), "trunk_link": (0.3, "#000000"),
+            "primary": (0.45, "#111111"), "primary_link": (0.3, "#111111"),
+            "secondary": (0.35, "#222222"), "secondary_link": (0.25, "#222222"),
+            "tertiary": (0.28, "#333333"), "tertiary_link": (0.22, "#333333"),
+            "residential": (0.18, "#444444"), "unclassified": (0.18, "#444444"),
+            "living_street": (0.18, "#444444"), "service": (0.12, "#666666"),
         }
 
     lines.append('    <g id="streets">')
@@ -2413,7 +2413,7 @@ def _render_city_art_streets(lines: list[str], streets_data: dict, processed: di
             lines.append(
                 f'      <path d="{path_d}"'
                 f' fill="none" stroke="{color}" stroke-width="{sw}"'
-                f' stroke-linecap="round" stroke-linejoin="round"/>'
+                f' stroke-linecap="square" stroke-linejoin="round"/>'
             )
 
     lines.append("    </g>")
