@@ -2413,7 +2413,7 @@ def _render_city_art_streets(lines: list[str], streets_data: dict, processed: di
             lines.append(
                 f'      <path d="{path_d}"'
                 f' fill="none" stroke="{color}" stroke-width="{sw}"'
-                f' stroke-linecap="butt" stroke-linejoin="round"/>'
+                f' stroke-linecap="round" stroke-linejoin="round"/>'
             )
 
     lines.append("    </g>")
