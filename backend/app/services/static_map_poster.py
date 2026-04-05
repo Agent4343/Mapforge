@@ -32,28 +32,41 @@ POSTER_SIZES = {
     "8x10": (2400, 3000),
 }
 
-# MapTiler styles — minimal/clean for map art
+# MapTiler styles — use no-label variants for clean map art
 MAPTILER_STYLES = {
     "light": "streets-v2-light",
     "dark": "streets-v2-dark",
     "minimal": "basic-v2",
     "streets": "streets-v2",
 }
+# Style for poster art — positron-nolabels gives clean lines without text clutter
+POSTER_STYLE = "positron-nolabels"
 
 
 def _choose_zoom(product_type: str, bbox_area: float = 0) -> int:
-    """Choose appropriate zoom level based on product type and area."""
-    if product_type == "community":
-        return 13
-    elif product_type == "city":
-        if bbox_area > 0.1:
-            return 11  # Large city (Toronto, NYC)
-        elif bbox_area > 0.01:
-            return 12  # Medium city
-        else:
-            return 13  # Small city
+    """Choose appropriate zoom level based on product type and bounding box area.
+
+    bbox_area is in square degrees (lat_span * lon_span).
+    Larger areas need lower zoom to fit the full region.
+    """
+    if bbox_area > 2.0:
+        return 8   # Very large region (Cape Breton Island, large provinces)
+    elif bbox_area > 0.5:
+        return 9   # Large region
+    elif bbox_area > 0.1:
+        return 10  # Medium-large area
+    elif bbox_area > 0.03:
+        return 11  # Large city (Toronto, NYC)
+    elif bbox_area > 0.005:
+        return 12  # Medium city
+    elif bbox_area > 0.001:
+        return 13  # Small city / town
     elif product_type == "province":
         return 9
+    elif product_type == "community":
+        return 11
+    elif product_type == "city":
+        return 12
     else:
         return 12
 
@@ -323,16 +336,16 @@ async def generate_static_map_poster(
         return None
 
     zoom = _choose_zoom(product_type, bbox_area)
+    log.info(f"MapTiler poster: zoom={zoom}, bbox_area={bbox_area:.4f}, product={product_type}")
 
-    # Fetch map — stay within MapTiler free tier limits (max 2048x2048 actual pixels)
-    # Without @2x: request exactly what we need
+    # Fetch map — use no-labels style for clean art poster
     map_bytes = await fetch_static_map(
         lat=lat,
         lng=lng,
         zoom=zoom,
         width=1024,
         height=800,
-        style="streets-v2-light",
+        style=POSTER_STYLE,
         api_key=api_key,
     )
 
