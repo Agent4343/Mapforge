@@ -452,8 +452,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     # Cap road count to prevent massive SVGs that timeout the browser.
     # Dense cities like Toronto can have 300K+ roads — we keep all major roads
     # and sample minor roads down to a reasonable limit.
-    MAX_MAJOR_ROADS = 15000
-    MAX_MINOR_ROADS = 30000
+    MAX_MAJOR_ROADS = 8000
+    MAX_MINOR_ROADS = 15000
     if streets_data:
         major = streets_data.get("major_roads", [])
         minor = streets_data.get("minor_roads", [])
