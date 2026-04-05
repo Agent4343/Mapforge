@@ -31,6 +31,7 @@ from app.services.svg_generator import generate_svg
 from app.services.street_fetcher import fetch_streets
 from app.services.maptiler_fetcher import fetch_streets_maptiler
 from app.services.static_map_poster import generate_static_map_poster
+from app.services.maptiler_poster import generate_maptiler_poster_svg
 from app.services.water_fetcher import fetch_water_features
 from app.services.contour_fetcher import fetch_contour_lines, generate_depth_bands
 from app.services.file_storage import store_file, retrieve_file
@@ -477,35 +478,65 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
 
     # Generate print poster SVG (the primary and only output)
     location_name = req.text or f"Location {req.osm_id}"
-    result = generate_svg(
-        processed=processed,
-        location_name=location_name,
-        style=req.style,
-        show_coordinates=req.show_coordinates,
-        font_size_mm=req.font_size_mm,
-        streets_data=streets_data,
-        contour_data=contour_data,
-        water_data=water_data,
-        markers=board_markers,
-        subtitle=req.subtitle,
-        font_family=req.font_family.value,
-        border_style=req.border_style.value,
-        heart_location=heart_mm,
-        output_mode="print",
-        color_theme=req.color_theme,
-        product_type=req.product_type.value,
-        include_bleed=req.include_bleed,
-        include_crop_marks=req.include_crop_marks,
-        poster_layout=req.poster_layout,
-        show_compass=req.show_compass,
-        show_scale_bar=req.show_scale_bar,
-        gradient_water=req.gradient_water,
-        land_shadow=req.land_shadow,
-    )
+    board_w, board_h = processed["board_mm"]
+
+    # For city_art maps: try MapTiler static map first (much higher quality)
+    result = None
+    is_city_art = req.color_theme in ("city_art", "city_map_art", "cityart")
+    is_city_type = req.product_type.value in ("city", "community")
+    if settings.MAPTILER_API_KEY and is_city_art and is_city_type:
+        center = processed.get("center_latlon")
+        if center and center[0] is not None:
+            lat_span = bounds[3] - bounds[1] if bounds else 0
+            lon_span = bounds[2] - bounds[0] if bounds else 0
+            try:
+                result = await generate_maptiler_poster_svg(
+                    board_w=board_w,
+                    board_h=board_h,
+                    lat=center[0],
+                    lng=center[1],
+                    location_name=location_name,
+                    subtitle=req.subtitle or "",
+                    show_coordinates=req.show_coordinates,
+                    product_type=req.product_type.value,
+                    bbox_area=lat_span * lon_span,
+                )
+                if result:
+                    log.info("Using MapTiler static map for SVG poster")
+            except Exception as e:
+                log.warning(f"MapTiler poster SVG failed, falling back to road rendering: {e}")
+                result = None
+
+    # Fallback: generate SVG from road paths
+    if result is None:
+        result = generate_svg(
+            processed=processed,
+            location_name=location_name,
+            style=req.style,
+            show_coordinates=req.show_coordinates,
+            font_size_mm=req.font_size_mm,
+            streets_data=streets_data,
+            contour_data=contour_data,
+            water_data=water_data,
+            markers=board_markers,
+            subtitle=req.subtitle,
+            font_family=req.font_family.value,
+            border_style=req.border_style.value,
+            heart_location=heart_mm,
+            output_mode="print",
+            color_theme=req.color_theme,
+            product_type=req.product_type.value,
+            include_bleed=req.include_bleed,
+            include_crop_marks=req.include_crop_marks,
+            poster_layout=req.poster_layout,
+            show_compass=req.show_compass,
+            show_scale_bar=req.show_scale_bar,
+            gradient_water=req.gradient_water,
+            land_shadow=req.land_shadow,
+        )
 
     # Store files + generate derivatives (only for authenticated users)
     # Visitors just get the SVG preview — no file storage needed
-    board_w, board_h = processed["board_mm"]
     svg_key = None
     dxf_key = None
     stl_key = None
