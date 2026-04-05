@@ -39,8 +39,8 @@ MAPTILER_STYLES = {
     "minimal": "basic-v2",
     "streets": "streets-v2",
 }
-# Style for poster art — streets-v2-light for clean base, post-processed per theme
-POSTER_STYLE = "streets-v2-light"
+# Style for poster art — backdrop has NO labels (clean for map art)
+POSTER_STYLE = "backdrop-light"
 
 # Color theme definitions for poster rendering
 # Each theme: (bg_color, text_color, sub_text_color, border_color, map_style)
@@ -124,29 +124,36 @@ def _stylize_map(map_img: Image.Image, theme: dict) -> Image.Image:
 
     Converts to grayscale then applies theme-appropriate styling.
     """
+    from PIL import ImageFilter
+
     # Convert to grayscale
     gray = ImageOps.grayscale(map_img)
 
-    # Increase contrast so streets stand out
+    # Sharpen to make roads/streets crisp
+    gray = gray.filter(ImageFilter.SHARPEN)
+
+    # Boost contrast so streets stand out clearly
     enhancer = ImageEnhance.Contrast(gray)
-    gray = enhancer.enhance(1.8)
+    gray = enhancer.enhance(2.2)
+
+    # Brighten slightly to push background lighter
+    bright = ImageEnhance.Brightness(gray)
+    gray = bright.enhance(1.15)
 
     if theme.get("map_mode") == "dark":
         # Dark mode: invert so streets are light on dark background
         gray = ImageOps.invert(gray)
-        # Boost contrast further for dark themes
+        # Boost contrast for dark themes
         enhancer = ImageEnhance.Contrast(gray)
-        gray = enhancer.enhance(1.3)
+        gray = enhancer.enhance(1.4)
 
     # Apply tint if theme has one
     tint = theme.get("tint")
     if tint:
-        # Colorize: map dark pixels to dark tint, light pixels to light version
         dark_color = tuple(max(0, c - 80) for c in tint)
         light_color = tuple(min(255, c + 80) for c in tint)
         result = ImageOps.colorize(gray, black=dark_color, white=light_color)
     else:
-        # No tint — use plain grayscale converted to RGB
         result = gray.convert("RGB")
 
     return result
