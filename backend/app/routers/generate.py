@@ -46,11 +46,12 @@ limiter = Limiter(key_func=get_remote_address)
 def _compute_street_viewport(streets_data: dict, transform: dict, bounds_mm: tuple,
                               center_latlon: tuple | None = None,
                               padding_pct: float = 0.10) -> tuple | None:
-    """Compute a zoomed viewport centered on the city center.
+    """Compute a zoomed viewport that fits the dense street grid.
 
-    Strategy: center on city center (from Nominatim search), then find the
-    radius that captures 85% of streets. This ensures downtown is always
-    centered while showing the dense urban grid.
+    Uses per-axis percentiles (10th-90th) to find where streets are concentrated,
+    then ensures the city center (from Nominatim) is within the viewport.
+    This handles coastal cities (Toronto, Miami) where one side is water —
+    the viewport naturally excludes the empty water area.
     Returns new bounds_mm tuple or None if not enough data.
     """
     if not streets_data or not transform:
@@ -69,53 +70,57 @@ def _compute_street_viewport(streets_data: dict, transform: dict, bounds_mm: tup
     if len(all_x) < 100:
         return None  # Not enough data points
 
-    # Determine center point: use city center from search if available,
-    # otherwise use median of street coordinates
+    # Per-axis percentiles to find the dense area
+    all_x.sort()
+    all_y.sort()
+    n = len(all_x)
+    p10 = int(n * 0.10)
+    p90 = int(n * 0.90)
+
+    x_min = all_x[p10]
+    x_max = all_x[p90]
+    y_min = all_y[p10]
+    y_max = all_y[p90]
+
+    # Ensure city center is included in the viewport
     if center_latlon and center_latlon[0] is not None:
         center_board = transform_wgs84_to_board(
             [(center_latlon[1], center_latlon[0])], transform
         )
         cx, cy = center_board[0]
-    else:
-        all_x.sort()
-        all_y.sort()
-        cx = all_x[len(all_x) // 2]
-        cy = all_y[len(all_y) // 2]
+        # Expand viewport if needed to include city center with margin
+        margin_x = (x_max - x_min) * 0.15
+        margin_y = (y_max - y_min) * 0.15
+        if cx < x_min:
+            x_min = cx - margin_x
+        elif cx > x_max:
+            x_max = cx + margin_x
+        if cy < y_min:
+            y_min = cy - margin_y
+        elif cy > y_max:
+            y_max = cy + margin_y
 
-    # Compute distance of each point from center, find radius that
-    # captures 80% of roads (the dense urban core)
-    distances = []
-    for i in range(len(all_x)):
-        dx = all_x[i] - cx
-        dy = all_y[i] - cy
-        distances.append(max(abs(dx), abs(dy)))  # Chebyshev distance (square radius)
-
-    distances.sort()
-    p80 = int(len(distances) * 0.80)
-    radius = distances[p80]
-
-    if radius <= 0:
+    w = x_max - x_min
+    h = y_max - y_min
+    if w <= 0 or h <= 0:
         return None
 
     # Add padding
-    radius *= (1.0 + padding_pct)
+    pad_x = w * padding_pct
+    pad_y = h * padding_pct
+    x_min -= pad_x
+    x_max += pad_x
+    y_min -= pad_y
+    y_max += pad_y
 
-    x_min = cx - radius
-    x_max = cx + radius
-    y_min = cy - radius
-    y_max = cy + radius
-
-    # Only zoom if the street area is significantly smaller than the full boundary
+    # Only zoom if viewport is meaningfully different from full boundary
     orig_min_x, orig_min_y, orig_max_x, orig_max_y = bounds_mm
-    orig_w = orig_max_x - orig_min_x
-    orig_h = orig_max_y - orig_min_y
-    orig_area = orig_w * orig_h
+    orig_area = (orig_max_x - orig_min_x) * (orig_max_y - orig_min_y)
     street_area = (x_max - x_min) * (y_max - y_min)
-    if orig_area <= 0 or street_area / orig_area > 0.85:
-        return None  # Streets already fill most of the boundary, no zoom needed
+    if orig_area <= 0:
+        return None
 
-    log.info(f"Street viewport zoom: {street_area / orig_area:.0%} of boundary, "
-             f"center=({cx:.1f}, {cy:.1f}), radius={radius:.1f}mm")
+    log.info(f"Street viewport: {street_area / orig_area:.0%} of boundary area")
     return (x_min, y_min, x_max, y_max)
 
 # In-memory cache for Overpass API results (streets, water) keyed by bbox.
