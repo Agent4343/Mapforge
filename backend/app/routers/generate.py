@@ -42,6 +42,65 @@ from app.services.thumbnail_generator import (
 router = APIRouter(prefix="/api/v1", tags=["generate"])
 limiter = Limiter(key_func=get_remote_address)
 
+
+def _compute_street_viewport(streets_data: dict, transform: dict, bounds_mm: tuple,
+                              padding_pct: float = 0.08) -> tuple | None:
+    """Compute a zoomed viewport based on street density.
+
+    Uses 5th-95th percentile of street coordinates to find the dense urban
+    core, excluding outlier highways that extend far from the city center.
+    Returns new bounds_mm tuple or None if not enough data.
+    """
+    if not streets_data or not transform:
+        return None
+
+    # Collect all road coordinate points, transform to board mm
+    all_x = []
+    all_y = []
+    for road_list_key in ("major_roads", "minor_roads"):
+        for coords, _class, _width, _name in streets_data.get(road_list_key, []):
+            board_coords = transform_wgs84_to_board(coords, transform)
+            for x, y in board_coords:
+                all_x.append(x)
+                all_y.append(y)
+
+    if len(all_x) < 100:
+        return None  # Not enough data points for reliable percentile
+
+    # Sort and use 5th-95th percentile to exclude outlier highways
+    all_x.sort()
+    all_y.sort()
+    n = len(all_x)
+    p5 = int(n * 0.05)
+    p95 = int(n * 0.95)
+
+    x_min = all_x[p5]
+    x_max = all_x[p95]
+    y_min = all_y[p5]
+    y_max = all_y[p95]
+
+    # Add padding
+    w = x_max - x_min
+    h = y_max - y_min
+    if w <= 0 or h <= 0:
+        return None
+    pad_x = w * padding_pct
+    pad_y = h * padding_pct
+    x_min -= pad_x
+    x_max += pad_x
+    y_min -= pad_y
+    y_max += pad_y
+
+    # Only zoom if the street area is significantly smaller than the full boundary
+    orig_min_x, orig_min_y, orig_max_x, orig_max_y = bounds_mm
+    orig_area = (orig_max_x - orig_min_x) * (orig_max_y - orig_min_y)
+    street_area = (x_max - x_min) * (y_max - y_min)
+    if orig_area <= 0 or street_area / orig_area > 0.85:
+        return None  # Streets already fill most of the boundary, no zoom needed
+
+    log.info(f"Street viewport zoom: {street_area / orig_area:.0%} of boundary area")
+    return (x_min, y_min, x_max, y_max)
+
 # In-memory cache for Overpass API results (streets, water) keyed by bbox.
 # Avoids hitting Overpass repeatedly for the same geographic area.
 # Bounded to 200 entries (~most recent locations). Cleared on server restart.
@@ -351,6 +410,17 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             f"dense street grids (200+ roads). Consider searching for a larger city or a "
             f"more urban area for the best result."
         )
+
+    # For city maps: zoom viewport to dense urban area instead of full boundary
+    is_city_art_theme = req.color_theme in ("city_art", "city_map_art", "cityart")
+    if req.product_type.value in ("city", "community") and streets_data:
+        street_viewport = _compute_street_viewport(
+            streets_data, processed.get("transform"), processed.get("bounds_mm")
+        )
+        if street_viewport:
+            processed = dict(processed)  # don't mutate original
+            processed["bounds_mm"] = street_viewport
+            log.info(f"Zoomed viewport to urban street grid")
 
     # Generate print poster SVG (the primary and only output)
     location_name = req.text or f"Location {req.osm_id}"
