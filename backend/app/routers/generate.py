@@ -332,6 +332,9 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
 
     # Provinces get major roads only (highways) unless user explicitly enabled streets.
     # Cities always get full street grid.
+    # Large cities (>0.08 deg²) skip detail roads (footway, cycleway, path, steps)
+    # at the Overpass level to avoid downloading 1M+ elements.
+    is_large_city = bbox_area_deg2 > 0.08 and is_street_product
     include_minor_streets = not is_medium_area and not (is_province and not req.include_streets)
 
     async def _get_streets():
@@ -342,6 +345,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         result = await fetch_streets(
             bbox=street_bbox,
             include_minor=include_minor_streets,
+            skip_detail=is_large_city,
             osm_id=street_osm_id,
             osm_type=street_osm_type,
         )
@@ -450,10 +454,10 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         processed["center_latlon"] = (req.center_lat, req.center_lon)
 
     # Cap road count to prevent massive SVGs that timeout the browser.
-    # Dense cities like Toronto can have 300K+ roads — we keep all major roads
-    # and sample minor roads down to a reasonable limit.
-    MAX_MAJOR_ROADS = 8000
-    MAX_MINOR_ROADS = 15000
+    # Dense cities like Toronto can have 300K+ roads — cap aggressively.
+    # Even 5K+10K=15K roads produces a very dense, visually rich map.
+    MAX_MAJOR_ROADS = 5000
+    MAX_MINOR_ROADS = 10000
     if streets_data:
         major = streets_data.get("major_roads", [])
         minor = streets_data.get("minor_roads", [])
