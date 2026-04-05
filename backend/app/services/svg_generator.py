@@ -632,14 +632,16 @@ def _generate_print_svg(
     # (dark land, white roads/water on white background)
     if is_city_art_province:
         theme = dict(theme)  # avoid mutating original
+        # Tonal province rendering: medium-shade land, lighter water/roads
+        # Water and roads create subtle texture as lighter areas within the land
         theme["mat"] = "#FFFFFF"
         theme["map_bg"] = "#FFFFFF"
-        theme["land"] = "#444444"
-        theme["land_stroke"] = "#444444"
-        theme["water"] = "#FFFFFF"
-        theme["water_stroke"] = "#FFFFFF"
-        theme["street_major"] = "#CCCCCC"
-        theme["street_minor"] = "#999999"
+        theme["land"] = "#888888"
+        theme["land_stroke"] = "#888888"
+        theme["water"] = "#C0C0C0"
+        theme["water_stroke"] = "#C0C0C0"
+        theme["street_major"] = "#A8A8A8"
+        theme["street_minor"] = "#B0B0B0"
 
     # Layer: map area background
     # For provinces/lakes, use water color as background (ocean visible).
@@ -726,7 +728,8 @@ def _generate_print_svg(
     if is_city_art and city_sellable_mode:
         pass  # No geography polygon — streets are the visual
     elif is_city_art_province:
-        # Province in city_art: dark fill, no stroke — roads/water cut through
+        # Province in city_art: tonal fill, no stroke outline
+        # The shape is defined by the color contrast against the background
         for exterior, holes in polygons:
             path_d = _coords_to_path(exterior)
             for hole in holes:
@@ -2256,16 +2259,16 @@ def _render_city_art_streets(lines: list[str], streets_data: dict, processed: di
     transform = processed.get("transform")
 
     if province_mode:
-        # Inverted: subtle light roads on dark land — creates smooth textured relief
-        # Roads should be fine and delicate, creating texture not bold lines
+        # Tonal: roads slightly lighter than land, creating soft texture
+        # Fine strokes so roads blend into the land as subtle detail
         city_art_styles = {
-            "motorway": (0.8, "#CCCCCC"), "motorway_link": (0.6, "#CCCCCC"),
-            "trunk": (0.7, "#CCCCCC"), "trunk_link": (0.5, "#CCCCCC"),
-            "primary": (0.5, "#BBBBBB"), "primary_link": (0.4, "#BBBBBB"),
-            "secondary": (0.35, "#AAAAAA"), "secondary_link": (0.3, "#AAAAAA"),
-            "tertiary": (0.25, "#999999"), "tertiary_link": (0.2, "#999999"),
-            "residential": (0.15, "#888888"), "unclassified": (0.15, "#888888"),
-            "living_street": (0.15, "#888888"), "service": (0.1, "#888888"),
+            "motorway": (0.7, "#A8A8A8"), "motorway_link": (0.5, "#A8A8A8"),
+            "trunk": (0.6, "#A8A8A8"), "trunk_link": (0.45, "#A8A8A8"),
+            "primary": (0.45, "#B0B0B0"), "primary_link": (0.35, "#B0B0B0"),
+            "secondary": (0.3, "#B8B8B8"), "secondary_link": (0.25, "#B8B8B8"),
+            "tertiary": (0.2, "#B8B8B8"), "tertiary_link": (0.18, "#B8B8B8"),
+            "residential": (0.12, "#C0C0C0"), "unclassified": (0.12, "#C0C0C0"),
+            "living_street": (0.12, "#C0C0C0"), "service": (0.08, "#C0C0C0"),
         }
     else:
         city_art_styles = {
