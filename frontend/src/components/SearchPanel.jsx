@@ -54,7 +54,10 @@ export default function SearchPanel({ onSelect, selectedResult, country }) {
 
   return (
     <div className="search-section">
-      <h2>Search Location</h2>
+      <h2>City Street Map Art</h2>
+      <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: "-4px 0 8px" }}>
+        Search for a city to generate a street map art print.
+      </p>
       <div className="search-input-wrap">
         <input
           type="text"

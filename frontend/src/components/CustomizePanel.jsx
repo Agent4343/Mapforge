@@ -30,7 +30,7 @@ export default function CustomizePanel({ config, onChange, user }) {
 
   return (
     <div className="customize-section">
-      <h2>Customize Your Map</h2>
+      <h2>Customize Your Street Map</h2>
 
       {/* Display Text */}
       <div className="control-group">

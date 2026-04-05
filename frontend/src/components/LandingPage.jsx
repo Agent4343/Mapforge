@@ -6,12 +6,12 @@ const FEATURES = [
     desc: "High-resolution PNG and SVG files at 300 or 600 DPI. Ready for professional printing and wall art.",
   },
   {
-    title: "15 Color Themes",
-    desc: "From Classic to Midnight Blue, Rose Gold, and Arctic. Choose the perfect palette for any room or gift.",
+    title: "13 Color Themes",
+    desc: "From minimalist B&W to Midnight Blue, Rose Gold, and Navy Gold. Choose the perfect palette for any room or gift.",
   },
   {
-    title: "Any Location on Earth",
-    desc: "Lakes, provinces, cities, parks, communities. Search by name or drop a pin on your family cabin, cottage, or favorite spot.",
+    title: "Any City on Earth",
+    desc: "Search for any city and get a beautiful street map art print. The dense street grid creates stunning visual texture.",
   },
   {
     title: "Personalize It",
@@ -23,15 +23,15 @@ const FEATURES = [
   },
   {
     title: "Instant Delivery",
-    desc: "Your custom map is generated and ready to download within seconds of ordering. No waiting.",
+    desc: "Your custom street map is generated and ready to download within seconds of ordering. No waiting.",
   },
 ];
 
 const SHOWCASE = [
-  { name: "Lake Muskoka", type: "Lake", size: '16x20"', price: "$15.99" },
-  { name: "Banff National Park", type: "Park", size: '24x36"', price: "$19.99" },
+  { name: "New York City", type: "City", size: '18x24"', price: "$15.99" },
   { name: "Toronto", type: "City", size: '18x24"', price: "$15.99" },
-  { name: "Nova Scotia", type: "Province", size: '24x36"', price: "$15.99" },
+  { name: "Miami", type: "City", size: '24x36"', price: "$19.99" },
+  { name: "London", type: "City", size: '16x20"', price: "$15.99" },
 ];
 
 export default function LandingPage({ onGetStarted, onSignIn }) {
@@ -41,13 +41,13 @@ export default function LandingPage({ onGetStarted, onSignIn }) {
       <section className="landing-hero">
         <div className="landing-hero-content">
           <h1>
-            Design Your Own<br />
-            <span className="text-crimson">Custom</span> Map Print
+            City Street Map<br />
+            <span className="text-crimson">Art Prints</span>
           </h1>
           <p className="landing-hero-sub">
-            Create a one-of-a-kind map poster of the place that means the most to you.
-            Your lake, your city, your family's cabin — beautifully designed and
-            ready to print. Starting at $7.99.
+            Create a stunning street map poster of the city that means the most to you.
+            Perfect for housewarming gifts, wedding keepsakes, or your own wall.
+            Beautifully designed and ready to print. Starting at $7.99.
           </p>
           <div className="landing-hero-actions">
             <button className="btn btn-primary btn-lg" onClick={onGetStarted}>
