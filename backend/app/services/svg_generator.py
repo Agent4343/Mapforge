@@ -300,11 +300,13 @@ def _generate_cnc_svg(
         extra_lines += 1
     text_y = board_h - font_size_mm * (2.5 + extra_lines * 0.6)
 
+    text_cx = round(board_w / 2, 2)
+
     lines.append("  <!-- Layer: text_primary -->")
     lines.append('  <!-- Toolpath: V-carve, 60 deg V-bit, flat depth 0.05" -->')
     lines.append('  <g id="text_primary">')
     lines.append(
-        f'    <text x="{board_w / 2}" y="{round(text_y, 2)}"'
+        f'    <text x="{text_cx}" y="{round(text_y, 2)}"'
         f' text-anchor="middle" font-family="{ff}"'
         f' font-size="{font_size_mm}" font-weight="bold"'
         f' fill="#1a1a1a">{_escape_xml(location_name.upper())}</text>'
@@ -319,7 +321,7 @@ def _generate_cnc_svg(
         lines.append('  <g id="text_subtitle">')
         sub_size = round(font_size_mm * 0.5, 2)
         lines.append(
-            f'    <text x="{board_w / 2}" y="{round(next_y, 2)}"'
+            f'    <text x="{text_cx}" y="{round(next_y, 2)}"'
             f' text-anchor="middle" font-family="{ff}"'
             f' font-size="{sub_size}" font-style="italic"'
             f' fill="#666666">{_escape_xml(subtitle)}</text>'
@@ -340,7 +342,7 @@ def _generate_cnc_svg(
         lines.append('  <!-- Toolpath: V-carve, 60 deg V-bit, flat depth 0.03" -->')
         lines.append('  <g id="text_coordinates">')
         lines.append(
-            f'    <text x="{board_w / 2}" y="{round(next_y, 2)}"'
+            f'    <text x="{text_cx}" y="{round(next_y, 2)}"'
             f' text-anchor="middle" font-family="{ff}"'
             f' font-size="{round(font_size_mm * 0.45, 2)}" fill="#666666">'
             f"{coord_text}</text>"
@@ -2981,12 +2983,16 @@ def _render_border(lines: list[str], board_w: float, board_h: float, style: str)
 
 
 def _coords_to_path(coords: list[tuple]) -> str:
-    """Convert coordinate list to SVG path d attribute (M/L/Z — closed)."""
+    """Convert coordinate list to SVG path d attribute (M/L/Z — closed).
+
+    Rounds all coordinates to 2 decimal places (0.01mm precision)
+    for clean CNC toolpath output.
+    """
     if not coords:
         return ""
-    parts = [f"M{coords[0][0]},{coords[0][1]}"]
+    parts = [f"M{round(coords[0][0], 2)},{round(coords[0][1], 2)}"]
     for x, y in coords[1:-1]:
-        parts.append(f"L{x},{y}")
+        parts.append(f"L{round(x, 2)},{round(y, 2)}")
     parts.append("Z")
     return " ".join(parts)
 
