@@ -44,11 +44,13 @@ limiter = Limiter(key_func=get_remote_address)
 
 
 def _compute_street_viewport(streets_data: dict, transform: dict, bounds_mm: tuple,
-                              padding_pct: float = 0.08) -> tuple | None:
-    """Compute a zoomed viewport based on street density.
+                              center_latlon: tuple | None = None,
+                              padding_pct: float = 0.10) -> tuple | None:
+    """Compute a zoomed viewport centered on the city center.
 
-    Uses 5th-95th percentile of street coordinates to find the dense urban
-    core, excluding outlier highways that extend far from the city center.
+    Strategy: center on city center (from Nominatim search), then find the
+    radius that captures 85% of streets. This ensures downtown is always
+    centered while showing the dense urban grid.
     Returns new bounds_mm tuple or None if not enough data.
     """
     if not streets_data or not transform:
@@ -65,40 +67,55 @@ def _compute_street_viewport(streets_data: dict, transform: dict, bounds_mm: tup
                 all_y.append(y)
 
     if len(all_x) < 100:
-        return None  # Not enough data points for reliable percentile
+        return None  # Not enough data points
 
-    # Sort and use 5th-95th percentile to exclude outlier highways
-    all_x.sort()
-    all_y.sort()
-    n = len(all_x)
-    p5 = int(n * 0.05)
-    p95 = int(n * 0.95)
+    # Determine center point: use city center from search if available,
+    # otherwise use median of street coordinates
+    if center_latlon and center_latlon[0] is not None:
+        center_board = transform_wgs84_to_board(
+            [(center_latlon[1], center_latlon[0])], transform
+        )
+        cx, cy = center_board[0]
+    else:
+        all_x.sort()
+        all_y.sort()
+        cx = all_x[len(all_x) // 2]
+        cy = all_y[len(all_y) // 2]
 
-    x_min = all_x[p5]
-    x_max = all_x[p95]
-    y_min = all_y[p5]
-    y_max = all_y[p95]
+    # Compute distance of each point from center, find radius that
+    # captures 80% of roads (the dense urban core)
+    distances = []
+    for i in range(len(all_x)):
+        dx = all_x[i] - cx
+        dy = all_y[i] - cy
+        distances.append(max(abs(dx), abs(dy)))  # Chebyshev distance (square radius)
+
+    distances.sort()
+    p80 = int(len(distances) * 0.80)
+    radius = distances[p80]
+
+    if radius <= 0:
+        return None
 
     # Add padding
-    w = x_max - x_min
-    h = y_max - y_min
-    if w <= 0 or h <= 0:
-        return None
-    pad_x = w * padding_pct
-    pad_y = h * padding_pct
-    x_min -= pad_x
-    x_max += pad_x
-    y_min -= pad_y
-    y_max += pad_y
+    radius *= (1.0 + padding_pct)
+
+    x_min = cx - radius
+    x_max = cx + radius
+    y_min = cy - radius
+    y_max = cy + radius
 
     # Only zoom if the street area is significantly smaller than the full boundary
     orig_min_x, orig_min_y, orig_max_x, orig_max_y = bounds_mm
-    orig_area = (orig_max_x - orig_min_x) * (orig_max_y - orig_min_y)
+    orig_w = orig_max_x - orig_min_x
+    orig_h = orig_max_y - orig_min_y
+    orig_area = orig_w * orig_h
     street_area = (x_max - x_min) * (y_max - y_min)
     if orig_area <= 0 or street_area / orig_area > 0.85:
         return None  # Streets already fill most of the boundary, no zoom needed
 
-    log.info(f"Street viewport zoom: {street_area / orig_area:.0%} of boundary area")
+    log.info(f"Street viewport zoom: {street_area / orig_area:.0%} of boundary, "
+             f"center=({cx:.1f}, {cy:.1f}), radius={radius:.1f}mm")
     return (x_min, y_min, x_max, y_max)
 
 # In-memory cache for Overpass API results (streets, water) keyed by bbox.
@@ -411,11 +428,11 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             f"more urban area for the best result."
         )
 
-    # For city maps: zoom viewport to dense urban area instead of full boundary
-    is_city_art_theme = req.color_theme in ("city_art", "city_map_art", "cityart")
+    # For city maps: zoom viewport to dense urban area centered on city center
     if req.product_type.value in ("city", "community") and streets_data:
         street_viewport = _compute_street_viewport(
-            streets_data, processed.get("transform"), processed.get("bounds_mm")
+            streets_data, processed.get("transform"), processed.get("bounds_mm"),
+            center_latlon=processed.get("center_latlon"),
         )
         if street_viewport:
             processed = dict(processed)  # don't mutate original
