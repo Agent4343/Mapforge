@@ -817,7 +817,8 @@ def _generate_print_svg(
     lines.append('    <g id="geography_fill">')
     # For dense cities in city_art mode, skip the geography polygon entirely —
     # the streets alone define the map shape against the background.
-    if is_city_art and city_sellable_mode:
+    # Also skip when viewport is zoomed to street grid (bounds_mm overridden).
+    if is_city_art and (city_sellable_mode or is_city_community):
         pass  # No geography polygon — streets are the visual
     elif is_city_art_province:
         # Province in city_art: tonal fill, no stroke outline
@@ -885,9 +886,9 @@ def _generate_print_svg(
         lines.append('    <g clip-path="url(#boundary_clip)">')
 
     # Water features — filled with water color (optional gradient)
-    # For city_art dense cities, skip water entirely — streets are the only visual.
+    # For city_art cities, skip water entirely — streets are the only visual.
     # For city_art provinces, render water as negative space (no gradient).
-    if water_data and not (is_city_art and city_sellable_mode):
+    if water_data and not (is_city_art and is_city_community):
         _render_print_water(lines, water_data, processed, theme,
                             gradient=gradient_water and not is_city_art_province)
 
