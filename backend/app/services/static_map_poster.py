@@ -16,7 +16,7 @@ from app.logging_config import log
 
 
 # MapTiler static map URL template
-STATIC_MAP_URL = "https://api.maptiler.com/maps/{style}/static/{lng},{lat},{zoom}/{width}x{height}@2x.png"
+STATIC_MAP_URL = "https://api.maptiler.com/maps/{style}/static/{lng},{lat},{zoom}/{width}x{height}.png"
 
 # Poster layout constants (matching city_art SVG layout proportions)
 MAT_PCT = 0.025       # Border around entire poster
@@ -324,14 +324,14 @@ async def generate_static_map_poster(
 
     zoom = _choose_zoom(product_type, bbox_area)
 
-    # Fetch map at maximum resolution with @2x for retina quality
-    # The @2x doubles the actual pixel output (1024x1024 → 2048x2048)
+    # Fetch map — stay within MapTiler free tier limits (max 2048x2048 actual pixels)
+    # Without @2x: request exactly what we need
     map_bytes = await fetch_static_map(
         lat=lat,
         lng=lng,
         zoom=zoom,
-        width=1280,   # @2x → 2560px actual
-        height=1024,  # @2x → 2048px actual
+        width=1024,
+        height=800,
         style="streets-v2-light",
         api_key=api_key,
     )

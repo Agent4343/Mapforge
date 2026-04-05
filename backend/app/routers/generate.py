@@ -486,6 +486,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     is_city_type = req.product_type.value in ("city", "community")
     from app.services.app_settings import get_maptiler_key
     maptiler_key = await get_maptiler_key(db)
+    log.info(f"MapTiler check: key={'YES' if maptiler_key else 'NO'}, city_art={is_city_art}, city_type={is_city_type}, theme={req.color_theme}, product={req.product_type.value}")
     if maptiler_key and is_city_art and is_city_type:
         center = processed.get("center_latlon")
         if center and center[0] is not None:
