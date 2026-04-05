@@ -4,8 +4,6 @@ import CustomizePanel from "./components/CustomizePanel.jsx";
 import SVGPreview from "./components/SVGPreview.jsx";
 import ExportPanel from "./components/ExportPanel.jsx";
 import AuthModal from "./components/AuthModal.jsx";
-import LibraryView from "./components/LibraryView.jsx";
-import MarketplaceView from "./components/MarketplaceView.jsx";
 import SellerDashboard from "./components/SellerDashboard.jsx";
 import AdminDashboard from "./components/AdminDashboard.jsx";
 import BatchPanel from "./components/BatchPanel.jsx";
@@ -581,8 +579,6 @@ export default function App() {
   }
 
   // Sub-views
-  if (view === "library") return <LibraryView onBack={() => setView("main")} />;
-  if (view === "marketplace") return <MarketplaceView user={user} onBack={() => setView("main")} />;
   if (view === "dashboard") return <SellerDashboard onBack={() => setView("main")} />;
   if (view === "purchases") return <PurchasesView onBack={() => setView("main")} />;
   if (view === "admin") return <AdminDashboard onBack={() => setView("main")} />;
@@ -612,8 +608,6 @@ export default function App() {
             ))}
           </select>
           {user?.tier === "admin" && <button className="nav-btn" onClick={() => setShowPricing(true)}>Pricing</button>}
-          {user?.tier === "admin" && <button className="nav-btn" onClick={() => setView("marketplace")}>Marketplace</button>}
-          {user?.tier === "admin" && <button className="nav-btn" onClick={() => setView("library")}>Library</button>}
           {user?.tier === "admin" && <button className="nav-btn" onClick={() => setView("purchases")}>Purchases</button>}
           {user?.tier === "admin" && (
             <button className="nav-btn" onClick={() => setView("dashboard")}>Seller</button>
@@ -810,16 +804,6 @@ export default function App() {
             <span className="mobile-tab-icon">&#9670;</span>
             Generate
           </button>
-          <button className={`mobile-tab${view === "marketplace" ? " active" : ""}`} onClick={() => setView("marketplace")}>
-            <span className="mobile-tab-icon">&#9733;</span>
-            Market
-          </button>
-          {user && (
-            <button className={`mobile-tab${view === "library" ? " active" : ""}`} onClick={() => setView("library")}>
-              <span className="mobile-tab-icon">&#9776;</span>
-              Library
-            </button>
-          )}
           {user ? (
             <button className="mobile-tab" onClick={handleLogout}>
               <span className="mobile-tab-icon">&#8594;</span>
