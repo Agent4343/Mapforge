@@ -30,6 +30,7 @@ from app.services.geometry_processor import process_geometry, transform_wgs84_to
 from app.services.svg_generator import generate_svg
 from app.services.street_fetcher import fetch_streets
 from app.services.maptiler_fetcher import fetch_streets_maptiler
+from app.services.static_map_poster import generate_static_map_poster
 from app.services.water_fetcher import fetch_water_features
 from app.services.contour_fetcher import fetch_contour_lines, generate_depth_bands
 from app.services.file_storage import store_file, retrieve_file
@@ -587,20 +588,47 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         except Exception as e:
             log.warning(f"Thumbnail generation failed (non-fatal): {e}")
 
-        # Generate high-res print PNG from poster SVG (themed, with proper layout)
-        try:
-            print_bytes = generate_print_image(
-                result["svg"],
-                color_theme=req.color_theme,
-                skip_remap=True,
-                board_size=req.board_size.value,
-                dpi=req.print_dpi,
-            )
+        # Generate high-res print PNG — prefer MapTiler static map for city maps
+        static_poster_bytes = None
+        if (settings.MAPTILER_API_KEY
+                and req.color_theme in ("city_art", "city_map_art", "cityart")
+                and req.product_type.value in ("city", "community")):
+            center = processed.get("center_latlon", (None, None))
+            if center and center[0] is not None:
+                lat_span = bounds[3] - bounds[1] if bounds else 0
+                lon_span = bounds[2] - bounds[0] if bounds else 0
+                try:
+                    static_poster_bytes = await generate_static_map_poster(
+                        lat=center[0],
+                        lng=center[1],
+                        city_name=location_name,
+                        subtitle=req.subtitle or "",
+                        board_size=req.board_size.value,
+                        show_coordinates=req.show_coordinates,
+                        product_type=req.product_type.value,
+                        bbox_area=lat_span * lon_span,
+                    )
+                except Exception as e:
+                    log.warning(f"Static map poster failed (non-fatal): {e}")
+
+        if static_poster_bytes:
             print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
-            await store_file(print_png_key, print_bytes, content_type="image/png")
-        except Exception as e:
-            log.error(f"Print PNG generation failed: {type(e).__name__}: {e}")
-            print_png_key = None
+            await store_file(print_png_key, static_poster_bytes, content_type="image/png")
+            log.info(f"Print PNG from MapTiler static map: {len(static_poster_bytes)} bytes")
+        else:
+            try:
+                print_bytes = generate_print_image(
+                    result["svg"],
+                    color_theme=req.color_theme,
+                    skip_remap=True,
+                    board_size=req.board_size.value,
+                    dpi=req.print_dpi,
+                )
+                print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
+                await store_file(print_png_key, print_bytes, content_type="image/png")
+            except Exception as e:
+                log.error(f"Print PNG generation failed: {type(e).__name__}: {e}")
+                print_png_key = None
 
         # Generate Etsy listing image (4:3 ratio for Etsy grid)
         try:

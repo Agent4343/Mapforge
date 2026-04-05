@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpango1.0-dev \
     libgdk-pixbuf-2.0-dev \
     build-essential \
+    fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt .
