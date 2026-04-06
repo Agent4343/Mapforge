@@ -1,8 +1,7 @@
 """High-quality city map poster using label-free map tiles.
 
-Uses Stamen Toner Lines (bold black roads, no labels) as primary source,
-with CartoDB light_nolabels as fallback. Composes into a print-ready
-poster with city name, subtitle, and coordinates.
+Uses CartoDB light_nolabels tiles (no text labels, blue water, gray roads),
+then processes them into clean dark-roads-on-white Etsy map art.
 """
 
 import io
@@ -16,16 +15,12 @@ from app.config import settings
 from app.logging_config import log
 
 
-# ── Tile sources ──────────────────────────────────────────────────────
-# Primary: Stamen Toner Lines — bold black roads, NO labels, transparent bg
-# This is what professional Etsy map art sellers use
-TILE_TONER = "https://tiles.stadiamaps.com/tiles/stamen_toner_lines/{z}/{x}/{y}@2x.png"
-# Fallback: CartoDB — lighter gray roads but no API key needed
-TILE_CARTO = "https://basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}@2x.png"
-TILE_CARTO_DARK = "https://basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}@2x.png"
+# ── Tile source ───────────────────────────────────────────────────────
+# CartoDB light_nolabels: gray roads, blue water, no labels, no API key
+TILE_URL = "https://basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}@2x.png"
 TILE_PX = 512  # @2x tile pixel size
 
-# MapTiler fallback (kept for backwards compat)
+# MapTiler fallback
 STATIC_MAP_URL = "https://api.maptiler.com/maps/{style}/static/{lng},{lat},{zoom}/{width}x{height}.png"
 
 # Poster layout
@@ -144,25 +139,17 @@ def _lat_lng_to_world_px(lat: float, lng: float, zoom: int) -> tuple[float, floa
     return px_x, px_y
 
 
-async def _stitch_tiles(
-    tile_url: str,
+async def _fetch_tiles(
     lat: float, lng: float, zoom: int,
     output_w: int = 2048, output_h: int = 1600,
 ) -> Image.Image | None:
-    """Fetch tiles from a URL template and stitch into one image.
-
-    Handles both opaque (CartoDB) and transparent (Stamen Toner) tiles.
-    """
+    """Fetch CartoDB label-free tiles and stitch into one image."""
     n_tiles = 2 ** zoom
-
-    # World pixel coords of center
     cx, cy = _lat_lng_to_world_px(lat, lng, zoom)
 
-    # Pixel bounds of viewport
     left_px = cx - output_w / 2.0
     top_px = cy - output_h / 2.0
 
-    # Tile range needed
     t_left = int(left_px // TILE_PX)
     t_top = int(top_px // TILE_PX)
     t_right = int((left_px + output_w) // TILE_PX)
@@ -170,7 +157,7 @@ async def _stitch_tiles(
 
     canvas_w = (t_right - t_left + 1) * TILE_PX
     canvas_h = (t_bottom - t_top + 1) * TILE_PX
-    canvas = Image.new("RGBA", (canvas_w, canvas_h), (255, 255, 255, 255))
+    canvas = Image.new("RGB", (canvas_w, canvas_h), (255, 255, 255))
 
     fetched = 0
     async with httpx.AsyncClient(timeout=15.0) as client:
@@ -179,105 +166,79 @@ async def _stitch_tiles(
                 wtx = tx % n_tiles
                 if ty < 0 or ty >= n_tiles:
                     continue
-                url = tile_url.format(z=zoom, x=wtx, y=ty)
+                url = TILE_URL.format(z=zoom, x=wtx, y=ty)
                 try:
                     resp = await client.get(url)
                     if resp.status_code == 200:
                         tile_img = Image.open(io.BytesIO(resp.content))
                         paste_x = (tx - t_left) * TILE_PX
                         paste_y = (ty - t_top) * TILE_PX
-                        if tile_img.mode == "RGBA":
-                            # Composite transparent tiles over white canvas
-                            canvas.alpha_composite(tile_img, (paste_x, paste_y))
-                        else:
-                            canvas.paste(tile_img, (paste_x, paste_y))
+                        canvas.paste(tile_img, (paste_x, paste_y))
                         fetched += 1
-                    elif resp.status_code in (401, 403):
-                        log.warning(f"Tile auth failed ({resp.status_code}), source needs API key")
-                        return None
                 except Exception:
                     pass
 
     if fetched == 0:
+        log.warning("No tiles fetched")
         return None
 
-    # Crop to exact viewport and convert to RGB
     off_x = int(left_px - t_left * TILE_PX)
     off_y = int(top_px - t_top * TILE_PX)
     result = canvas.crop((off_x, off_y, off_x + output_w, off_y + output_h))
     log.info(f"Stitched {fetched} tiles → {output_w}x{output_h}")
-    return result.convert("RGB")
-
-
-async def _fetch_map_tiles(
-    lat: float, lng: float, zoom: int,
-    output_w: int = 2048, output_h: int = 1600,
-) -> tuple[Image.Image | None, str]:
-    """Try Stamen Toner Lines first (bold black roads), fall back to CartoDB.
-
-    Returns (image, source_name) tuple.
-    """
-    # Primary: Stamen Toner Lines — bold black roads, no labels
-    result = await _stitch_tiles(TILE_TONER, lat, lng, zoom, output_w, output_h)
-    if result is not None:
-        log.info("Using Stamen Toner Lines (bold roads)")
-        return result, "toner"
-
-    # Fallback: CartoDB light_nolabels
-    log.info("Stamen Toner failed, falling back to CartoDB")
-    result = await _stitch_tiles(TILE_CARTO, lat, lng, zoom, output_w, output_h)
-    if result is not None:
-        log.info("Using CartoDB light_nolabels")
-        return result, "carto"
-
-    return None, "none"
+    return result
 
 
 # ── Image processing ──────────────────────────────────────────────────
 
-def _stylize_map(map_img: Image.Image, theme: dict, source: str = "toner") -> Image.Image:
-    """Style map for Etsy-quality art.
+def _stylize_map(map_img: Image.Image, theme: dict) -> Image.Image:
+    """Transform CartoDB tiles into Etsy-quality map art.
 
-    Adapts processing to the tile source:
-    - toner: roads already bold black, minimal processing needed
-    - carto: roads are light gray, needs contrast stretching
+    Key trick: mask out water & parks BEFORE autocontrast so the
+    contrast calibration only sees road-vs-land pixels, giving us
+    maximum road darkness on clean white background.
     """
     img_arr = np.array(map_img.convert("RGB"), dtype=np.float32)
     r, g, b = img_arr[:, :, 0], img_arr[:, :, 1], img_arr[:, :, 2]
 
-    # Convert to grayscale
+    # ── Detect water (blue areas in CartoDB tiles ~#aad3df) ──
+    water_mask = (b > r + 8) & (b > g - 3) & (b > 160)
+
+    # ── Detect parks/green areas ──
+    green_mask = (g > r + 3) & (g > b + 3) & (g > 200)
+
+    # ── Replace water & parks with white before grayscale ──
+    # This prevents them from skewing autocontrast calibration
+    r[water_mask | green_mask] = 250
+    g[water_mask | green_mask] = 250
+    b[water_mask | green_mask] = 250
+
+    # ── Grayscale ──
     gray = 0.299 * r + 0.587 * g + 0.114 * b
     gray = np.clip(gray, 0, 255).astype(np.uint8)
     result = Image.fromarray(gray)
 
-    if source == "toner":
-        # Stamen Toner: roads are already bold black (0-30) on white (255)
-        # Just clean up any faint boundary/railway lines
-        arr = np.array(result, dtype=np.float32)
-        # Kill anything lighter than solid road lines (removes thin railways/borders)
-        arr[arr > 140] = 255
-        result = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8))
-        # Slight thickening for poster scale
-        result = result.filter(ImageFilter.MinFilter(size=3))
-        enhancer = ImageEnhance.Contrast(result)
-        result = enhancer.enhance(1.3)
-    else:
-        # CartoDB: roads are light gray, needs heavy processing
-        result = ImageOps.autocontrast(result, cutoff=2)
-        enhancer = ImageEnhance.Contrast(result)
-        result = enhancer.enhance(2.0)
-        result = result.filter(ImageFilter.MinFilter(size=3))
+    # ── AutoContrast: now calibrated on road-vs-land only ──
+    result = ImageOps.autocontrast(result, cutoff=3)
 
-    # Sharpen
+    # ── Strong contrast to make roads bold, land white ──
+    enhancer = ImageEnhance.Contrast(result)
+    result = enhancer.enhance(2.5)
+
+    # ── MedianFilter: removes dotted boundary/railway lines ──
+    # Dotted lines become isolated pixels after contrast; median kills them
+    result = result.filter(ImageFilter.MedianFilter(size=3))
+
+    # ── Sharpen for crisp road edges ──
     result = result.filter(ImageFilter.SHARPEN)
 
-    # Dark mode
+    # ── Dark mode ──
     if theme.get("map_mode") == "dark":
         result = ImageOps.invert(result)
         enhancer = ImageEnhance.Contrast(result)
         result = enhancer.enhance(1.2)
 
-    # Apply tint or convert to RGB
+    # ── Apply tint or convert to RGB ──
     if theme.get("tint"):
         tint = theme["tint"]
         dark_c = tuple(max(0, c - 90) for c in tint)
@@ -285,6 +246,13 @@ def _stylize_map(map_img: Image.Image, theme: dict, source: str = "toner") -> Im
         result = ImageOps.colorize(result, black=dark_c, white=light_c)
     else:
         result = result.convert("RGB")
+
+    # ── Paint water areas with theme color ──
+    water_color = theme.get("water", (220, 220, 220))
+    result_arr = np.array(result)
+    for i in range(3):
+        result_arr[:, :, i] = np.where(water_mask, water_color[i], result_arr[:, :, i])
+    result = Image.fromarray(result_arr)
 
     return result
 
@@ -419,7 +387,6 @@ def compose_poster(
     board_size: str = "18x24",
     show_coordinates: bool = True,
     color_theme: str = "city_art",
-    tile_source: str = "toner",
 ) -> bytes:
     """Compose a print-ready Etsy-quality poster from map image + text."""
     theme = POSTER_THEMES.get(color_theme, POSTER_THEMES["city_art"])
@@ -442,7 +409,7 @@ def compose_poster(
     # Load, stylize, scale, and place map
     try:
         map_img = Image.open(io.BytesIO(map_image_bytes))
-        map_img = _stylize_map(map_img, theme, source=tile_source)
+        map_img = _stylize_map(map_img, theme)
 
         img_ratio = map_img.width / map_img.height
         area_ratio = map_w / map_h
@@ -556,13 +523,10 @@ async def generate_static_map_poster(
     zoom = _choose_zoom(product_type, bbox_area)
     log.info(f"Poster: z{zoom} area={bbox_area:.4f} type={product_type} theme={color_theme}")
 
-    # Fetch tiles: Stamen Toner Lines → CartoDB fallback
-    map_img, source = await _fetch_map_tiles(
-        lat=lat, lng=lng, zoom=zoom,
-        output_w=2048, output_h=1600,
-    )
+    # Fetch CartoDB label-free tiles
+    map_img = await _fetch_tiles(lat=lat, lng=lng, zoom=zoom)
 
-    # Last resort: MapTiler static map
+    # Fallback: MapTiler static map
     if map_img is None:
         api_key = api_key or settings.MAPTILER_API_KEY
         if api_key:
@@ -573,7 +537,6 @@ async def generate_static_map_poster(
             )
             if map_bytes:
                 map_img = Image.open(io.BytesIO(map_bytes))
-                source = "carto"  # treat MapTiler like CartoDB for processing
 
     if map_img is None:
         log.warning("All tile sources failed")
@@ -592,7 +555,6 @@ async def generate_static_map_poster(
         board_size=board_size,
         show_coordinates=show_coordinates,
         color_theme=color_theme,
-        tile_source=source,
     )
-    log.info(f"Poster generated: {len(poster_bytes)} bytes ({source} tiles)")
+    log.info(f"Poster generated: {len(poster_bytes)} bytes")
     return poster_bytes
