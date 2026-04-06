@@ -12,6 +12,7 @@ Also retains CNC SVG generation for legacy/internal use.
 import math
 from datetime import datetime, timezone
 
+from app.logging_config import log
 from app.models.schemas import CutStyle
 from app.services.geometry_processor import transform_wgs84_to_board
 
@@ -469,6 +470,47 @@ def _format_dms(degrees: float, positive_dir: str, negative_dir: str) -> str:
     return f'{d}\u00b0 {m}\' {s}" {direction}'
 
 
+# ── Province / state capital coordinates ───────────────────────────────
+#
+# Province polygon centroids land in arbitrary spots (often the geographic
+# middle of the shape, sometimes in the ocean for irregular provinces like
+# Nova Scotia). For poster wall art we want a meaningful coordinate — the
+# capital city — displayed instead. Lookup is by lower-cased province name.
+_PROVINCE_CAPITALS: dict[str, tuple[float, float]] = {
+    # Canadian provinces and territories
+    "alberta": (53.5461, -113.4938),                      # Edmonton
+    "british columbia": (48.4284, -123.3656),             # Victoria
+    "manitoba": (49.8951, -97.1384),                      # Winnipeg
+    "new brunswick": (45.9636, -66.6431),                 # Fredericton
+    "newfoundland and labrador": (47.5615, -52.7126),     # St. John's
+    "newfoundland": (47.5615, -52.7126),
+    "nova scotia": (44.6488, -63.5752),                   # Halifax
+    "ontario": (43.6532, -79.3832),                       # Toronto
+    "prince edward island": (46.2382, -63.1311),          # Charlottetown
+    "quebec": (46.8139, -71.2080),                        # Quebec City
+    "québec": (46.8139, -71.2080),
+    "saskatchewan": (50.4452, -104.6189),                 # Regina
+    "northwest territories": (62.4540, -114.3718),        # Yellowknife
+    "nunavut": (63.7467, -68.5170),                       # Iqaluit
+    "yukon": (60.7212, -135.0568),                        # Whitehorse
+}
+
+
+def _province_capital_latlon(location_name: str) -> tuple[float, float] | None:
+    """Return capital coordinates if location_name matches a known province."""
+    if not location_name:
+        return None
+    # Try the first comma chunk lower-cased ("Nova Scotia, Canada" → "nova scotia")
+    key = location_name.split(",")[0].strip().lower()
+    if key in _PROVINCE_CAPITALS:
+        return _PROVINCE_CAPITALS[key]
+    # Try the whole name lower-cased
+    key2 = location_name.strip().lower()
+    if key2 in _PROVINCE_CAPITALS:
+        return _PROVINCE_CAPITALS[key2]
+    return None
+
+
 def _generate_print_svg(
     processed: dict,
     location_name: str,
@@ -527,6 +569,17 @@ def _generate_print_svg(
     board_w, board_h = processed["board_mm"]
     polygons = processed["polygons"]
     latlon = center_latlon or processed.get("center_latlon", (0, 0))
+
+    # For province posters, the polygon centroid is meaningless (often in
+    # the ocean for irregular shapes). Override with the capital city.
+    if product_type == "province":
+        capital = _province_capital_latlon(location_name)
+        if capital is not None:
+            log.info(
+                f"Province '{location_name}': displaying capital coordinates "
+                f"{capital} instead of centroid {latlon}"
+            )
+            latlon = capital
 
     path_count = sum(1 + len(holes) for _, holes in polygons)
     node_count = processed["node_count"]
@@ -1269,6 +1322,13 @@ def _generate_vintage_map_svg(
     board_w, board_h = processed["board_mm"]
     polygons = processed["polygons"]
     latlon = center_latlon or processed.get("center_latlon", (0, 0))
+
+    # Province posters: show capital city coordinates instead of polygon centroid.
+    if product_type == "province":
+        capital = _province_capital_latlon(location_name)
+        if capital is not None:
+            latlon = capital
+
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # Vintage color palette — monochrome ink on parchment
