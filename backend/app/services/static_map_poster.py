@@ -38,8 +38,8 @@ POSTER_THEMES = {
         "bg": (245, 245, 245), "map_bg": (255, 255, 255),
         "title": (25, 25, 25), "subtitle": (100, 100, 100),
         "border": (200, 200, 200), "line": (180, 180, 180),
-        "road_major": (15, 15, 15), "road_minor": (95, 95, 95),
-        "map_mode": "light", "water": (208, 218, 230),
+        "road_major": (20, 20, 20), "road_minor": (140, 140, 140),
+        "map_mode": "light", "water": (210, 220, 232),
     },
     "classic": {
         "bg": (250, 248, 244), "map_bg": (252, 250, 246),
@@ -218,25 +218,27 @@ def render_map_image(
         return px, py
 
     # ── Draw water polygons (background) ──
+    # Single uniform water color, no waterway line accents (would create
+    # patchy variation against the polygons).
     if water_data:
         water_color = theme.get("water", (232, 232, 232))
+        # Drop tiny fragments — they read as visual noise on a poster.
+        min_water_area_px = (img_w * img_h) * 0.00005  # ~0.005% of canvas
         for coords, wtype, name in water_data.get("water_polygons", []):
             if len(coords) < 3:
                 continue
             px_coords = [to_px(lon, lat) for lon, lat in coords]
+            # Shoelace area
+            n = len(px_coords)
+            area = 0.0
+            for i in range(n):
+                x1, y1 = px_coords[i]
+                x2, y2 = px_coords[(i + 1) % n]
+                area += x1 * y2 - x2 * y1
+            if abs(area) * 0.5 < min_water_area_px:
+                continue
             try:
                 draw.polygon(px_coords, fill=water_color)
-            except Exception:
-                pass
-
-        # Draw waterways as lines
-        waterway_color = theme.get("water", (232, 232, 232))
-        for coords, wtype, name in water_data.get("waterways", []):
-            if len(coords) < 2:
-                continue
-            px_coords = [to_px(lon, lat) for lon, lat in coords]
-            try:
-                draw.line(px_coords, fill=waterway_color, width=2)
             except Exception:
                 pass
 
@@ -247,25 +249,26 @@ def render_map_image(
 
         # Scale line widths + minor-road length threshold to viewport.
         # Larger viewport = drop more residentials so the map breathes.
+        # Major thickness reduced ~10% for refined hierarchy.
         if bbox_area > 2.0:
-            minor_mult, major_mult = 5, 9
-            minor_min, major_min = 3, 6
-            min_residential_px = 220
+            minor_mult, major_mult = 4, 8
+            minor_min, major_min = 2, 5
+            min_residential_px = 290
         elif bbox_area > 0.5:
-            minor_mult, major_mult = 7, 11
-            minor_min, major_min = 4, 7
-            min_residential_px = 160
+            minor_mult, major_mult = 6, 10
+            minor_min, major_min = 3, 6
+            min_residential_px = 210
         elif bbox_area > 0.1:
-            minor_mult, major_mult = 9, 14
-            minor_min, major_min = 4, 8
-            min_residential_px = 110
+            minor_mult, major_mult = 8, 12
+            minor_min, major_min = 3, 7
+            min_residential_px = 145
         elif bbox_area > 0.03:
-            minor_mult, major_mult = 11, 17
-            minor_min, major_min = 5, 9
-            min_residential_px = 70
+            minor_mult, major_mult = 10, 15
+            minor_min, major_min = 4, 8
+            min_residential_px = 95
         else:
-            minor_mult, major_mult = 13, 20
-            minor_min, major_min = 5, 11
+            minor_mult, major_mult = 12, 18
+            minor_min, major_min = 4, 10
             min_residential_px = 0  # tiny zoom = keep everything
 
         # Minor roads first (drawn below major) — heavily filtered
@@ -412,29 +415,29 @@ def compose_poster(
     except Exception as e:
         log.warning(f"Map image placement failed: {e}")
 
-    # ── Location pin — white halo + ring + dot for clear focal point ──
+    # ── Location pin — refined: white halo + thin ring + small dot ──
     pin_cx = map_x + map_w // 2
     pin_cy = map_y + map_h // 2
-    pin_r = int(min(map_w, map_h) * 0.014)
+    pin_r = int(min(map_w, map_h) * 0.011)
     pin_color = theme["title"]
     halo_color = theme["map_bg"]
 
-    # White halo behind everything to clear surrounding road clutter
-    halo_r = int(pin_r * 1.9)
+    # White halo to clear surrounding road clutter (focal breathing room)
+    halo_r = int(pin_r * 2.0)
     draw.ellipse(
         [pin_cx - halo_r, pin_cy - halo_r, pin_cx + halo_r, pin_cy + halo_r],
         fill=halo_color,
     )
 
-    # Outer ring
-    stroke = max(pin_r // 3, 4)
+    # Thin outer ring
+    stroke = max(pin_r // 5, 3)
     draw.ellipse(
         [pin_cx - pin_r, pin_cy - pin_r, pin_cx + pin_r, pin_cy + pin_r],
         outline=pin_color, width=stroke,
     )
 
-    # Solid center dot
-    dot_r = max(int(pin_r * 0.35), 3)
+    # Small solid center dot
+    dot_r = max(int(pin_r * 0.32), 3)
     draw.ellipse(
         [pin_cx - dot_r, pin_cy - dot_r, pin_cx + dot_r, pin_cy + dot_r],
         fill=pin_color,
