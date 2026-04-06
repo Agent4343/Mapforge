@@ -38,8 +38,8 @@ POSTER_THEMES = {
         "bg": (245, 245, 245), "map_bg": (255, 255, 255),
         "title": (25, 25, 25), "subtitle": (100, 100, 100),
         "border": (200, 200, 200), "line": (180, 180, 180),
-        "road_major": (15, 15, 15), "road_minor": (55, 55, 55),
-        "map_mode": "light", "water": (225, 232, 240),
+        "road_major": (15, 15, 15), "road_minor": (95, 95, 95),
+        "map_mode": "light", "water": (208, 218, 230),
     },
     "classic": {
         "bg": (250, 248, 244), "map_bg": (252, 250, 246),
@@ -144,6 +144,28 @@ def _to_mercator(lat: float, lng: float) -> tuple[float, float]:
     return x, y
 
 
+# Highway tags to drop entirely — they add noise without value as wall art.
+_DROP_HIGHWAYS = frozenset({
+    "service", "track", "pedestrian", "footway", "cycleway",
+    "path", "steps", "bridleway", "construction", "proposed",
+    "raceway", "bus_guideway", "escape", "corridor",
+})
+
+# Highway tags that are "minor but worth keeping if long enough".
+_RESIDENTIAL_HIGHWAYS = frozenset({
+    "residential", "unclassified", "living_street", "tertiary_link",
+})
+
+
+def _polyline_pixel_length(px_coords: list[tuple[float, float]]) -> float:
+    total = 0.0
+    for i in range(1, len(px_coords)):
+        dx = px_coords[i][0] - px_coords[i - 1][0]
+        dy = px_coords[i][1] - px_coords[i - 1][1]
+        total += math.hypot(dx, dy)
+    return total
+
+
 # ── Road rendering ───────────────────────────────────────────────────
 
 def render_map_image(
@@ -223,39 +245,57 @@ def render_map_image(
         minor_color = theme.get("road_minor", (90, 90, 90))
         major_color = theme.get("road_major", (30, 30, 30))
 
-        # Scale line widths to viewport: smaller area = bolder roads
+        # Scale line widths + minor-road length threshold to viewport.
+        # Larger viewport = drop more residentials so the map breathes.
         if bbox_area > 2.0:
-            minor_mult, major_mult = 5, 8
-            minor_min, major_min = 3, 5
-        elif bbox_area > 0.5:
-            minor_mult, major_mult = 6, 10
+            minor_mult, major_mult = 5, 9
             minor_min, major_min = 3, 6
-        elif bbox_area > 0.1:
-            minor_mult, major_mult = 8, 12
+            min_residential_px = 220
+        elif bbox_area > 0.5:
+            minor_mult, major_mult = 7, 11
             minor_min, major_min = 4, 7
-        elif bbox_area > 0.03:
-            minor_mult, major_mult = 10, 15
+            min_residential_px = 160
+        elif bbox_area > 0.1:
+            minor_mult, major_mult = 9, 14
             minor_min, major_min = 4, 8
+            min_residential_px = 110
+        elif bbox_area > 0.03:
+            minor_mult, major_mult = 11, 17
+            minor_min, major_min = 5, 9
+            min_residential_px = 70
         else:
-            minor_mult, major_mult = 12, 18
-            minor_min, major_min = 5, 10
+            minor_mult, major_mult = 13, 20
+            minor_min, major_min = 5, 11
+            min_residential_px = 0  # tiny zoom = keep everything
 
-        # Minor roads first (drawn below major)
+        # Minor roads first (drawn below major) — heavily filtered
+        kept_minor = 0
+        dropped_minor = 0
         for coords, rclass, width_mm, name in streets_data.get("minor_roads", []):
             if len(coords) < 2:
+                dropped_minor += 1
+                continue
+            if rclass in _DROP_HIGHWAYS:
+                dropped_minor += 1
                 continue
             px_coords = [to_px(lon, lat) for lon, lat in coords]
+            # Drop residentials shorter than threshold (kills "grey haze")
+            if rclass in _RESIDENTIAL_HIGHWAYS and min_residential_px > 0:
+                if _polyline_pixel_length(px_coords) < min_residential_px:
+                    dropped_minor += 1
+                    continue
             line_w = max(minor_min, int(width_mm * minor_mult))
             try:
                 draw.line(px_coords, fill=minor_color, width=line_w, joint="curve")
-                # Round endpoints
                 r = line_w // 2
                 for px, py in (px_coords[0], px_coords[-1]):
                     draw.ellipse([px - r, py - r, px + r, py + r], fill=minor_color)
+                kept_minor += 1
             except Exception:
                 pass
 
-        # Major roads on top (thicker)
+        # Major roads on top (thicker, darker)
+        kept_major = 0
         for coords, rclass, width_mm, name in streets_data.get("major_roads", []):
             if len(coords) < 2:
                 continue
@@ -266,8 +306,14 @@ def render_map_image(
                 r = line_w // 2
                 for px, py in (px_coords[0], px_coords[-1]):
                     draw.ellipse([px - r, py - r, px + r, py + r], fill=major_color)
+                kept_major += 1
             except Exception:
                 pass
+
+        log.info(
+            f"Road render: {kept_major} major, {kept_minor} minor "
+            f"({dropped_minor} dropped), threshold={min_residential_px}px"
+        )
 
     return img
 
@@ -366,17 +412,29 @@ def compose_poster(
     except Exception as e:
         log.warning(f"Map image placement failed: {e}")
 
-    # ── Location pin — minimal ring + dot ──
+    # ── Location pin — white halo + ring + dot for clear focal point ──
     pin_cx = map_x + map_w // 2
     pin_cy = map_y + map_h // 2
-    pin_r = int(min(map_w, map_h) * 0.008)
+    pin_r = int(min(map_w, map_h) * 0.014)
     pin_color = theme["title"]
-    stroke = max(pin_r // 4, 2)
+    halo_color = theme["map_bg"]
+
+    # White halo behind everything to clear surrounding road clutter
+    halo_r = int(pin_r * 1.9)
+    draw.ellipse(
+        [pin_cx - halo_r, pin_cy - halo_r, pin_cx + halo_r, pin_cy + halo_r],
+        fill=halo_color,
+    )
+
+    # Outer ring
+    stroke = max(pin_r // 3, 4)
     draw.ellipse(
         [pin_cx - pin_r, pin_cy - pin_r, pin_cx + pin_r, pin_cy + pin_r],
         outline=pin_color, width=stroke,
     )
-    dot_r = max(stroke, 2)
+
+    # Solid center dot
+    dot_r = max(int(pin_r * 0.35), 3)
     draw.ellipse(
         [pin_cx - dot_r, pin_cy - dot_r, pin_cx + dot_r, pin_cy + dot_r],
         fill=pin_color,
