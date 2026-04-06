@@ -201,16 +201,29 @@ def _adjust_center_for_composition(
     """
     if not city_name:
         return lat, lng
-    # Match the leading word — handles "Halifax, NS" / "Halifax Regional..."
-    first_word = city_name.split(",")[0].split()[0] if city_name.strip() else ""
-    key = _name_key(first_word)
-    # Also try first two tokens joined for "Saint John" / "St. John's"
-    joined_key = _name_key("".join(city_name.split(",")[0].split()[:2]))
 
-    for k in (key, joined_key):
-        if k in _CENTER_OVERRIDES:
+    # Try every word and every cumulative prefix of the first comma chunk:
+    # "Halifax Regional Municipality, NS" → ["halifax", "halifaxregional",
+    # "halifaxregionalmunicipality", "regional", ...]
+    first_chunk = city_name.split(",")[0].strip()
+    words = first_chunk.split()
+    candidates: list[str] = []
+    for i in range(len(words)):
+        # individual word
+        candidates.append(_name_key(words[i]))
+        # cumulative prefix of words[0..i+1]
+        candidates.append(_name_key("".join(words[: i + 1])))
+
+    for k in candidates:
+        if k and k in _CENTER_OVERRIDES:
             d_lat, d_lng = _CENTER_OVERRIDES[k]
+            log.info(
+                f"Composition override matched '{k}' for '{city_name}': "
+                f"lat{d_lat:+.4f}, lng{d_lng:+.4f}"
+            )
             return lat + d_lat, lng + d_lng
+
+    log.info(f"Composition: no override for '{city_name}' (tried {candidates[:4]})")
     return lat, lng
 
 
@@ -320,10 +333,20 @@ def render_map_image(
             minor_mult, major_mult = 10, 15
             minor_min, major_min = 4, 8
             min_residential_px = 95
-        else:
+        elif bbox_area > 0.01:
+            # Halifax-sized downtown: still aggressively drop micro streets
+            minor_mult, major_mult = 11, 16
+            minor_min, major_min = 4, 9
+            min_residential_px = 75
+        elif bbox_area > 0.002:
             minor_mult, major_mult = 12, 18
             minor_min, major_min = 4, 10
-            min_residential_px = 0  # tiny zoom = keep everything
+            min_residential_px = 50
+        else:
+            # Truly tiny viewport (single neighbourhood) — keep everything
+            minor_mult, major_mult = 13, 19
+            minor_min, major_min = 5, 11
+            min_residential_px = 0
 
         # Minor roads first (drawn below major) — heavily filtered
         kept_minor = 0
