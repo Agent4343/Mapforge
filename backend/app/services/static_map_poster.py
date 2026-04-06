@@ -166,6 +166,54 @@ def _polyline_pixel_length(px_coords: list[tuple[float, float]]) -> float:
     return total
 
 
+# ── Composition centering ────────────────────────────────────────────
+#
+# The geocoded point is geographically correct but not always the
+# best *visual* center for wall art. For coastal cities the true
+# point can sit too far over the harbour, leaving the opposite shore
+# dominating the frame. These overrides shift the map center toward
+# the city's main land mass — the pin still draws at the true location.
+#
+# lat/lng offsets are in degrees.
+_CENTER_OVERRIDES: dict[str, tuple[float, float]] = {
+    # name-key  : (lat_offset, lng_offset)
+    "halifax":   (0.000, -0.018),
+    "vancouver": (0.000, -0.012),
+    "stjohns":   (0.003, -0.010),
+    "victoria":  (0.000, -0.010),
+    "sydney":    (0.000, -0.012),
+    "saintjohn": (0.000, -0.010),
+    "charlottetown": (0.000, -0.008),
+}
+
+
+def _name_key(s: str) -> str:
+    return "".join(c for c in s.lower() if c.isalpha())
+
+
+def _adjust_center_for_composition(
+    city_name: str, lat: float, lng: float,
+) -> tuple[float, float]:
+    """Return a slightly shifted (lat, lng) for better visual framing.
+
+    The pin is still drawn at the true (lat, lng); only the map viewport
+    moves. Falls back to the original coordinates when no override exists.
+    """
+    if not city_name:
+        return lat, lng
+    # Match the leading word — handles "Halifax, NS" / "Halifax Regional..."
+    first_word = city_name.split(",")[0].split()[0] if city_name.strip() else ""
+    key = _name_key(first_word)
+    # Also try first two tokens joined for "Saint John" / "St. John's"
+    joined_key = _name_key("".join(city_name.split(",")[0].split()[:2]))
+
+    for k in (key, joined_key):
+        if k in _CENTER_OVERRIDES:
+            d_lat, d_lng = _CENTER_OVERRIDES[k]
+            return lat + d_lat, lng + d_lng
+    return lat, lng
+
+
 # ── Road rendering ───────────────────────────────────────────────────
 
 def render_map_image(
@@ -176,10 +224,16 @@ def render_map_image(
     theme: dict,
     img_w: int = MAP_RENDER_W,
     img_h: int = MAP_RENDER_H,
-) -> Image.Image:
+    pin_lat: float | None = None,
+    pin_lng: float | None = None,
+) -> tuple[Image.Image, tuple[float, float]]:
     """Render road geometry directly onto a PIL Image.
 
     No tiles, no labels, no railways — just clean road lines and water.
+
+    Returns (image, pin_px) where pin_px is the pixel location of
+    (pin_lat, pin_lng) inside the rendered image. When pin coords aren't
+    given, defaults to the geographic center of the viewport.
     """
     bg_color = theme.get("map_bg", (255, 255, 255))
     img = Image.new("RGB", (img_w, img_h), bg_color)
@@ -318,7 +372,13 @@ def render_map_image(
             f"({dropped_minor} dropped), threshold={min_residential_px}px"
         )
 
-    return img
+    # Compute pin pixel in the rendered image
+    if pin_lat is not None and pin_lng is not None:
+        pin_px = to_px(pin_lng, pin_lat)
+    else:
+        pin_px = (img_w / 2, img_h / 2)
+
+    return img, pin_px
 
 
 # ── Text helpers ──────────────────────────────────────────────────────
@@ -379,6 +439,7 @@ def compose_poster(
     board_size: str = "18x24",
     show_coordinates: bool = True,
     color_theme: str = "city_art",
+    pin_image_px: tuple[float, float] | None = None,
 ) -> bytes:
     """Compose a print-ready poster from rendered map image + text."""
     theme = POSTER_THEMES.get(color_theme, POSTER_THEMES["city_art"])
@@ -398,6 +459,10 @@ def compose_poster(
     # Map background
     draw.rectangle([map_x, map_y, map_x + map_w, map_y + map_h], fill=theme["map_bg"])
 
+    # Defaults if scaling fails or no pin coords given
+    pin_cx = map_x + map_w // 2
+    pin_cy = map_y + map_h // 2
+
     # Scale and place map image
     try:
         img_ratio = map_img.width / map_img.height
@@ -412,12 +477,22 @@ def compose_poster(
         crop_top = (new_h - map_h) // 2
         cropped = scaled.crop((crop_left, crop_top, crop_left + map_w, crop_top + map_h))
         poster.paste(cropped, (map_x, map_y))
+
+        # Project pin pixel from map_img coords → poster coords
+        if pin_image_px is not None:
+            scale_factor = new_w / map_img.width
+            sx = pin_image_px[0] * scale_factor - crop_left
+            sy = pin_image_px[1] * scale_factor - crop_top
+            # Only use if pin lands inside the visible map area
+            if 0 <= sx <= map_w and 0 <= sy <= map_h:
+                pin_cx = int(map_x + sx)
+                pin_cy = int(map_y + sy)
+            else:
+                log.info(f"Pin px {pin_image_px} fell outside crop, using center")
     except Exception as e:
         log.warning(f"Map image placement failed: {e}")
 
     # ── Location pin — refined: white halo + thin ring + small dot ──
-    pin_cx = map_x + map_w // 2
-    pin_cy = map_y + map_h // 2
     pin_r = int(min(map_w, map_h) * 0.011)
     pin_color = theme["title"]
     halo_color = theme["map_bg"]
@@ -534,25 +609,40 @@ def generate_road_poster(
         log.warning("Zero roads in streets data")
         return None
 
+    # True pin location is the geocoded coordinate. Map viewport may be
+    # shifted slightly for visual balance (coastal cities, etc).
+    pin_lat, pin_lng = center_lat, center_lng
+    adj_lat, adj_lng = _adjust_center_for_composition(
+        city_name, center_lat, center_lng,
+    )
+    if (adj_lat, adj_lng) != (pin_lat, pin_lng):
+        log.info(
+            f"Composition shift for '{city_name}': "
+            f"({pin_lat:.4f},{pin_lng:.4f}) -> ({adj_lat:.4f},{adj_lng:.4f})"
+        )
+
     # Render roads directly to image
-    map_img = render_map_image(
+    map_img, pin_image_px = render_map_image(
         streets_data=streets_data,
         water_data=water_data,
-        center_lat=center_lat,
-        center_lng=center_lng,
+        center_lat=adj_lat,
+        center_lng=adj_lng,
         bbox_area=bbox_area,
         theme=theme,
+        pin_lat=pin_lat,
+        pin_lng=pin_lng,
     )
 
-    # Compose into poster
+    # Compose into poster — pin draws at true location, not center
     poster_bytes = compose_poster(
         map_img=map_img,
         city_name=city_name,
-        lat=center_lat, lng=center_lng,
+        lat=pin_lat, lng=pin_lng,
         subtitle=subtitle,
         board_size=board_size,
         show_coordinates=show_coordinates,
         color_theme=color_theme,
+        pin_image_px=pin_image_px,
     )
     log.info(f"Road poster: {len(poster_bytes)} bytes, {road_count} roads")
     return poster_bytes
