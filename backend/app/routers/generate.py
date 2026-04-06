@@ -30,7 +30,6 @@ from app.services.geometry_processor import process_geometry, transform_wgs84_to
 from app.services.svg_generator import generate_svg
 from app.services.street_fetcher import fetch_streets
 from app.services.maptiler_fetcher import fetch_streets_maptiler
-from app.services.static_map_poster import generate_static_map_poster
 from app.services.maptiler_poster import generate_maptiler_poster_svg
 from app.services.water_fetcher import fetch_water_features
 from app.services.contour_fetcher import fetch_contour_lines, generate_depth_bands
@@ -480,39 +479,38 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     location_name = req.text or f"Location {req.osm_id}"
     board_w, board_h = processed["board_mm"]
 
-    # For city_art maps: generate PNG directly using MapTiler static map (no SVG)
+    # For city_art maps: generate PNG poster directly from road geometry (no tiles)
     preview_image = None
     from app.services.static_map_poster import POSTER_THEMES
     is_city_art = req.color_theme in POSTER_THEMES or req.color_theme in ("city_map_art", "cityart")
     is_city_type = req.product_type.value in ("city", "community")
-    from app.services.app_settings import get_maptiler_key
-    maptiler_key = await get_maptiler_key(db)
-    log.info(f"MapTiler check: key={'YES' if maptiler_key else 'NO'}, city_art={is_city_art}, city_type={is_city_type}, theme={req.color_theme}, product={req.product_type.value}")
-    if maptiler_key and is_city_art and is_city_type:
+    log.info(f"Poster check: city_art={is_city_art}, city_type={is_city_type}, theme={req.color_theme}, roads={bool(streets_data)}")
+    if is_city_art and is_city_type and streets_data:
         center = processed.get("center_latlon")
         if center and center[0] is not None:
             lat_span = bounds[3] - bounds[1] if bounds else 0
             lon_span = bounds[2] - bounds[0] if bounds else 0
             try:
                 import base64
-                poster_bytes = await generate_static_map_poster(
-                    lat=center[0],
-                    lng=center[1],
+                from app.services.static_map_poster import generate_road_poster
+                poster_bytes = generate_road_poster(
+                    streets_data=streets_data,
+                    water_data=water_data,
+                    center_lat=center[0],
+                    center_lng=center[1],
+                    bbox_area=lat_span * lon_span,
                     city_name=location_name,
                     subtitle=req.subtitle or "",
                     board_size=req.board_size.value,
                     show_coordinates=req.show_coordinates,
-                    product_type=req.product_type.value,
-                    bbox_area=lat_span * lon_span,
-                    api_key=maptiler_key,
                     color_theme=req.color_theme,
                 )
                 if poster_bytes:
                     b64 = base64.b64encode(poster_bytes).decode("ascii")
                     preview_image = f"data:image/png;base64,{b64}"
-                    log.info(f"MapTiler PNG poster generated: {len(poster_bytes)} bytes, theme={req.color_theme}")
+                    log.info(f"Road poster generated: {len(poster_bytes)} bytes, theme={req.color_theme}")
             except Exception as e:
-                log.warning(f"MapTiler PNG poster failed, falling back to SVG: {e}")
+                log.warning(f"Road poster failed, falling back to SVG: {e}", exc_info=True)
 
     # Generate SVG (used as fallback or for non-city_art maps)
     result = generate_svg(
@@ -625,33 +623,34 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         except Exception as e:
             log.warning(f"Thumbnail generation failed (non-fatal): {e}")
 
-        # Generate high-res print PNG — prefer MapTiler static map for city maps
+        # Generate high-res print PNG — use road poster for city maps
         static_poster_bytes = None
-        if (maptiler_key and is_city_art and is_city_type):
+        if is_city_art and is_city_type and streets_data:
             center = processed.get("center_latlon", (None, None))
             if center and center[0] is not None:
                 lat_span = bounds[3] - bounds[1] if bounds else 0
                 lon_span = bounds[2] - bounds[0] if bounds else 0
                 try:
-                    static_poster_bytes = await generate_static_map_poster(
-                        lat=center[0],
-                        lng=center[1],
+                    from app.services.static_map_poster import generate_road_poster
+                    static_poster_bytes = generate_road_poster(
+                        streets_data=streets_data,
+                        water_data=water_data,
+                        center_lat=center[0],
+                        center_lng=center[1],
+                        bbox_area=lat_span * lon_span,
                         city_name=location_name,
                         subtitle=req.subtitle or "",
                         board_size=req.board_size.value,
                         show_coordinates=req.show_coordinates,
-                        product_type=req.product_type.value,
-                        bbox_area=lat_span * lon_span,
-                        api_key=maptiler_key,
                         color_theme=req.color_theme,
                     )
                 except Exception as e:
-                    log.warning(f"Static map poster failed (non-fatal): {e}")
+                    log.warning(f"Road poster for print failed (non-fatal): {e}")
 
         if static_poster_bytes:
             print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
             await store_file(print_png_key, static_poster_bytes, content_type="image/png")
-            log.info(f"Print PNG from MapTiler static map: {len(static_poster_bytes)} bytes")
+            log.info(f"Print PNG from road poster: {len(static_poster_bytes)} bytes")
         else:
             try:
                 print_bytes = generate_print_image(
