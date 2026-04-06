@@ -177,13 +177,20 @@ def _polyline_pixel_length(px_coords: list[tuple[float, float]]) -> float:
 # lat/lng offsets are in degrees.
 _CENTER_OVERRIDES: dict[str, tuple[float, float]] = {
     # name-key  : (lat_offset, lng_offset)
-    "halifax":   (0.000, -0.018),
+    "halifax":   (0.000, -0.008),
     "vancouver": (0.000, -0.012),
     "stjohns":   (0.003, -0.010),
     "victoria":  (0.000, -0.010),
     "sydney":    (0.000, -0.012),
     "saintjohn": (0.000, -0.010),
     "charlottetown": (0.000, -0.008),
+}
+
+# Per-city viewport width override (meters). Lets us frame "city portrait"
+# cuts that focus on the main peninsula / downtown rather than the wider
+# municipality. None / missing = use the bbox_area heuristic.
+_VIEWPORT_OVERRIDES: dict[str, int] = {
+    "halifax": 12_000,    # Halifax peninsula portrait
 }
 
 
@@ -227,6 +234,22 @@ def _adjust_center_for_composition(
     return lat, lng
 
 
+def _viewport_override_for(city_name: str) -> int | None:
+    """Return a per-city viewport width in meters, or None for default."""
+    if not city_name:
+        return None
+    first_chunk = city_name.split(",")[0].strip()
+    words = first_chunk.split()
+    candidates: list[str] = []
+    for i in range(len(words)):
+        candidates.append(_name_key(words[i]))
+        candidates.append(_name_key("".join(words[: i + 1])))
+    for k in candidates:
+        if k and k in _VIEWPORT_OVERRIDES:
+            return _VIEWPORT_OVERRIDES[k]
+    return None
+
+
 # ── Road rendering ───────────────────────────────────────────────────
 
 def render_map_image(
@@ -239,6 +262,7 @@ def render_map_image(
     img_h: int = MAP_RENDER_H,
     pin_lat: float | None = None,
     pin_lng: float | None = None,
+    viewport_meters: int | None = None,
 ) -> tuple[Image.Image, tuple[float, float]]:
     """Render road geometry directly onto a PIL Image.
 
@@ -268,6 +292,11 @@ def render_map_image(
         meters_wide = 10_000
     else:
         meters_wide = 15_000
+
+    # Per-city viewport override (e.g. Halifax peninsula portrait)
+    if viewport_meters and viewport_meters > 0:
+        log.info(f"Viewport override: {meters_wide}m -> {viewport_meters}m")
+        meters_wide = viewport_meters
 
     meters_high = meters_wide * img_h / img_w
 
@@ -644,6 +673,9 @@ def generate_road_poster(
             f"({pin_lat:.4f},{pin_lng:.4f}) -> ({adj_lat:.4f},{adj_lng:.4f})"
         )
 
+    # Per-city viewport override (e.g. Halifax peninsula portrait)
+    viewport_meters = _viewport_override_for(city_name)
+
     # Render roads directly to image
     map_img, pin_image_px = render_map_image(
         streets_data=streets_data,
@@ -654,6 +686,7 @@ def generate_road_poster(
         theme=theme,
         pin_lat=pin_lat,
         pin_lng=pin_lng,
+        viewport_meters=viewport_meters,
     )
 
     # Compose into poster — pin draws at true location, not center
