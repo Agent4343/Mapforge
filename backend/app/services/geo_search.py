@@ -1,6 +1,7 @@
 """Geographic search service using OpenStreetMap Nominatim API with caching."""
 
 import asyncio
+import re
 import time
 
 import httpx
@@ -18,6 +19,57 @@ NOMINATIM_HEADERS = {"User-Agent": "MapForgeCNC/1.0 (mapforge-cnc-app)"}
 # Use a lock + timestamp to enforce this across concurrent requests.
 _nominatim_lock = asyncio.Lock()
 _nominatim_last_request: float = 0.0
+
+# Validation thresholds
+MIN_IMPORTANCE = 0.30   # Nominatim's confidence equivalent (0–1)
+MAX_LAT = 85.0          # Web Mercator practical limit
+MIN_LAT = -85.0
+
+
+# ── Result validation ────────────────────────────────────────────────
+
+_TOKEN_RE = re.compile(r"[a-zA-Z\u00c0-\u017f]+")
+
+
+def _tokenize(s: str) -> set[str]:
+    return {t.lower() for t in _TOKEN_RE.findall(s) if len(t) >= 2}
+
+
+def _validate_result(item: dict, query: str) -> tuple[bool, str]:
+    """Verify a Nominatim hit actually matches the user's query.
+
+    Returns (ok, reason). Bad results are filtered out before reaching
+    the user so they never end up generating a poster of the wrong place.
+    """
+    # 1. Coordinates present and sane
+    try:
+        lat = float(item.get("lat", 0))
+        lon = float(item.get("lon", 0))
+    except (TypeError, ValueError):
+        return False, "invalid coordinates"
+    if lat == 0 and lon == 0:
+        return False, "null island"
+    if not (MIN_LAT <= lat <= MAX_LAT) or not (-180 <= lon <= 180):
+        return False, f"out-of-range coords ({lat},{lon})"
+
+    # 2. Bounding box present (needed for sane scale)
+    bbox = item.get("boundingbox") or []
+    if len(bbox) != 4:
+        return False, "missing bounding box"
+
+    # 3. Confidence (Nominatim's `importance` ≈ relevance)
+    importance = float(item.get("importance", 0) or 0)
+    if importance < MIN_IMPORTANCE:
+        return False, f"low importance {importance:.2f}"
+
+    # 4. Name match: at least one query token must appear in display_name
+    display_name = item.get("display_name", "") or ""
+    query_tokens = _tokenize(query)
+    name_tokens = _tokenize(display_name)
+    if query_tokens and not (query_tokens & name_tokens):
+        return False, f"name mismatch: '{query}' not in '{display_name[:60]}'"
+
+    return True, ""
 
 
 async def search_location(query: str, country: str = "ca", limit: int = 10) -> list[SearchResult]:
@@ -61,7 +113,14 @@ async def search_location(query: str, country: str = "ca", limit: int = 10) -> l
         )
 
     results = []
+    rejected = 0
     for item in data:
+        ok, reason = _validate_result(item, query)
+        if not ok:
+            rejected += 1
+            log.info(f"Search reject: {reason} (q='{query}')")
+            continue
+
         osm_type = item.get("osm_type", "node")
         feature_type = _classify_feature(item)
         has_geometry = "geojson" in item and item["geojson"]["type"] in (
@@ -78,6 +137,9 @@ async def search_location(query: str, country: str = "ca", limit: int = 10) -> l
             boundingbox=[float(b) for b in item.get("boundingbox", [])],
             has_geometry=has_geometry,
         ))
+
+    if rejected:
+        log.info(f"Search '{query}': {len(results)} kept, {rejected} rejected")
 
     # Cache results
     await cache_set(cache_key, [r.model_dump() for r in results], ttl=settings.CACHE_TTL_SEARCH)
