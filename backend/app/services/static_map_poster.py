@@ -204,7 +204,7 @@ async def _fetch_nolabel_tiles(
 def _stylize_map(map_img: Image.Image, theme: dict) -> Image.Image:
     """Style the label-free map for Etsy-quality art.
 
-    Since tiles have NO labels, we just need: grayscale → contrast → water color.
+    Pipeline: grayscale → kill grey regions → thicken roads → contrast → water.
     """
     img_arr = np.array(map_img.convert("RGB"), dtype=np.float32)
     r, g, b = img_arr[:, :, 0], img_arr[:, :, 1], img_arr[:, :, 2]
@@ -215,17 +215,25 @@ def _stylize_map(map_img: Image.Image, theme: dict) -> Image.Image:
     # Convert to grayscale
     gray = 0.299 * r + 0.587 * g + 0.114 * b
 
+    # ── Kill grey regions (parks, land use, dotted boundaries) ──
+    # Anything lighter than dark road lines → pure white
+    # Roads are typically 100-200, grey patches/boundaries are 210-240
+    gray[gray > 210] = 255
+
     gray = np.clip(gray, 0, 255).astype(np.uint8)
     result = Image.fromarray(gray)
 
-    # Auto-contrast: stretch full dynamic range for crisp roads
+    # ── Thicken roads: MinFilter expands dark (road) pixels ──
+    result = result.filter(ImageFilter.MinFilter(size=3))
+
+    # Auto-contrast: stretch full dynamic range
     result = ImageOps.autocontrast(result, cutoff=1)
 
-    # Boost contrast a bit more for bold roads
+    # Bold contrast for crisp roads on clean white
     enhancer = ImageEnhance.Contrast(result)
-    result = enhancer.enhance(1.6)
+    result = enhancer.enhance(1.8)
 
-    # Sharpen for crisp road edges
+    # Sharpen for crisp edges
     result = result.filter(ImageFilter.SHARPEN)
 
     # Dark mode
@@ -261,25 +269,25 @@ def _choose_zoom(product_type: str, bbox_area: float = 0) -> int:
     Zoomed in slightly (+1) vs geographic zoom for tighter framing.
     """
     if bbox_area > 2.0:
-        return 9   # Large island/region
+        return 10  # Large island/region
     elif bbox_area > 0.5:
-        return 10
-    elif bbox_area > 0.1:
         return 11
-    elif bbox_area > 0.03:
-        return 12  # Large city
-    elif bbox_area > 0.005:
-        return 13  # Medium city
-    elif bbox_area > 0.001:
-        return 14  # Small city / town
-    elif product_type == "province":
-        return 9
-    elif product_type == "community":
+    elif bbox_area > 0.1:
         return 12
+    elif bbox_area > 0.03:
+        return 13  # Large city
+    elif bbox_area > 0.005:
+        return 14  # Medium city
+    elif bbox_area > 0.001:
+        return 15  # Small city / town
+    elif product_type == "province":
+        return 10
+    elif product_type == "community":
+        return 13
     elif product_type == "city":
-        return 13
+        return 14
     else:
-        return 13
+        return 14
 
 
 # ── Text helpers ──────────────────────────────────────────────────────
@@ -422,22 +430,22 @@ def compose_poster(
     except Exception as e:
         log.warning(f"Map image processing failed: {e}")
 
-    # ── Location pin at map center ──
+    # ── Location pin — minimal crosshair ring ──
     pin_cx = map_x + map_w // 2
     pin_cy = map_y + map_h // 2
-    pin_r = int(min(map_w, map_h) * 0.012)  # small circle
-    pin_color = theme["title"]  # matches title for coherence
-    # Outer circle (pin body)
+    pin_r = int(min(map_w, map_h) * 0.010)
+    pin_color = theme["title"]
+    stroke = max(pin_r // 5, 2)
+    # Thin ring (outline only, no fill)
     draw.ellipse(
         [pin_cx - pin_r, pin_cy - pin_r, pin_cx + pin_r, pin_cy + pin_r],
-        fill=pin_color,
+        outline=pin_color, width=stroke,
     )
-    # Inner dot (white center)
-    inner_r = max(pin_r // 3, 2)
-    inner_color = theme["map_bg"]
+    # Small center dot
+    dot_r = max(stroke, 2)
     draw.ellipse(
-        [pin_cx - inner_r, pin_cy - inner_r, pin_cx + inner_r, pin_cy + inner_r],
-        fill=inner_color,
+        [pin_cx - dot_r, pin_cy - dot_r, pin_cx + dot_r, pin_cy + dot_r],
+        fill=pin_color,
     )
 
     # ── Decorative line separator ──
