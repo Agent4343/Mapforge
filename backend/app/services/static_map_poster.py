@@ -38,8 +38,8 @@ POSTER_THEMES = {
         "bg": (245, 245, 245), "map_bg": (255, 255, 255),
         "title": (25, 25, 25), "subtitle": (100, 100, 100),
         "border": (200, 200, 200), "line": (180, 180, 180),
-        "road_major": (30, 30, 30), "road_minor": (90, 90, 90),
-        "map_mode": "light", "water": (232, 232, 232),
+        "road_major": (15, 15, 15), "road_minor": (55, 55, 55),
+        "map_mode": "light", "water": (225, 232, 240),
     },
     "classic": {
         "bg": (250, 248, 244), "map_bg": (252, 250, 246),
@@ -223,14 +223,35 @@ def render_map_image(
         minor_color = theme.get("road_minor", (90, 90, 90))
         major_color = theme.get("road_major", (30, 30, 30))
 
+        # Scale line widths to viewport: smaller area = bolder roads
+        if bbox_area > 2.0:
+            minor_mult, major_mult = 5, 8
+            minor_min, major_min = 3, 5
+        elif bbox_area > 0.5:
+            minor_mult, major_mult = 6, 10
+            minor_min, major_min = 3, 6
+        elif bbox_area > 0.1:
+            minor_mult, major_mult = 8, 12
+            minor_min, major_min = 4, 7
+        elif bbox_area > 0.03:
+            minor_mult, major_mult = 10, 15
+            minor_min, major_min = 4, 8
+        else:
+            minor_mult, major_mult = 12, 18
+            minor_min, major_min = 5, 10
+
         # Minor roads first (drawn below major)
         for coords, rclass, width_mm, name in streets_data.get("minor_roads", []):
             if len(coords) < 2:
                 continue
             px_coords = [to_px(lon, lat) for lon, lat in coords]
-            line_w = max(1, int(width_mm * 3))
+            line_w = max(minor_min, int(width_mm * minor_mult))
             try:
-                draw.line(px_coords, fill=minor_color, width=line_w)
+                draw.line(px_coords, fill=minor_color, width=line_w, joint="curve")
+                # Round endpoints
+                r = line_w // 2
+                for px, py in (px_coords[0], px_coords[-1]):
+                    draw.ellipse([px - r, py - r, px + r, py + r], fill=minor_color)
             except Exception:
                 pass
 
@@ -239,16 +260,14 @@ def render_map_image(
             if len(coords) < 2:
                 continue
             px_coords = [to_px(lon, lat) for lon, lat in coords]
-            line_w = max(2, int(width_mm * 4))
+            line_w = max(major_min, int(width_mm * major_mult))
             try:
-                draw.line(px_coords, fill=major_color, width=line_w)
+                draw.line(px_coords, fill=major_color, width=line_w, joint="curve")
+                r = line_w // 2
+                for px, py in (px_coords[0], px_coords[-1]):
+                    draw.ellipse([px - r, py - r, px + r, py + r], fill=major_color)
             except Exception:
                 pass
-
-    # Light anti-alias smoothing
-    img = img.filter(ImageFilter.SMOOTH_MORE)
-    # Re-sharpen edges
-    img = img.filter(ImageFilter.SHARPEN)
 
     return img
 
