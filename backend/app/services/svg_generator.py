@@ -688,6 +688,34 @@ def _generate_print_svg(
             remapped_polygons.append((new_ext, new_holes))
         polygons = remapped_polygons
 
+        # For province posters: drop tiny island fragments that read as
+        # visual noise on a poster. Keep the largest landmass plus any
+        # island that's at least 2% of its area (preserves Cape Breton,
+        # PEI, Vancouver Island, etc., while removing rock specks).
+        if product_type == "province" and len(polygons) > 1:
+            def _ring_area(ring):
+                n = len(ring)
+                if n < 3:
+                    return 0.0
+                a = 0.0
+                for i in range(n):
+                    x1, y1 = ring[i]
+                    x2, y2 = ring[(i + 1) % n]
+                    a += x1 * y2 - x2 * y1
+                return abs(a) * 0.5
+
+            poly_areas = [(_ring_area(ext), ext, holes) for ext, holes in polygons]
+            largest = max(a for a, _, _ in poly_areas)
+            min_keep = largest * 0.02
+            kept = [(ext, holes) for a, ext, holes in poly_areas if a >= min_keep]
+            dropped = len(polygons) - len(kept)
+            if dropped:
+                log.info(
+                    f"Province '{location_name}': dropped {dropped} tiny "
+                    f"island fragments (kept {len(kept)})"
+                )
+            polygons = kept
+
         # Update the transform params so streets/water also get remapped
         # to poster-map space instead of full-board space
         orig_transform = processed.get("transform", {})
@@ -773,20 +801,20 @@ def _generate_print_svg(
         else:
             city_sellable_mode = _total_roads >= 200
 
-    # For city_art provinces: override theme to inverted colors
-    # (dark land, white roads/water on white background)
+    # For city_art provinces: clean Etsy-quality silhouette.
+    # One flat tone for land, white background, no water/road textures.
+    # The province shape is the entire visual.
     if is_city_art_province:
         theme = dict(theme)  # avoid mutating original
-        # Tonal province rendering: medium-shade land, lighter water/roads
-        # Water and roads create subtle texture as lighter areas within the land
         theme["mat"] = "#FFFFFF"
         theme["map_bg"] = "#FFFFFF"
-        theme["land"] = "#888888"
-        theme["land_stroke"] = "#888888"
-        theme["water"] = "#C0C0C0"
-        theme["water_stroke"] = "#C0C0C0"
-        theme["street_major"] = "#A8A8A8"
-        theme["street_minor"] = "#B0B0B0"
+        theme["land"] = "#757575"
+        theme["land_stroke"] = "#757575"
+        # Match background so water/road overlays vanish into the canvas
+        theme["water"] = "#FFFFFF"
+        theme["water_stroke"] = "#FFFFFF"
+        theme["street_major"] = "#FFFFFF"
+        theme["street_minor"] = "#FFFFFF"
 
     # Layer: map area background
     # For provinces/lakes, use water color as background (ocean visible).
@@ -941,9 +969,10 @@ def _generate_print_svg(
     # Water features — filled with water color (optional gradient)
     # For dense city_art cities: subtle flat fill, no strokes — water as quiet backdrop
     # For sparse communities/provinces: full water rendering with strokes
-    if water_data:
+    # For city_art provinces: skip entirely — the silhouette is the visual.
+    if water_data and not is_city_art_province:
         is_dense_city_art = is_city_art and city_sellable_mode
-        use_gradient = gradient_water and not is_city_art_province and not is_dense_city_art
+        use_gradient = gradient_water and not is_dense_city_art
         minimal_water = is_dense_city_art
         _render_print_water(lines, water_data, processed, theme,
                             gradient=use_gradient, minimal=minimal_water)
@@ -953,7 +982,9 @@ def _generate_print_svg(
         _render_contour_bands(lines, contour_data, processed)
 
     # Streets
-    if streets_data:
+    # Province posters in city_art mode: skip streets entirely for a
+    # clean Etsy silhouette (one flat tone, no internal texture).
+    if streets_data and not is_city_art_province:
         if is_city_art:
             _render_city_art_streets(lines, streets_data, processed,
                                     province_mode=is_city_art_province)
@@ -971,6 +1002,47 @@ def _generate_print_svg(
                 round((y - geo_min_y) * poster_scale + remap_offset_y, 2),
             )
         return (x, y)
+
+    # Capital city dot for province posters — small premium identity mark.
+    # Uses the post-remap "transform" so the lat/lon lands inside the
+    # current poster map area.
+    if product_type == "province" and is_city_art_province:
+        capital_ll = _province_capital_latlon(location_name)
+        cur_transform = processed.get("transform", {})
+        if capital_ll and cur_transform:
+            try:
+                from app.services.geometry_processor import (
+                    transform_wgs84_to_board,
+                )
+                cap_lat, cap_lon = capital_ll
+                cap_pts = transform_wgs84_to_board(
+                    [(cap_lon, cap_lat)], cur_transform,
+                )
+                if cap_pts:
+                    cap_x, cap_y = cap_pts[0]
+                    if (map_x <= cap_x <= map_x + map_w
+                            and map_y <= cap_y <= map_y + map_h):
+                        dot_r = round(min(map_w, map_h) * 0.006, 2)
+                        ring_r = round(dot_r * 2.4, 2)
+                        lines.append('  <g id="capital_marker">')
+                        # Faint white halo so dot is legible against the
+                        # mid-grey land tone
+                        lines.append(
+                            f'    <circle cx="{cap_x}" cy="{cap_y}"'
+                            f' r="{ring_r}" fill="#FFFFFF" opacity="0.55"/>'
+                        )
+                        lines.append(
+                            f'    <circle cx="{cap_x}" cy="{cap_y}"'
+                            f' r="{dot_r}" fill="#1A1A1A"/>'
+                        )
+                        lines.append("  </g>")
+                        layer_count += 1
+                        log.info(
+                            f"Province '{location_name}': capital dot at "
+                            f"({cap_x},{cap_y})"
+                        )
+            except Exception as e:
+                log.warning(f"Capital dot render failed: {e}")
 
     if pin_location:
         pin_remapped = _remap_point(*pin_location)
