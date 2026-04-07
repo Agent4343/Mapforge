@@ -2555,10 +2555,30 @@ def _render_city_art_streets(lines: list[str], streets_data: dict, processed: di
         "secondary": 3, "secondary_link": 3, "tertiary": 3, "tertiary_link": 3,
     }
 
+    # Connectivity index for orphan-stub filtering: count how many road
+    # vertices share each rounded (lon, lat) position. Minor roads with
+    # at least one dangling endpoint (count == 1) are stubs that go
+    # nowhere on the poster — drop them.
+    from collections import defaultdict
+    vertex_count: dict[tuple[int, int], int] = defaultdict(int)
+    def _vk(lon: float, lat: float) -> tuple[int, int]:
+        return (round(lon * 1e5), round(lat * 1e5))
+    for _list_key in ("minor_roads", "major_roads"):
+        for _coords, _rc, _w, _n in streets_data.get(_list_key, []):
+            for _lon, _lat in _coords:
+                vertex_count[_vk(_lon, _lat)] += 1
+
+    minor_residential = {"residential", "unclassified", "living_street", "service"}
     for road_list_key in ("minor_roads", "major_roads"):
+        is_minor_list = road_list_key == "minor_roads"
         for coords, road_class, _width, name in streets_data.get(road_list_key, []):
             if len(coords) < 2:
                 continue
+            if is_minor_list and road_class in minor_residential:
+                start_deg = vertex_count.get(_vk(coords[0][0], coords[0][1]), 0)
+                end_deg = vertex_count.get(_vk(coords[-1][0], coords[-1][1]), 0)
+                if start_deg <= 1 or end_deg <= 1:
+                    continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
             path_d = _coords_to_open_path(board_coords)
             sw, color = city_art_styles.get(road_class, (0.15, "#BBBBBB"))
