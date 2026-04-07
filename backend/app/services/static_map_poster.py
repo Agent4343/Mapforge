@@ -461,12 +461,12 @@ def render_map_image(
             ranked.sort(key=lambda r: -r[0])
             largest = ranked[0][0]
             # Keep the largest unconditionally; for the rest, accept only
-            # those at least 6% the size of the largest *and* at least
-            # 0.15% of the canvas. Tightened from 2%/0.05% to drop ~50%
-            # more scattered lakes / ponds so the dominant coastline is
-            # the unmistakable anchor.
-            min_relative = largest * 0.06
-            min_absolute = canvas_area * 0.0015
+            # those at least 12% the size of the largest *and* at least
+            # 0.4% of the canvas. Tightened further (was 6%/0.15%) so
+            # scattered ponds disappear and the dominant coastline /
+            # harbour is the sole visual anchor.
+            min_relative = largest * 0.12
+            min_absolute = canvas_area * 0.004
             kept = 0
             for area, px_coords in ranked:
                 if area < min_relative or area < min_absolute:
