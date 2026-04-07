@@ -285,6 +285,26 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         street_osm_type = None
         log.info(f"Street map: expanded bbox by {int(expand_pct*100)}% (area {lat_span * lon_span:.4f} deg²)")
 
+    # Water fetch bbox: for street-product cities, use a more aggressive
+    # expansion than streets so coastal/harbour features outside the tight
+    # admin polygon get captured. Sydney NS, Halifax, Vancouver, etc. all
+    # have their defining water bodies extending well beyond the city limits.
+    water_bbox = bbox
+    if is_street_product:
+        lat_span = bounds[3] - bounds[1]
+        lon_span = bounds[2] - bounds[0]
+        # ~2x the street expansion — coastlines need wider context
+        water_expand_pct = 1.0 if lat_span * lon_span < 0.005 else 0.6
+        water_expand_lat = lat_span * water_expand_pct
+        water_expand_lon = lon_span * water_expand_pct
+        water_bbox = (
+            bounds[1] - water_expand_lat,
+            bounds[0] - water_expand_lon,
+            bounds[3] + water_expand_lat,
+            bounds[2] + water_expand_lon,
+        )
+        log.info(f"Water fetch bbox expanded by {int(water_expand_pct*100)}%")
+
     # Size thresholds for street fetching:
     #   Cities (<1 deg²): full streets with all road types
     #   Small provinces (1-30 deg²): full streets — PEI, Nova Scotia, New Brunswick
@@ -346,11 +366,11 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         return None
 
     async def _get_water():
-        cache_key = _bbox_cache_key("water", bbox)
+        cache_key = _bbox_cache_key("water", water_bbox)
         if cache_key in _overpass_cache:
             log.info("Using cached water data")
             return _overpass_cache[cache_key]
-        result = await fetch_water_features(bbox=bbox)
+        result = await fetch_water_features(bbox=water_bbox)
         has_data = result and (result.get("water_polygons") or result.get("waterways"))
         if has_data:
             _cache_overpass(cache_key, result)
