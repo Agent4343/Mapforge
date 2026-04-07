@@ -529,9 +529,27 @@ def render_map_image(
             minor_min, major_min = 5, 12
             min_residential_px = 40
 
+        # Connectivity index: count how many road vertices share each
+        # rounded (lon, lat) position. A residential whose endpoint has
+        # count == 1 (only its own vertex there) is a dangling stub —
+        # its connecting road was either filtered out or genuinely
+        # missing in OSM. We drop those so the poster doesn't show
+        # short streets ending in empty white space.
+        from collections import defaultdict
+        vertex_count: dict[tuple[int, int], int] = defaultdict(int)
+        # Round to ~1.1m precision (5 decimal degrees) so OSM-shared
+        # nodes collide exactly while sub-meter noise doesn't matter.
+        def _vk(lon: float, lat: float) -> tuple[int, int]:
+            return (round(lon * 1e5), round(lat * 1e5))
+        for _list_key in ("minor_roads", "major_roads"):
+            for _coords, _rc, _w, _n in streets_data.get(_list_key, []):
+                for _lon, _lat in _coords:
+                    vertex_count[_vk(_lon, _lat)] += 1
+
         # Minor roads first (drawn below major) — heavily filtered
         kept_minor = 0
         dropped_minor = 0
+        dropped_orphan = 0
         for coords, rclass, width_mm, name in streets_data.get("minor_roads", []):
             if len(coords) < 2:
                 dropped_minor += 1
@@ -545,6 +563,14 @@ def render_map_image(
                 if _polyline_pixel_length(px_coords) < min_residential_px:
                     dropped_minor += 1
                     continue
+            # Orphan filter: drop minor roads with at least one dangling
+            # endpoint (no other road vertex sharing the same OSM node).
+            start_deg = vertex_count.get(_vk(coords[0][0], coords[0][1]), 0)
+            end_deg = vertex_count.get(_vk(coords[-1][0], coords[-1][1]), 0)
+            if start_deg <= 1 or end_deg <= 1:
+                dropped_orphan += 1
+                dropped_minor += 1
+                continue
             line_w = max(minor_min, int(width_mm * minor_mult))
             try:
                 draw.line(px_coords, fill=minor_color, width=line_w, joint="curve")
@@ -573,7 +599,8 @@ def render_map_image(
 
         log.info(
             f"Road render: {kept_major} major, {kept_minor} minor "
-            f"({dropped_minor} dropped), threshold={min_residential_px}px"
+            f"({dropped_minor} dropped, {dropped_orphan} orphan stubs), "
+            f"threshold={min_residential_px}px"
         )
 
     # Compute pin pixel in the rendered image
