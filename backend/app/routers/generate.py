@@ -198,12 +198,19 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             log.info(f"Capped DPI from {req.print_dpi} to {effective_dpi} for {w_in}x{h_in}\" ({pixels_at_requested_dpi/1e6:.0f}M pixels)")
             req = req.model_copy(update={"print_dpi": effective_dpi})
 
-    # Fetch geometry. For provinces, prefer Overpass to get full-resolution
-    # boundary nodes — Nominatim's polygon_geojson is pre-simplified and
-    # produces visible angular artifacts on poster-scale silhouettes.
+    # Fetch geometry.
+    # For provinces, try the bundled Natural Earth dataset first — it's
+    # pre-curated by professional cartographers (clean silhouettes, no
+    # rectangular notches from server-side simplification, no Overpass
+    # rate limits). Falls back to Overpass for anything not bundled.
     log.info(f"Generating {req.product_type.value} for OSM {req.osm_type}/{req.osm_id}")
-    prefer_overpass = req.product_type.value == "province"
-    geom = await fetch_geometry(req.osm_id, req.osm_type, prefer_overpass=prefer_overpass)
+    geom = None
+    if req.product_type.value == "province" and req.text:
+        from app.services.boundary_loader import load_local_province
+        geom = load_local_province(req.text)
+    if geom is None:
+        prefer_overpass = req.product_type.value == "province"
+        geom = await fetch_geometry(req.osm_id, req.osm_type, prefer_overpass=prefer_overpass)
     if geom is None:
         raise HTTPException(
             status_code=404,
