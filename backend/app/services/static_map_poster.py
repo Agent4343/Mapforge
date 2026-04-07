@@ -38,8 +38,10 @@ POSTER_THEMES = {
         "bg": (245, 245, 245), "map_bg": (255, 255, 255),
         "title": (25, 25, 25), "subtitle": (100, 100, 100),
         "border": (200, 200, 200), "line": (180, 180, 180),
-        "road_major": (20, 20, 20), "road_minor": (140, 140, 140),
-        "map_mode": "light", "water": (210, 220, 232),
+        "road_major": (15, 15, 15), "road_minor": (165, 165, 165),
+        # Water with enough presence to read as a focal point against white
+        "map_mode": "light", "water": (188, 208, 226),
+        "water_edge": (135, 162, 188),
     },
     "classic": {
         "bg": (250, 248, 244), "map_bg": (252, 250, 246),
@@ -314,11 +316,13 @@ def render_map_image(
         return px, py
 
     # ── Draw water polygons (background) ──
-    # Single uniform water color, no waterway line accents (would create
-    # patchy variation against the polygons).
+    # Filled with the theme water color, then a thin coastline edge so
+    # the harbour shape pops against the white canvas. Tiny fragments
+    # are dropped — they read as visual noise on a poster.
     if water_data:
         water_color = theme.get("water", (232, 232, 232))
-        # Drop tiny fragments — they read as visual noise on a poster.
+        edge_color = theme.get("water_edge")
+        edge_w = max(2, int(min(img_w, img_h) * 0.0018))
         min_water_area_px = (img_w * img_h) * 0.00005  # ~0.005% of canvas
         for coords, wtype, name in water_data.get("water_polygons", []):
             if len(coords) < 3:
@@ -334,7 +338,13 @@ def render_map_image(
             if abs(area) * 0.5 < min_water_area_px:
                 continue
             try:
-                draw.polygon(px_coords, fill=water_color)
+                if edge_color is not None:
+                    draw.polygon(px_coords, fill=water_color, outline=edge_color)
+                    # Outline width via line draw (PIL polygon outline is 1px)
+                    draw.line(px_coords + [px_coords[0]],
+                              fill=edge_color, width=edge_w, joint="curve")
+                else:
+                    draw.polygon(px_coords, fill=water_color)
             except Exception:
                 pass
 
@@ -364,18 +374,20 @@ def render_map_image(
             min_residential_px = 95
         elif bbox_area > 0.01:
             # Halifax-sized downtown: still aggressively drop micro streets
-            minor_mult, major_mult = 11, 16
-            minor_min, major_min = 4, 9
-            min_residential_px = 75
-        elif bbox_area > 0.002:
-            minor_mult, major_mult = 12, 18
+            minor_mult, major_mult = 10, 18
             minor_min, major_min = 4, 10
-            min_residential_px = 50
+            min_residential_px = 110
+        elif bbox_area > 0.002:
+            # Sydney NS-sized small city: stronger hierarchy + denser cleanup
+            minor_mult, major_mult = 11, 20
+            minor_min, major_min = 4, 11
+            min_residential_px = 90
         else:
-            # Truly tiny viewport (single neighbourhood) — keep everything
-            minor_mult, major_mult = 13, 19
-            minor_min, major_min = 5, 11
-            min_residential_px = 0
+            # Truly tiny viewport (single neighbourhood) — keep most streets
+            # but widen the major:minor ratio so the structure still reads
+            minor_mult, major_mult = 12, 21
+            minor_min, major_min = 5, 12
+            min_residential_px = 40
 
         # Minor roads first (drawn below major) — heavily filtered
         kept_minor = 0
