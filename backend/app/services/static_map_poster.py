@@ -168,6 +168,108 @@ def _polyline_pixel_length(px_coords: list[tuple[float, float]]) -> float:
     return total
 
 
+def _ring_signed_area(coords: list[tuple[float, float]]) -> float:
+    """Shoelace signed area in input units (squared). Positive for CCW rings."""
+    n = len(coords)
+    if n < 3:
+        return 0.0
+    a = 0.0
+    for i in range(n):
+        x1, y1 = coords[i]
+        x2, y2 = coords[(i + 1) % n]
+        a += x1 * y2 - x2 * y1
+    return a * 0.5
+
+
+def _auto_compose_center(
+    center_lat: float, center_lng: float,
+    streets_data: dict | None,
+    meters_wide: float, meters_high: float,
+) -> tuple[float, float]:
+    """Universal visual centering: shift the viewport toward the road
+    network centroid when the geographic center sits over empty space
+    (ocean, lake, undeveloped land).
+
+    The pin still draws at its true location — only the viewport moves.
+    Replaces the hand-curated _CENTER_OVERRIDES table with a method
+    that works for any coastal/island/peninsular city automatically.
+    """
+    if not streets_data:
+        return center_lat, center_lng
+
+    # Compute road-network centroid in Mercator space, weighted by
+    # segment length so a few long highways don't dominate over a
+    # dense urban grid.
+    cx0, cy0 = _to_mercator(center_lat, center_lng)
+    half_w = meters_wide / 2
+    half_h = meters_high / 2
+    sum_x, sum_y, sum_w = 0.0, 0.0, 0.0
+
+    for road_list in (
+        streets_data.get("major_roads", []),
+        streets_data.get("minor_roads", []),
+    ):
+        for entry in road_list:
+            coords = entry[0] if isinstance(entry, tuple) else entry.get("coords", [])
+            if len(coords) < 2:
+                continue
+            for i in range(1, len(coords)):
+                lon1, lat1 = coords[i - 1]
+                lon2, lat2 = coords[i]
+                mx1, my1 = _to_mercator(lat1, lon1)
+                mx2, my2 = _to_mercator(lat2, lon2)
+                # Only count segments inside the candidate viewport
+                if (abs(mx1 - cx0) > half_w * 1.5 or
+                        abs(my1 - cy0) > half_h * 1.5):
+                    continue
+                seg_len = math.hypot(mx2 - mx1, my2 - my1)
+                if seg_len <= 0:
+                    continue
+                mid_x = (mx1 + mx2) * 0.5
+                mid_y = (my1 + my2) * 0.5
+                sum_x += mid_x * seg_len
+                sum_y += mid_y * seg_len
+                sum_w += seg_len
+
+    if sum_w <= 0:
+        return center_lat, center_lng
+
+    centroid_x = sum_x / sum_w
+    centroid_y = sum_y / sum_w
+
+    # Distance from geographic center to road centroid, normalised by
+    # viewport half-extent. Below 8% of viewport width = already centered
+    # well, leave alone. Above that, blend toward the road centroid.
+    dx_norm = (centroid_x - cx0) / half_w
+    dy_norm = (centroid_y - cy0) / half_h
+    drift = math.hypot(dx_norm, dy_norm)
+    if drift < 0.08:
+        return center_lat, center_lng
+
+    # Shift partway (60%) so the pin doesn't slide off-frame and the
+    # composition still respects the requested location.
+    shift = 0.60
+    # Cap the absolute shift at 35% of viewport so dramatic geographies
+    # (e.g. a very long peninsula) don't fly the pin out of the frame.
+    cap = 0.35
+    shift_x = max(-cap, min(cap, dx_norm * shift))
+    shift_y = max(-cap, min(cap, dy_norm * shift))
+
+    new_cx = cx0 + shift_x * half_w
+    new_cy = cy0 + shift_y * half_h
+
+    # Inverse Mercator
+    new_lng = new_cx / 20037508.34 * 180.0
+    new_lat = math.atan(math.sinh(new_cy * math.pi / 20037508.34))
+    new_lat = math.degrees(new_lat)
+
+    log.info(
+        f"Auto-compose: road centroid drift {drift:.2f} viewports, "
+        f"shifted by ({shift_x:+.2f},{shift_y:+.2f})"
+    )
+    return new_lat, new_lng
+
+
 # ── Composition centering ────────────────────────────────────────────
 #
 # The geocoded point is geographically correct but not always the
@@ -302,6 +404,14 @@ def render_map_image(
 
     meters_high = meters_wide * img_h / img_w
 
+    # Universal auto-composition: shift the viewport center toward the
+    # road network if the geographic center sits over empty space (sea,
+    # lake, undeveloped land). Replaces hand-curated overrides for any
+    # coastal/island/peninsular city.
+    center_lat, center_lng = _auto_compose_center(
+        center_lat, center_lng, streets_data, meters_wide, meters_high,
+    )
+
     # Center in Mercator
     cx, cy = _to_mercator(center_lat, center_lng)
     left = cx - meters_wide / 2
@@ -316,37 +426,53 @@ def render_map_image(
         return px, py
 
     # ── Draw water polygons (background) ──
-    # Filled with the theme water color, then a thin coastline edge so
-    # the harbour shape pops against the white canvas. Tiny fragments
-    # are dropped — they read as visual noise on a poster.
+    # Universal "ONE dominant feature" rule: rank water polygons by
+    # screen-space area, keep only those that contribute meaningful
+    # visual mass. Tiny ponds, drainage channels, and disconnected
+    # specks read as noise on a poster.
     if water_data:
         water_color = theme.get("water", (232, 232, 232))
         edge_color = theme.get("water_edge")
         edge_w = max(2, int(min(img_w, img_h) * 0.0018))
-        min_water_area_px = (img_w * img_h) * 0.00005  # ~0.005% of canvas
+        canvas_area = img_w * img_h
+
+        # Project + measure each polygon once
+        ranked: list[tuple[float, list[tuple[float, float]]]] = []
         for coords, wtype, name in water_data.get("water_polygons", []):
             if len(coords) < 3:
                 continue
             px_coords = [to_px(lon, lat) for lon, lat in coords]
-            # Shoelace area
-            n = len(px_coords)
-            area = 0.0
-            for i in range(n):
-                x1, y1 = px_coords[i]
-                x2, y2 = px_coords[(i + 1) % n]
-                area += x1 * y2 - x2 * y1
-            if abs(area) * 0.5 < min_water_area_px:
+            area = abs(_ring_signed_area(px_coords))
+            if area <= 0:
                 continue
-            try:
-                if edge_color is not None:
-                    draw.polygon(px_coords, fill=water_color, outline=edge_color)
-                    # Outline width via line draw (PIL polygon outline is 1px)
-                    draw.line(px_coords + [px_coords[0]],
-                              fill=edge_color, width=edge_w, joint="curve")
-                else:
+            ranked.append((area, px_coords))
+
+        if ranked:
+            ranked.sort(key=lambda r: -r[0])
+            largest = ranked[0][0]
+            # Keep the largest unconditionally; for the rest, accept those
+            # at least 2% the size of the largest *and* at least 0.05% of
+            # the canvas. Drops scattered ponds while preserving secondary
+            # but recognisable features (e.g. an inlet next to a harbour).
+            min_relative = largest * 0.02
+            min_absolute = canvas_area * 0.0005
+            kept = 0
+            for area, px_coords in ranked:
+                if area < min_relative or area < min_absolute:
+                    continue
+                try:
                     draw.polygon(px_coords, fill=water_color)
-            except Exception:
-                pass
+                    if edge_color is not None:
+                        draw.line(px_coords + [px_coords[0]],
+                                  fill=edge_color, width=edge_w,
+                                  joint="curve")
+                    kept += 1
+                except Exception:
+                    pass
+            log.info(
+                f"Water render: {kept}/{len(ranked)} polygons kept "
+                f"(largest {largest/canvas_area*100:.1f}% canvas)"
+            )
 
     # ── Draw roads ──
     if streets_data:
