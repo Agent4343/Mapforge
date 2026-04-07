@@ -2555,10 +2555,10 @@ def _render_city_art_streets(lines: list[str], streets_data: dict, processed: di
         "secondary": 3, "secondary_link": 3, "tertiary": 3, "tertiary_link": 3,
     }
 
-    # Iterative orphan-stub filter for residential / service roads.
-    # Build vertex counts across all roads, then prune residentials
-    # whose endpoint has count <= 1 and decrement counts so cascading
-    # orphans get caught on subsequent passes.
+    # Single-pass orphan-stub filter: drop residentials where BOTH
+    # endpoints are dangling (share no OSM node with any other road).
+    # We deliberately do NOT iterate or drop cul-de-sacs — cascading
+    # and one-ended filtering both wipe out legitimate dense grids.
     from collections import defaultdict
     minor_residential = {"residential", "unclassified", "living_street", "service"}
 
@@ -2576,24 +2576,16 @@ def _render_city_art_streets(lines: list[str], streets_data: dict, processed: di
         for lon, lat in coords:
             vertex_count[_vk(lon, lat)] += 1
 
-    alive_minor = [True] * len(all_minor)
-    changed = True
-    while changed:
-        changed = False
-        for i, (coords, rclass, _w, _n) in enumerate(all_minor):
-            if not alive_minor[i] or rclass not in minor_residential:
-                continue
-            s_deg = vertex_count.get(_vk(coords[0][0], coords[0][1]), 0)
-            e_deg = vertex_count.get(_vk(coords[-1][0], coords[-1][1]), 0)
-            if s_deg <= 1 or e_deg <= 1:
-                alive_minor[i] = False
-                for lon, lat in coords:
-                    vertex_count[_vk(lon, lat)] -= 1
-                changed = True
+    def _is_orphan(coords, rclass):
+        if rclass not in minor_residential:
+            return False
+        s_deg = vertex_count.get(_vk(coords[0][0], coords[0][1]), 0)
+        e_deg = vertex_count.get(_vk(coords[-1][0], coords[-1][1]), 0)
+        return s_deg <= 1 and e_deg <= 1
 
-    for source, alive in ((all_minor, alive_minor), (all_major, [True] * len(all_major))):
-        for i, (coords, road_class, _width, name) in enumerate(source):
-            if not alive[i]:
+    for source in (all_minor, all_major):
+        for coords, road_class, _width, name in source:
+            if _is_orphan(coords, road_class):
                 continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
             path_d = _coords_to_open_path(board_coords)
