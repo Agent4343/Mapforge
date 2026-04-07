@@ -198,9 +198,12 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             log.info(f"Capped DPI from {req.print_dpi} to {effective_dpi} for {w_in}x{h_in}\" ({pixels_at_requested_dpi/1e6:.0f}M pixels)")
             req = req.model_copy(update={"print_dpi": effective_dpi})
 
-    # Fetch geometry
+    # Fetch geometry. For provinces, prefer Overpass to get full-resolution
+    # boundary nodes — Nominatim's polygon_geojson is pre-simplified and
+    # produces visible angular artifacts on poster-scale silhouettes.
     log.info(f"Generating {req.product_type.value} for OSM {req.osm_type}/{req.osm_id}")
-    geom = await fetch_geometry(req.osm_id, req.osm_type)
+    prefer_overpass = req.product_type.value == "province"
+    geom = await fetch_geometry(req.osm_id, req.osm_type, prefer_overpass=prefer_overpass)
     if geom is None:
         raise HTTPException(
             status_code=404,
