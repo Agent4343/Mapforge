@@ -570,24 +570,23 @@ def render_map_image(
             for lon, lat in coords:
                 vertex_count[_vk(lon, lat)] += 1
 
-        # Iteratively drop residentials with a dangling endpoint and
-        # decrement vertex counts so cascading orphans get caught.
+        # Single-pass orphan drop: residentials whose endpoints do not
+        # share a node with any other kept road. We deliberately do NOT
+        # iterate — cascading aggressively decimates legitimate grids
+        # because dropping one stub can demote every road downstream of
+        # it into a new "orphan". A single pass kills the truly isolated
+        # fragments while preserving the connected residential network.
         alive = [True] * len(candidates)
-        changed = True
-        while changed:
-            changed = False
-            for i, (coords, _px, rclass, _w) in enumerate(candidates):
-                if not alive[i] or rclass not in _RESIDENTIAL_HIGHWAYS:
-                    continue
-                s_deg = vertex_count.get(_vk(coords[0][0], coords[0][1]), 0)
-                e_deg = vertex_count.get(_vk(coords[-1][0], coords[-1][1]), 0)
-                if s_deg <= 1 or e_deg <= 1:
-                    alive[i] = False
-                    dropped_orphan += 1
-                    dropped_minor += 1
-                    for lon, lat in coords:
-                        vertex_count[_vk(lon, lat)] -= 1
-                    changed = True
+        for i, (coords, _px, rclass, _w) in enumerate(candidates):
+            if rclass not in _RESIDENTIAL_HIGHWAYS:
+                continue
+            s_deg = vertex_count.get(_vk(coords[0][0], coords[0][1]), 0)
+            e_deg = vertex_count.get(_vk(coords[-1][0], coords[-1][1]), 0)
+            if s_deg <= 1 and e_deg <= 1:
+                # Both ends dangling → definite isolated fragment
+                alive[i] = False
+                dropped_orphan += 1
+                dropped_minor += 1
 
         for i, (_coords, px_coords, _rc, width_mm) in enumerate(candidates):
             if not alive[i]:
