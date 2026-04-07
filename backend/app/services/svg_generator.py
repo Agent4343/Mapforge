@@ -2315,7 +2315,27 @@ def _render_print_water(lines: list[str], water_data: dict, processed: dict, the
         lines.append("        </radialGradient>")
         lines.append("      </defs>")
 
-    for i, (coords, water_type, name) in enumerate(water_data.get("water_polygons", [])):
+    # Dominant-water filter (city_art minimal mode): keep only the largest
+    # water polygons so the map has a single clear focal body of water
+    # instead of scattered ponds that compete for attention.
+    water_polys = water_data.get("water_polygons", [])
+    if minimal and water_polys:
+        def _ring_area(ring):
+            if len(ring) < 3:
+                return 0.0
+            a = 0.0
+            for j in range(len(ring)):
+                x1, y1 = ring[j][0], ring[j][1]
+                x2, y2 = ring[(j + 1) % len(ring)][0], ring[(j + 1) % len(ring)][1]
+                a += x1 * y2 - x2 * y1
+            return abs(a) * 0.5
+        scored = [(coords, water_type, name, _ring_area(coords)) for coords, water_type, name in water_polys]
+        max_area = max((s[3] for s in scored), default=0.0)
+        if max_area > 0:
+            # Keep polygons at least 6% of the largest body (filter tiny ponds/islands).
+            water_polys = [(c, t, n) for c, t, n, a in scored if a >= max_area * 0.06]
+
+    for i, (coords, water_type, name) in enumerate(water_polys):
         if len(coords) < 3:
             continue
         board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
@@ -2510,14 +2530,17 @@ def _render_city_art_streets(lines: list[str], streets_data: dict, processed: di
             "living_street": (0.12, "#C0C0C0"), "service": (0.08, "#C0C0C0"),
         }
     else:
+        # Tightened 4-tier hierarchy: near-black bold arterials on top,
+        # light-grey residential grid underneath. Matches the PNG poster
+        # path so SVG-rendered output has the same Etsy-ready contrast.
         city_art_styles = {
-            "motorway": (0.6, "#000000"), "motorway_link": (0.35, "#000000"),
-            "trunk": (0.55, "#000000"), "trunk_link": (0.3, "#000000"),
-            "primary": (0.45, "#111111"), "primary_link": (0.3, "#111111"),
-            "secondary": (0.35, "#222222"), "secondary_link": (0.25, "#222222"),
-            "tertiary": (0.28, "#333333"), "tertiary_link": (0.22, "#333333"),
-            "residential": (0.18, "#444444"), "unclassified": (0.18, "#444444"),
-            "living_street": (0.18, "#444444"), "service": (0.12, "#666666"),
+            "motorway": (0.55, "#0F0F0F"), "motorway_link": (0.3, "#0F0F0F"),
+            "trunk": (0.5, "#0F0F0F"), "trunk_link": (0.28, "#0F0F0F"),
+            "primary": (0.42, "#0F0F0F"), "primary_link": (0.26, "#0F0F0F"),
+            "secondary": (0.3, "#2A2A2A"), "secondary_link": (0.22, "#2A2A2A"),
+            "tertiary": (0.22, "#5A5A5A"), "tertiary_link": (0.18, "#5A5A5A"),
+            "residential": (0.14, "#A5A5A5"), "unclassified": (0.14, "#A5A5A5"),
+            "living_street": (0.14, "#A5A5A5"), "service": (0.1, "#C0C0C0"),
         }
 
     lines.append('    <g id="streets">')
