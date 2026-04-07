@@ -283,11 +283,14 @@ def _auto_compose_center(
 # lat/lng offsets are in degrees.
 _CENTER_OVERRIDES: dict[str, tuple[float, float]] = {
     # name-key  : (lat_offset, lng_offset)
-    "halifax":   (0.000, -0.008),
+    # Direction = where to MOVE the viewport center, away from the pin,
+    # so the dominant water feature fills the frame opposite the city.
+    "halifax":   (0.000, -0.008),   # downtown on east shore -> shift west
     "vancouver": (0.000, -0.012),
     "stjohns":   (0.003, -0.010),
     "victoria":  (0.000, -0.010),
-    "sydney":    (0.000, -0.012),
+    "sydney":    (0.018, +0.018),   # downtown on SW shore of Sydney Harbour
+                                    # -> shift NE so harbour fills NE half
     "saintjohn": (0.000, -0.010),
     "charlottetown": (0.000, -0.008),
 }
