@@ -433,7 +433,9 @@ def render_map_image(
     if water_data:
         water_color = theme.get("water", (232, 232, 232))
         edge_color = theme.get("water_edge")
-        edge_w = max(2, int(min(img_w, img_h) * 0.0018))
+        # Coastline edge bumped from 1.8‰ -> 2.5‰ of canvas so the
+        # dominant water shape reads as the strongest visual anchor.
+        edge_w = max(3, int(min(img_w, img_h) * 0.0025))
         canvas_area = img_w * img_h
 
         # Project + measure each polygon once
@@ -450,12 +452,13 @@ def render_map_image(
         if ranked:
             ranked.sort(key=lambda r: -r[0])
             largest = ranked[0][0]
-            # Keep the largest unconditionally; for the rest, accept those
-            # at least 2% the size of the largest *and* at least 0.05% of
-            # the canvas. Drops scattered ponds while preserving secondary
-            # but recognisable features (e.g. an inlet next to a harbour).
-            min_relative = largest * 0.02
-            min_absolute = canvas_area * 0.0005
+            # Keep the largest unconditionally; for the rest, accept only
+            # those at least 6% the size of the largest *and* at least
+            # 0.15% of the canvas. Tightened from 2%/0.05% to drop ~50%
+            # more scattered lakes / ponds so the dominant coastline is
+            # the unmistakable anchor.
+            min_relative = largest * 0.06
+            min_absolute = canvas_area * 0.0015
             kept = 0
             for area, px_coords in ranked:
                 if area < min_relative or area < min_absolute:
@@ -505,9 +508,12 @@ def render_map_image(
             min_residential_px = 110
         elif bbox_area > 0.002:
             # Sydney NS-sized small city: stronger hierarchy + denser cleanup
-            minor_mult, major_mult = 11, 20
-            minor_min, major_min = 4, 11
-            min_residential_px = 90
+            # Trimmed major_mult slightly so the boldest curved roads
+            # don't dominate; bumped residential threshold ~15% to thin
+            # the central grid.
+            minor_mult, major_mult = 11, 17
+            minor_min, major_min = 4, 10
+            min_residential_px = 105
         else:
             # Truly tiny viewport (single neighbourhood) — keep most streets
             # but widen the major:minor ratio so the structure still reads
