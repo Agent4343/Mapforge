@@ -205,6 +205,11 @@ def _auto_compose_center(
     half_h = meters_high / 2
     sum_x, sum_y, sum_w = 0.0, 0.0, 0.0
 
+    # Only consider roads inside the candidate viewport itself (not 1.5×).
+    # Including segments that fan out beyond the viewport biases the
+    # centroid toward whatever lies past the frame — for Sydney's CBRM
+    # admin polygon that's the highway 125 ring across all of east
+    # Cape Breton, which would drag the center off downtown.
     for road_list in (
         streets_data.get("major_roads", []),
         streets_data.get("minor_roads", []),
@@ -218,9 +223,8 @@ def _auto_compose_center(
                 lon2, lat2 = coords[i]
                 mx1, my1 = _to_mercator(lat1, lon1)
                 mx2, my2 = _to_mercator(lat2, lon2)
-                # Only count segments inside the candidate viewport
-                if (abs(mx1 - cx0) > half_w * 1.5 or
-                        abs(my1 - cy0) > half_h * 1.5):
+                if (abs(mx1 - cx0) > half_w or
+                        abs(my1 - cy0) > half_h):
                     continue
                 seg_len = math.hypot(mx2 - mx1, my2 - my1)
                 if seg_len <= 0:
@@ -238,20 +242,18 @@ def _auto_compose_center(
     centroid_y = sum_y / sum_w
 
     # Distance from geographic center to road centroid, normalised by
-    # viewport half-extent. Below 8% of viewport width = already centered
-    # well, leave alone. Above that, blend toward the road centroid.
+    # viewport half-extent. Below 15% = already well centered; above,
+    # nudge gently toward the road centroid.
     dx_norm = (centroid_x - cx0) / half_w
     dy_norm = (centroid_y - cy0) / half_h
     drift = math.hypot(dx_norm, dy_norm)
-    if drift < 0.08:
+    if drift < 0.15:
         return center_lat, center_lng
 
-    # Shift partway (60%) so the pin doesn't slide off-frame and the
-    # composition still respects the requested location.
-    shift = 0.60
-    # Cap the absolute shift at 35% of viewport so dramatic geographies
-    # (e.g. a very long peninsula) don't fly the pin out of the frame.
-    cap = 0.35
+    # Subtle shift only — 35% of the way (was 60%), capped at 15% of
+    # viewport (was 35%). The auto-compose is a polish, not a relocation.
+    shift = 0.35
+    cap = 0.15
     shift_x = max(-cap, min(cap, dx_norm * shift))
     shift_y = max(-cap, min(cap, dy_norm * shift))
 
@@ -367,6 +369,7 @@ def render_map_image(
     pin_lat: float | None = None,
     pin_lng: float | None = None,
     viewport_meters: int | None = None,
+    auto_compose: bool = True,
 ) -> tuple[Image.Image, tuple[float, float]]:
     """Render road geometry directly onto a PIL Image.
 
@@ -406,11 +409,13 @@ def render_map_image(
 
     # Universal auto-composition: shift the viewport center toward the
     # road network if the geographic center sits over empty space (sea,
-    # lake, undeveloped land). Replaces hand-curated overrides for any
-    # coastal/island/peninsular city.
-    center_lat, center_lng = _auto_compose_center(
-        center_lat, center_lng, streets_data, meters_wide, meters_high,
-    )
+    # lake, undeveloped land). Disabled when the caller already applied
+    # a hand-curated override (Sydney, Halifax, Vancouver, etc.) — the
+    # two shifts would compound and slide the city out of frame.
+    if auto_compose:
+        center_lat, center_lng = _auto_compose_center(
+            center_lat, center_lng, streets_data, meters_wide, meters_high,
+        )
 
     # Center in Mercator
     cx, cy = _to_mercator(center_lat, center_lng)
@@ -811,7 +816,8 @@ def generate_road_poster(
     adj_lat, adj_lng = _adjust_center_for_composition(
         city_name, center_lat, center_lng,
     )
-    if (adj_lat, adj_lng) != (pin_lat, pin_lng):
+    has_named_override = (adj_lat, adj_lng) != (pin_lat, pin_lng)
+    if has_named_override:
         log.info(
             f"Composition shift for '{city_name}': "
             f"({pin_lat:.4f},{pin_lng:.4f}) -> ({adj_lat:.4f},{adj_lng:.4f})"
@@ -820,7 +826,8 @@ def generate_road_poster(
     # Per-city viewport override (e.g. Halifax peninsula portrait)
     viewport_meters = _viewport_override_for(city_name)
 
-    # Render roads directly to image
+    # Render roads directly to image. Skip auto-compose when a named
+    # override already shifted the center — the two would compound.
     map_img, pin_image_px = render_map_image(
         streets_data=streets_data,
         water_data=water_data,
@@ -831,6 +838,7 @@ def generate_road_poster(
         pin_lat=pin_lat,
         pin_lng=pin_lng,
         viewport_meters=viewport_meters,
+        auto_compose=not has_named_override,
     )
 
     # Compose into poster — pin draws at true location, not center
