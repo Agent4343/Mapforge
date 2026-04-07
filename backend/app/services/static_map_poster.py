@@ -300,6 +300,7 @@ _CENTER_OVERRIDES: dict[str, tuple[float, float]] = {
 # municipality. None / missing = use the bbox_area heuristic.
 _VIEWPORT_OVERRIDES: dict[str, int] = {
     "halifax": 12_000,    # Halifax peninsula portrait
+    "sydney":  30_000,    # Sydney CBRM: show harbour + Whitney Pier + Westmount
 }
 
 
@@ -402,6 +403,11 @@ def render_map_image(
         meters_wide = 10_000
     else:
         meters_wide = 15_000
+
+    # Remember the default so the residential length filter (which is
+    # calibrated in pixels against the default viewport for each tier)
+    # can be scaled when a per-city override widens or narrows the view.
+    default_meters_wide = meters_wide
 
     # Per-city viewport override (e.g. Halifax peninsula portrait)
     if viewport_meters and viewport_meters > 0:
@@ -528,6 +534,16 @@ def render_map_image(
             minor_mult, major_mult = 12, 21
             minor_min, major_min = 5, 12
             min_residential_px = 40
+
+        # Normalise the residential length threshold so it's a constant
+        # in meters, independent of the chosen viewport. Without this,
+        # widening the viewport via _VIEWPORT_OVERRIDES (e.g. Sydney's
+        # 20km -> 30km) makes every road cover fewer pixels and the
+        # fixed px threshold silently over-filters the residential grid.
+        if meters_wide > 0 and default_meters_wide > 0:
+            min_residential_px = int(
+                min_residential_px * default_meters_wide / meters_wide
+            )
 
         # ── Two-phase minor road filter ────────────────────────────
         # Phase 1: drop by class + length to get the "candidate" set.
