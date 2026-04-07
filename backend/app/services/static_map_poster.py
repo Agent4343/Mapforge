@@ -516,11 +516,11 @@ def render_map_image(
             min_residential_px = 110
         elif bbox_area > 0.002:
             # Sydney NS-sized small city: stronger hierarchy + denser cleanup
-            # Trimmed major_mult slightly so the boldest curved roads
-            # don't dominate; bumped residential threshold ~15% to thin
-            # the central grid.
-            minor_mult, major_mult = 11, 17
-            minor_min, major_min = 4, 10
+            # Major roads thinned again — the bold arterials were still
+            # dominating the frame. Hierarchy gap maintained via color
+            # contrast (15,15,15 vs 165,165,165).
+            minor_mult, major_mult = 10, 14
+            minor_min, major_min = 4, 8
             min_residential_px = 105
         else:
             # Truly tiny viewport (single neighbourhood) — keep most streets
