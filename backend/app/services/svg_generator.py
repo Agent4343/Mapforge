@@ -2332,8 +2332,10 @@ def _render_print_water(lines: list[str], water_data: dict, processed: dict, the
         scored = [(coords, water_type, name, _ring_area(coords)) for coords, water_type, name in water_polys]
         max_area = max((s[3] for s in scored), default=0.0)
         if max_area > 0:
-            # Keep polygons at least 6% of the largest body (filter tiny ponds/islands).
-            water_polys = [(c, t, n) for c, t, n, a in scored if a >= max_area * 0.06]
+            # Keep polygons at least 12% of the largest body
+            # (filter tiny ponds/islands so the dominant body of water
+            # is the sole focal point).
+            water_polys = [(c, t, n) for c, t, n, a in scored if a >= max_area * 0.12]
 
     for i, (coords, water_type, name) in enumerate(water_polys):
         if len(coords) < 3:
