@@ -529,27 +529,23 @@ def render_map_image(
             minor_min, major_min = 5, 12
             min_residential_px = 40
 
-        # Connectivity index: count how many road vertices share each
-        # rounded (lon, lat) position. A residential whose endpoint has
-        # count == 1 (only its own vertex there) is a dangling stub —
-        # its connecting road was either filtered out or genuinely
-        # missing in OSM. We drop those so the poster doesn't show
-        # short streets ending in empty white space.
+        # ── Two-phase minor road filter ────────────────────────────
+        # Phase 1: drop by class + length to get the "candidate" set.
+        # Phase 2: build a connectivity index ONLY from candidates +
+        # majors, then iteratively prune dangling residentials. The
+        # iteration is needed because dropping one orphan can leave
+        # its neighbour as a new orphan — without cascading, short
+        # disconnected chains stay visible.
         from collections import defaultdict
-        vertex_count: dict[tuple[int, int], int] = defaultdict(int)
-        # Round to ~1.1m precision (5 decimal degrees) so OSM-shared
-        # nodes collide exactly while sub-meter noise doesn't matter.
-        def _vk(lon: float, lat: float) -> tuple[int, int]:
-            return (round(lon * 1e5), round(lat * 1e5))
-        for _list_key in ("minor_roads", "major_roads"):
-            for _coords, _rc, _w, _n in streets_data.get(_list_key, []):
-                for _lon, _lat in _coords:
-                    vertex_count[_vk(_lon, _lat)] += 1
 
-        # Minor roads first (drawn below major) — heavily filtered
+        def _vk(lon: float, lat: float) -> tuple[int, int]:
+            # ~1.1m precision so OSM-shared nodes collide exactly.
+            return (round(lon * 1e5), round(lat * 1e5))
+
         kept_minor = 0
         dropped_minor = 0
         dropped_orphan = 0
+        candidates: list[tuple] = []  # (coords, px_coords, rclass, width_mm)
         for coords, rclass, width_mm, name in streets_data.get("minor_roads", []):
             if len(coords) < 2:
                 dropped_minor += 1
@@ -558,18 +554,43 @@ def render_map_image(
                 dropped_minor += 1
                 continue
             px_coords = [to_px(lon, lat) for lon, lat in coords]
-            # Drop residentials shorter than threshold (kills "grey haze")
             if rclass in _RESIDENTIAL_HIGHWAYS and min_residential_px > 0:
                 if _polyline_pixel_length(px_coords) < min_residential_px:
                     dropped_minor += 1
                     continue
-            # Orphan filter: drop minor roads with at least one dangling
-            # endpoint (no other road vertex sharing the same OSM node).
-            start_deg = vertex_count.get(_vk(coords[0][0], coords[0][1]), 0)
-            end_deg = vertex_count.get(_vk(coords[-1][0], coords[-1][1]), 0)
-            if start_deg <= 1 or end_deg <= 1:
-                dropped_orphan += 1
-                dropped_minor += 1
+            candidates.append((coords, px_coords, rclass, width_mm))
+
+        # Build vertex counts from kept candidates + all majors so the
+        # connectivity check reflects what will actually be drawn.
+        vertex_count: dict[tuple[int, int], int] = defaultdict(int)
+        for coords, _px, _rc, _w in candidates:
+            for lon, lat in coords:
+                vertex_count[_vk(lon, lat)] += 1
+        for coords, _rc, _w, _n in streets_data.get("major_roads", []):
+            for lon, lat in coords:
+                vertex_count[_vk(lon, lat)] += 1
+
+        # Iteratively drop residentials with a dangling endpoint and
+        # decrement vertex counts so cascading orphans get caught.
+        alive = [True] * len(candidates)
+        changed = True
+        while changed:
+            changed = False
+            for i, (coords, _px, rclass, _w) in enumerate(candidates):
+                if not alive[i] or rclass not in _RESIDENTIAL_HIGHWAYS:
+                    continue
+                s_deg = vertex_count.get(_vk(coords[0][0], coords[0][1]), 0)
+                e_deg = vertex_count.get(_vk(coords[-1][0], coords[-1][1]), 0)
+                if s_deg <= 1 or e_deg <= 1:
+                    alive[i] = False
+                    dropped_orphan += 1
+                    dropped_minor += 1
+                    for lon, lat in coords:
+                        vertex_count[_vk(lon, lat)] -= 1
+                    changed = True
+
+        for i, (_coords, px_coords, _rc, width_mm) in enumerate(candidates):
+            if not alive[i]:
                 continue
             line_w = max(minor_min, int(width_mm * minor_mult))
             try:
