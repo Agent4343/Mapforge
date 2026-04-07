@@ -2555,30 +2555,46 @@ def _render_city_art_streets(lines: list[str], streets_data: dict, processed: di
         "secondary": 3, "secondary_link": 3, "tertiary": 3, "tertiary_link": 3,
     }
 
-    # Connectivity index for orphan-stub filtering: count how many road
-    # vertices share each rounded (lon, lat) position. Minor roads with
-    # at least one dangling endpoint (count == 1) are stubs that go
-    # nowhere on the poster — drop them.
+    # Iterative orphan-stub filter for residential / service roads.
+    # Build vertex counts across all roads, then prune residentials
+    # whose endpoint has count <= 1 and decrement counts so cascading
+    # orphans get caught on subsequent passes.
     from collections import defaultdict
-    vertex_count: dict[tuple[int, int], int] = defaultdict(int)
+    minor_residential = {"residential", "unclassified", "living_street", "service"}
+
     def _vk(lon: float, lat: float) -> tuple[int, int]:
         return (round(lon * 1e5), round(lat * 1e5))
-    for _list_key in ("minor_roads", "major_roads"):
-        for _coords, _rc, _w, _n in streets_data.get(_list_key, []):
-            for _lon, _lat in _coords:
-                vertex_count[_vk(_lon, _lat)] += 1
 
-    minor_residential = {"residential", "unclassified", "living_street", "service"}
-    for road_list_key in ("minor_roads", "major_roads"):
-        is_minor_list = road_list_key == "minor_roads"
-        for coords, road_class, _width, name in streets_data.get(road_list_key, []):
-            if len(coords) < 2:
+    all_minor = [r for r in streets_data.get("minor_roads", []) if len(r[0]) >= 2]
+    all_major = [r for r in streets_data.get("major_roads", []) if len(r[0]) >= 2]
+
+    vertex_count: dict[tuple[int, int], int] = defaultdict(int)
+    for coords, _rc, _w, _n in all_minor:
+        for lon, lat in coords:
+            vertex_count[_vk(lon, lat)] += 1
+    for coords, _rc, _w, _n in all_major:
+        for lon, lat in coords:
+            vertex_count[_vk(lon, lat)] += 1
+
+    alive_minor = [True] * len(all_minor)
+    changed = True
+    while changed:
+        changed = False
+        for i, (coords, rclass, _w, _n) in enumerate(all_minor):
+            if not alive_minor[i] or rclass not in minor_residential:
                 continue
-            if is_minor_list and road_class in minor_residential:
-                start_deg = vertex_count.get(_vk(coords[0][0], coords[0][1]), 0)
-                end_deg = vertex_count.get(_vk(coords[-1][0], coords[-1][1]), 0)
-                if start_deg <= 1 or end_deg <= 1:
-                    continue
+            s_deg = vertex_count.get(_vk(coords[0][0], coords[0][1]), 0)
+            e_deg = vertex_count.get(_vk(coords[-1][0], coords[-1][1]), 0)
+            if s_deg <= 1 or e_deg <= 1:
+                alive_minor[i] = False
+                for lon, lat in coords:
+                    vertex_count[_vk(lon, lat)] -= 1
+                changed = True
+
+    for source, alive in ((all_minor, alive_minor), (all_major, [True] * len(all_major))):
+        for i, (coords, road_class, _width, name) in enumerate(source):
+            if not alive[i]:
+                continue
             board_coords = transform_wgs84_to_board(coords, transform) if transform else coords
             path_d = _coords_to_open_path(board_coords)
             sw, color = city_art_styles.get(road_class, (0.15, "#BBBBBB"))
