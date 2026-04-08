@@ -389,6 +389,7 @@ def render_map_image(
     viewport_meters: int | None = None,
     auto_compose: bool = True,
     parks_data: dict | None = None,
+    land_polygon=None,
 ) -> tuple[Image.Image, tuple[float, float]]:
     """Render road geometry directly onto a PIL Image.
 
@@ -454,7 +455,62 @@ def render_map_image(
         py = (top - my) * scale_y  # flip Y for image coords
         return px, py
 
-    # ── Draw water polygons (background) ──
+    # ── Ocean background for islands / peninsulas ──
+    # OSM has no ocean polygon (only coastline lines). MapTiler has
+    # ocean polygons but needs an API key. The Nominatim boundary
+    # polygon, however, is ALWAYS available for the selected feature —
+    # and for an island like Cape Breton, it's exactly the land shape
+    # we need. Strategy: fill the whole canvas with water colour, then
+    # punch the land polygon on top. Inland lakes get re-painted blue
+    # by the subsequent water-polygon pass.
+    #
+    # Only applies when the land covers less than ~75% of the canvas.
+    # For tight urban views (Edmonton fills ~90% of the frame) we skip
+    # this so we don't paint a thin blue border around the city.
+    land_rings_px: list[list[tuple[float, float]]] = []
+    if land_polygon is not None:
+        try:
+            if hasattr(land_polygon, "geoms"):
+                polys = list(land_polygon.geoms)
+            elif hasattr(land_polygon, "exterior"):
+                polys = [land_polygon]
+            else:
+                polys = []
+            for poly in polys:
+                exterior = list(poly.exterior.coords)
+                px_coords = [to_px(lon, lat) for lon, lat in exterior]
+                if len(px_coords) >= 3:
+                    land_rings_px.append(px_coords)
+        except Exception as e:
+            log.warning(f"Land polygon projection failed: {e}")
+            land_rings_px = []
+
+    if land_rings_px:
+        canvas_area = img_w * img_h
+        total_land_area = sum(
+            abs(_ring_signed_area(r)) for r in land_rings_px
+        )
+        land_ratio = total_land_area / canvas_area if canvas_area else 0
+        if 0 < land_ratio < 0.75:
+            water_color = theme.get("water", (188, 208, 226))
+            draw.rectangle([0, 0, img_w, img_h], fill=water_color)
+            # Re-paint land on top of ocean
+            for ring_px in land_rings_px:
+                try:
+                    draw.polygon(ring_px, fill=bg_color)
+                except Exception:
+                    pass
+            log.info(
+                f"Ocean background applied: land {land_ratio*100:.1f}% "
+                f"of canvas ({len(land_rings_px)} polygons)"
+            )
+        else:
+            log.info(
+                f"Ocean background skipped: land {land_ratio*100:.1f}% "
+                f"of canvas (>=75%, treating as inland)"
+            )
+
+    # ── Draw water polygons (inland lakes, rivers, bays) ──
     # Universal "ONE dominant feature" rule: rank water polygons by
     # screen-space area, keep only those that contribute meaningful
     # visual mass. Tiny ponds, drainage channels, and disconnected
@@ -911,6 +967,7 @@ def generate_road_poster(
     show_coordinates: bool = True,
     color_theme: str = "city_art",
     parks_data: dict | None = None,
+    land_polygon=None,
 ) -> bytes | None:
     """Full pipeline: render roads → compose poster → PNG bytes.
 
@@ -958,6 +1015,7 @@ def generate_road_poster(
         viewport_meters=viewport_meters,
         auto_compose=not has_named_override,
         parks_data=parks_data,
+        land_polygon=land_polygon,
     )
 
     # Compose into poster — pin draws at true location, not center
