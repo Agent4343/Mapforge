@@ -236,12 +236,15 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     # Fetch streets and water concurrently for faster generation
     streets_data = None
     water_data = None
+    parks_data = None
     street_types = ("city", "community", "park")
     water_types = ("community", "city", "park")
     auto_streets = req.product_type.value in street_types
     need_streets = req.include_streets or auto_streets
     # Always fetch water for provinces — lakes/rivers give the shape character
     need_water = req.product_type.value in water_types or req.product_type.value == "province"
+    # Parks — only fetched for city-art via MapTiler. No effect if key absent.
+    need_parks = req.product_type.value in ("city", "community") and bool(settings.MAPTILER_API_KEY)
 
     # Always fetch major highways for provinces — with cased road styling
     # they look professional and give the map structure
@@ -408,6 +411,21 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             return generate_depth_bands(contours, num_bands=req.num_depth_bands)
         return None
 
+    async def _get_parks():
+        # Parks only come from MapTiler (OpenMapTiles park + landcover +
+        # landuse layers). There is no Overpass fallback — parks are a
+        # pure-enhancement feature, empty result just means no greens.
+        cache_key = _bbox_cache_key("parks", water_bbox)
+        if cache_key in _overpass_cache:
+            log.info("Using cached park data")
+            return _overpass_cache[cache_key]
+        from app.services.maptiler_fetcher import fetch_parks_maptiler
+        result = await fetch_parks_maptiler(bbox=water_bbox)
+        if result and result.get("parks"):
+            _cache_overpass(cache_key, result)
+            return result
+        return None
+
     # Fetch streets, water, and contours concurrently to minimise total wall time.
     # Streets and water are staggered by 0.5s to reduce Overpass load —
     # hitting the same server with two heavy queries simultaneously often
@@ -427,6 +445,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         tasks.append(("streets", _get_streets_staggered()))
     if need_water:
         tasks.append(("water", _get_water_staggered()))
+    if need_parks:
+        tasks.append(("parks", _get_parks()))
     if req.include_contours:
         tasks.append(("contours", _get_contours()))
 
@@ -437,17 +457,21 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         for (label, _), result in zip(tasks, results):
             if isinstance(result, Exception):
                 log.warning(f"{label.title()} fetch failed (non-fatal): {result}")
-                warnings.append(f"{label.title()} data unavailable — map generated without {label}.")
+                # Parks are pure enhancement — no user-facing warning.
+                if label != "parks":
+                    warnings.append(f"{label.title()} data unavailable — map generated without {label}.")
             elif result is None:
                 log.warning(f"{label.title()} fetch returned empty results — not caching")
-                if label != "contours":
-                    # Contour data is optional; empty results are normal for many areas.
+                if label not in ("contours", "parks"):
+                    # Contour + parks data is optional; empty results are normal.
                     # Only warn users when streets/water are unavailable.
                     warnings.append(f"{label.title()} data unavailable — the Overpass API may be busy. Try regenerating in a minute.")
             elif label == "streets":
                 streets_data = result
             elif label == "water":
                 water_data = result
+            elif label == "parks":
+                parks_data = result
             elif label == "contours":
                 contour_data = result
 
@@ -556,6 +580,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                     board_size=req.board_size.value,
                     show_coordinates=req.show_coordinates,
                     color_theme=req.color_theme,
+                    parks_data=parks_data,
                 )
                 if poster_bytes:
                     b64 = base64.b64encode(poster_bytes).decode("ascii")
@@ -695,6 +720,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                         board_size=req.board_size.value,
                         show_coordinates=req.show_coordinates,
                         color_theme=req.color_theme,
+                        parks_data=parks_data,
                     )
                 except Exception as e:
                     log.warning(f"Road poster for print failed (non-fatal): {e}")

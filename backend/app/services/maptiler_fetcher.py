@@ -622,3 +622,165 @@ async def fetch_water_maptiler(
     )
 
     return {"water_polygons": water_polygons, "waterways": waterways}
+
+
+# ── Parks / green space fetching via MapTiler vector tiles ────────────
+#
+# OpenMapTiles vector tiles include three relevant layers:
+#   - `park`       — parks, nature reserves, protected areas
+#   - `landcover`  — wood, grass, ice, sand (we want wood + grass)
+#   - `landuse`    — cemetery, residential, commercial, etc.
+#                    (we want cemetery which reads as "green" on a map)
+#
+# For city art we want the classic parks-on-a-city-map look: Stanley Park,
+# Central Park, Wentworth Park, Point Pleasant, etc. These are iconic
+# landmarks and adding them transforms the aesthetic of any city poster.
+
+# Classes from the `landcover` layer that should render as green/park.
+_GREEN_LANDCOVER_CLASSES = frozenset({"wood", "grass"})
+
+# Classes from the `landuse` layer that read as green park-ish areas.
+_GREEN_LANDUSE_CLASSES = frozenset({"cemetery", "recreation_ground"})
+
+
+def _choose_parks_zoom(bbox: tuple[float, float, float, float]) -> int:
+    """Choose zoom for parks fetch — slightly higher than water to catch
+    smaller urban parks that only appear at higher LODs."""
+    south, west, north, east = bbox
+    area = (north - south) * (east - west)
+    if area > 1.0:
+        return 9
+    elif area > 0.1:
+        return 11
+    elif area > 0.01:
+        return 12
+    elif area > 0.001:
+        return 13
+    else:
+        return 14
+
+
+async def fetch_parks_maptiler(
+    bbox: tuple[float, float, float, float],
+) -> dict:
+    """Fetch park + green-space features from MapTiler vector tiles.
+
+    Returns:
+        {"parks": [(coords, park_class, name), ...]}
+        where coords is a closed ring of (lon, lat) tuples.
+
+    Parks are pulled from three layers:
+        park layer      — dedicated park polygons (all features kept)
+        landcover layer — wood + grass classes only
+        landuse layer   — cemetery + recreation_ground (read as green)
+    """
+    api_key = settings.MAPTILER_API_KEY
+    if not api_key:
+        log.warning("MAPTILER_API_KEY not set — cannot use MapTiler for parks")
+        return {"parks": []}
+
+    start = time.monotonic()
+    south, west, north, east = bbox
+    zoom = _choose_parks_zoom(bbox)
+
+    x_min, y_min = _lng_lat_to_tile(west, north, zoom)
+    x_max, y_max = _lng_lat_to_tile(east, south, zoom)
+
+    total_tiles = (x_max - x_min + 1) * (y_max - y_min + 1)
+    log.info(f"MapTiler parks: fetching {total_tiles} tiles at zoom {zoom}")
+
+    # Parks can come from many small features, so cap more aggressively
+    # than streets but less aggressively than water.
+    MAX_PARK_TILES = 80
+    while total_tiles > MAX_PARK_TILES and zoom > 7:
+        zoom -= 1
+        x_min, y_min = _lng_lat_to_tile(west, north, zoom)
+        x_max, y_max = _lng_lat_to_tile(east, south, zoom)
+        total_tiles = (x_max - x_min + 1) * (y_max - y_min + 1)
+        log.info(f"MapTiler parks: reduced to zoom {zoom} ({total_tiles} tiles)")
+
+    parks: list[tuple] = []
+    tiles_fetched = 0
+    tiles_failed = 0
+
+    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+        for tx in range(x_min, x_max + 1):
+            for ty in range(y_min, y_max + 1):
+                url = MAPTILER_TILE_URL.format(z=zoom, x=tx, y=ty) + f"?key={api_key}"
+                try:
+                    resp = await client.get(url)
+                    if resp.status_code != 200:
+                        tiles_failed += 1
+                        if resp.status_code != 204:
+                            log.warning(f"MapTiler parks HTTP {resp.status_code} for tile {zoom}/{tx}/{ty}")
+                        continue
+
+                    tiles_fetched += 1
+                    tile_data = resp.content
+                    if tile_data[:2] == b'\x1f\x8b':
+                        import gzip
+                        tile_data = gzip.decompress(tile_data)
+
+                    layers = _parse_mvt(tile_data)
+                    for layer in layers:
+                        lname = layer["name"]
+                        if lname not in ("park", "landcover", "landuse"):
+                            continue
+
+                        extent = layer["extent"]
+                        keys = layer["keys"]
+                        values = layer["values"]
+
+                        for feat_data in layer["features"]:
+                            feature = _parse_mvt_feature(feat_data, keys, values)
+                            if feature["geometry_type"] != 3:  # polygons only
+                                continue
+
+                            props = feature["properties"]
+                            klass = str(props.get("class", "") or "")
+                            subclass = str(props.get("subclass", "") or "")
+
+                            # Filter by layer-specific class allowlist.
+                            if lname == "park":
+                                keep = True  # everything in the park layer counts
+                                label = klass or "park"
+                            elif lname == "landcover":
+                                keep = klass in _GREEN_LANDCOVER_CLASSES
+                                label = klass
+                            else:  # landuse
+                                keep = (
+                                    klass in _GREEN_LANDUSE_CLASSES
+                                    or subclass in _GREEN_LANDUSE_CLASSES
+                                )
+                                label = klass or subclass
+
+                            if not keep:
+                                continue
+
+                            name = str(props.get("name", "") or "")
+                            geom_rings = _decode_geometry(
+                                feature["geometry_type"], feature["geometry"]
+                            )
+                            for pixel_coords in geom_rings:
+                                if len(pixel_coords) < 3:
+                                    continue
+                                coords = [
+                                    _pixel_to_lnglat(px, py, extent, tx, ty, zoom)
+                                    for px, py in pixel_coords
+                                ]
+                                parks.append((coords, label or "park", name))
+
+                except httpx.TimeoutException:
+                    tiles_failed += 1
+                    log.warning(f"MapTiler parks timeout for tile {zoom}/{tx}/{ty}")
+                except Exception as e:
+                    tiles_failed += 1
+                    log.warning(f"MapTiler parks error for tile {zoom}/{tx}/{ty}: {type(e).__name__}: {e}")
+
+    elapsed = time.monotonic() - start
+    log.info(
+        f"MapTiler parks: {tiles_fetched} tiles fetched, {tiles_failed} failed, "
+        f"{len(parks)} park polygons in {elapsed:.1f}s"
+    )
+
+    return {"parks": parks}
