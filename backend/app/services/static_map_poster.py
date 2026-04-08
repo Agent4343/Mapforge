@@ -481,16 +481,19 @@ def render_map_image(
         if ranked:
             ranked.sort(key=lambda r: -r[0])
             largest = ranked[0][0]
-            # Keep the largest unconditionally; for the rest, accept only
-            # those at least 12% the size of the largest *and* at least
-            # 0.4% of the canvas. Tightened further (was 6%/0.15%) so
-            # scattered ponds disappear and the dominant coastline /
-            # harbour is the sole visual anchor.
-            min_relative = largest * 0.12
-            min_absolute = canvas_area * 0.004
+            # MapTiler water data is clean (no pond/drainage noise like
+            # Overpass), so we only need an absolute floor — not a
+            # relative-to-largest rule. The relative rule was killing
+            # multi-basin lakes (e.g. Bras d'Or's 10+ separate basin
+            # polygons) and multi-tile ocean fragments where one tile
+            # contained a huge polygon and neighbours held smaller
+            # slivers. An absolute floor at 0.1% of the canvas keeps
+            # the render clean while letting every meaningful water
+            # body through.
+            min_absolute = canvas_area * 0.001
             kept = 0
             for area, px_coords in ranked:
-                if area < min_relative or area < min_absolute:
+                if area < min_absolute:
                     continue
                 try:
                     draw.polygon(px_coords, fill=water_color)
@@ -517,7 +520,10 @@ def render_map_image(
         if park_color is not None:
             parks = parks_data.get("parks", [])
             canvas_area = img_w * img_h
-            min_park_area = canvas_area * 0.001  # 0.1% of canvas
+            # 0.03% of canvas — keeps small urban parks (Wentworth,
+            # Point Pleasant) visible while dropping true slivers from
+            # tile-boundary clipping.
+            min_park_area = canvas_area * 0.0003
             kept_parks = 0
             for coords, pclass, name in parks:
                 if len(coords) < 3:

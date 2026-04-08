@@ -640,7 +640,24 @@ async def fetch_water_maptiler(
 _GREEN_LANDCOVER_CLASSES = frozenset({"wood", "grass"})
 
 # Classes from the `landuse` layer that read as green park-ish areas.
-_GREEN_LANDUSE_CLASSES = frozenset({"cemetery", "recreation_ground"})
+#
+# NOTE: OpenMapTiles' dedicated `park` layer only appears at zoom 11+.
+# At lower zooms (big rural bboxes like Cape Breton Island that drop to
+# z9) parks live in `landuse` instead — so this allowlist has to cover
+# the rural classes (national_park, nature_reserve, forest, protected
+# area) as well as the urban classes (cemetery, recreation_ground,
+# village_green).
+_GREEN_LANDUSE_CLASSES = frozenset({
+    "cemetery",
+    "recreation_ground",
+    "park",
+    "national_park",
+    "nature_reserve",
+    "protected_area",
+    "forest",
+    "village_green",
+    "meadow",
+})
 
 
 def _choose_parks_zoom(bbox: tuple[float, float, float, float]) -> int:
