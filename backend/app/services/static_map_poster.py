@@ -42,6 +42,7 @@ POSTER_THEMES = {
         # Water with enough presence to read as a focal point against white
         "map_mode": "light", "water": (188, 208, 226),
         "water_edge": (135, 162, 188),
+        "park": (216, 230, 205),
     },
     "classic": {
         "bg": (250, 248, 244), "map_bg": (252, 250, 246),
@@ -49,6 +50,7 @@ POSTER_THEMES = {
         "border": (210, 200, 185), "line": (195, 185, 170),
         "road_major": (50, 45, 40), "road_minor": (120, 115, 105),
         "map_mode": "light", "water": (228, 225, 218),
+        "park": (225, 228, 208),
     },
     "modern_dark": {
         "bg": (22, 22, 38), "map_bg": (18, 18, 30),
@@ -56,6 +58,7 @@ POSTER_THEMES = {
         "border": (55, 55, 75), "line": (65, 65, 85),
         "road_major": (200, 200, 220), "road_minor": (120, 120, 145),
         "map_mode": "dark", "water": (25, 25, 42),
+        "park": (32, 42, 38),
     },
     "midnight": {
         "bg": (12, 22, 35), "map_bg": (8, 16, 28),
@@ -63,6 +66,7 @@ POSTER_THEMES = {
         "border": (35, 50, 70), "line": (45, 60, 80),
         "road_major": (180, 200, 220), "road_minor": (100, 125, 150),
         "map_mode": "dark", "water": (15, 25, 40),
+        "park": (18, 34, 32),
     },
     "minimal": {
         "bg": (255, 255, 255), "map_bg": (255, 255, 255),
@@ -70,6 +74,7 @@ POSTER_THEMES = {
         "border": (230, 230, 230), "line": (210, 210, 210),
         "road_major": (20, 20, 20), "road_minor": (100, 100, 100),
         "map_mode": "light", "water": (240, 240, 240),
+        "park": (232, 232, 232),
     },
     "navy_gold": {
         "bg": (10, 18, 35), "map_bg": (8, 15, 30),
@@ -77,6 +82,7 @@ POSTER_THEMES = {
         "border": (40, 50, 70), "line": (215, 180, 60),
         "road_major": (215, 180, 60), "road_minor": (160, 135, 50),
         "map_mode": "dark", "water": (12, 20, 38),
+        "park": (22, 32, 30),
     },
     "charcoal": {
         "bg": (40, 40, 40), "map_bg": (30, 30, 30),
@@ -84,6 +90,7 @@ POSTER_THEMES = {
         "border": (70, 70, 70), "line": (80, 80, 80),
         "road_major": (210, 210, 210), "road_minor": (140, 140, 140),
         "map_mode": "dark", "water": (35, 35, 35),
+        "park": (48, 52, 45),
     },
     "rose_gold": {
         "bg": (252, 242, 238), "map_bg": (255, 248, 244),
@@ -91,6 +98,7 @@ POSTER_THEMES = {
         "border": (225, 200, 190), "line": (210, 180, 168),
         "road_major": (175, 115, 95), "road_minor": (200, 160, 145),
         "map_mode": "light", "water": (245, 235, 230),
+        "park": (232, 228, 210),
     },
     "sage": {
         "bg": (242, 245, 238), "map_bg": (248, 250, 244),
@@ -98,6 +106,7 @@ POSTER_THEMES = {
         "border": (195, 210, 185), "line": (175, 195, 165),
         "road_major": (65, 90, 58), "road_minor": (130, 160, 120),
         "map_mode": "light", "water": (235, 242, 230),
+        "park": (208, 225, 190),
     },
     "ocean": {
         "bg": (232, 242, 250), "map_bg": (238, 248, 255),
@@ -105,6 +114,7 @@ POSTER_THEMES = {
         "border": (175, 205, 225), "line": (150, 185, 210),
         "road_major": (25, 65, 95), "road_minor": (90, 140, 175),
         "map_mode": "light", "water": (220, 235, 248),
+        "park": (218, 232, 218),
     },
     "blush": {
         "bg": (252, 238, 242), "map_bg": (255, 244, 248),
@@ -112,6 +122,7 @@ POSTER_THEMES = {
         "border": (232, 205, 215), "line": (218, 185, 198),
         "road_major": (145, 75, 95), "road_minor": (185, 135, 155),
         "map_mode": "light", "water": (248, 235, 240),
+        "park": (238, 228, 218),
     },
     "terracotta": {
         "bg": (248, 238, 228), "map_bg": (252, 244, 236),
@@ -119,6 +130,7 @@ POSTER_THEMES = {
         "border": (215, 190, 165), "line": (198, 170, 142),
         "road_major": (155, 85, 45), "road_minor": (185, 140, 100),
         "map_mode": "light", "water": (242, 232, 222),
+        "park": (228, 222, 190),
     },
     "lavender": {
         "bg": (242, 238, 252), "map_bg": (248, 244, 255),
@@ -126,6 +138,7 @@ POSTER_THEMES = {
         "border": (215, 200, 235), "line": (195, 178, 218),
         "road_major": (95, 65, 145), "road_minor": (150, 130, 190),
         "map_mode": "light", "water": (238, 232, 248),
+        "park": (222, 228, 218),
     },
     "arctic": {
         "bg": (238, 246, 252), "map_bg": (244, 250, 255),
@@ -133,6 +146,7 @@ POSTER_THEMES = {
         "border": (180, 218, 242), "line": (160, 200, 228),
         "road_major": (38, 55, 72), "road_minor": (100, 130, 160),
         "map_mode": "light", "water": (228, 240, 250),
+        "park": (218, 232, 228),
     },
 }
 
@@ -374,6 +388,7 @@ def render_map_image(
     pin_lng: float | None = None,
     viewport_meters: int | None = None,
     auto_compose: bool = True,
+    parks_data: dict | None = None,
 ) -> tuple[Image.Image, tuple[float, float]]:
     """Render road geometry directly onto a PIL Image.
 
@@ -489,6 +504,36 @@ def render_map_image(
             log.info(
                 f"Water render: {kept}/{len(ranked)} polygons kept "
                 f"(largest {largest/canvas_area*100:.1f}% canvas)"
+            )
+
+    # ── Draw parks / green space (between water and roads) ──
+    # Parks are filled with a muted theme green so iconic landmarks
+    # (Stanley Park, Central Park, Wentworth Park, Point Pleasant) read
+    # as visual anchors without competing with the road hierarchy.
+    # We filter out specks smaller than ~0.1% of canvas so tiny slivers
+    # (clipped landcover polygons at tile boundaries) don't clutter.
+    if parks_data:
+        park_color = theme.get("park")
+        if park_color is not None:
+            parks = parks_data.get("parks", [])
+            canvas_area = img_w * img_h
+            min_park_area = canvas_area * 0.001  # 0.1% of canvas
+            kept_parks = 0
+            for coords, pclass, name in parks:
+                if len(coords) < 3:
+                    continue
+                px_coords = [to_px(lon, lat) for lon, lat in coords]
+                area = abs(_ring_signed_area(px_coords))
+                if area < min_park_area:
+                    continue
+                try:
+                    draw.polygon(px_coords, fill=park_color)
+                    kept_parks += 1
+                except Exception:
+                    pass
+            log.info(
+                f"Park render: {kept_parks}/{len(parks)} polygons kept "
+                f"(min area {min_park_area:.0f}px)"
             )
 
     # ── Draw roads ──
@@ -859,6 +904,7 @@ def generate_road_poster(
     board_size: str = "18x24",
     show_coordinates: bool = True,
     color_theme: str = "city_art",
+    parks_data: dict | None = None,
 ) -> bytes | None:
     """Full pipeline: render roads → compose poster → PNG bytes.
 
@@ -905,6 +951,7 @@ def generate_road_poster(
         pin_lng=pin_lng,
         viewport_meters=viewport_meters,
         auto_compose=not has_named_override,
+        parks_data=parks_data,
     )
 
     # Compose into poster — pin draws at true location, not center
