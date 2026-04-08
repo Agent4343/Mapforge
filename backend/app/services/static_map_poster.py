@@ -300,7 +300,7 @@ _CENTER_OVERRIDES: dict[str, tuple[float, float]] = {
 # municipality. None / missing = use the bbox_area heuristic.
 _VIEWPORT_OVERRIDES: dict[str, int] = {
     "halifax": 12_000,    # Halifax peninsula portrait
-    "sydney":  30_000,    # Sydney CBRM: show harbour + Whitney Pier + Westmount
+    "sydney":  22_000,    # Sydney NS: downtown + harbour, Sydney proper only
 }
 
 
