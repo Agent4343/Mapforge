@@ -26,6 +26,14 @@ async def lifespan(app: FastAPI):
     log.info("MapForge CNC starting up...")
     log.info(f"DATABASE_URL dialect: {settings.DATABASE_URL.split('://')[0]}")
     log.info(f"PORT: {os.environ.get('PORT', 'not set (defaulting to 8000)')}")
+    if settings.MAPTILER_API_KEY:
+        log.info("MAPTILER_API_KEY: set (water + parks + streets via vector tiles)")
+    else:
+        log.warning(
+            "MAPTILER_API_KEY: NOT SET — coastal maps will fall back to Overpass "
+            "(noisy water, no ocean polygons, no parks rendering). "
+            "Register at https://cloud.maptiler.com and set the env var."
+        )
     try:
         await init_db()
         log.info("Database initialized")
