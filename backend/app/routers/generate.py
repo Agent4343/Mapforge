@@ -581,6 +581,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                     show_coordinates=req.show_coordinates,
                     color_theme=req.color_theme,
                     parks_data=parks_data,
+                    land_polygon=geom,
                 )
                 if poster_bytes:
                     b64 = base64.b64encode(poster_bytes).decode("ascii")
@@ -721,6 +722,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                         show_coordinates=req.show_coordinates,
                         color_theme=req.color_theme,
                         parks_data=parks_data,
+                        land_polygon=geom,
                     )
                 except Exception as e:
                     log.warning(f"Road poster for print failed (non-fatal): {e}")
