@@ -370,6 +370,28 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         if cache_key in _overpass_cache:
             log.info("Using cached water data")
             return _overpass_cache[cache_key]
+
+        # Try MapTiler first — its `water` layer includes pre-built ocean
+        # polygons (OSM has no ocean polygon, only coastline lines), which
+        # is the only way to fill the Atlantic on coastal maps like
+        # Cape Breton County, Halifax, Vancouver, etc.
+        result = None
+        if settings.MAPTILER_API_KEY:
+            log.info("Trying MapTiler for water data")
+            from app.services.maptiler_fetcher import fetch_water_maptiler
+            result = await fetch_water_maptiler(bbox=water_bbox)
+            has_data = result and (result.get("water_polygons") or result.get("waterways"))
+            if has_data:
+                log.info(
+                    f"MapTiler water fetch succeeded: "
+                    f"{len(result.get('water_polygons', []))} polygons, "
+                    f"{len(result.get('waterways', []))} waterways"
+                )
+                _cache_overpass(cache_key, result)
+                return result
+            log.warning("MapTiler water returned no data — falling back to Overpass")
+            result = None
+
         result = await fetch_water_features(bbox=water_bbox)
         has_data = result and (result.get("water_polygons") or result.get("waterways"))
         if has_data:

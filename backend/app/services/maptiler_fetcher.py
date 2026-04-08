@@ -463,3 +463,162 @@ async def fetch_streets_maptiler(
              f"{len(major_roads)} major + {len(minor_roads)} minor roads in {elapsed:.1f}s")
 
     return {"major_roads": major_roads, "minor_roads": minor_roads}
+
+
+# ── Water fetching via MapTiler vector tiles ──────────────────────────
+#
+# OpenMapTiles `water` layer contains pre-built polygons for oceans,
+# lakes, rivers, ponds, etc. — including the open ocean, which OSM does
+# NOT provide as a polygon (OSM only stores coastlines as lines). This
+# solves the "Cape Breton County has no visible water" bug where coastal
+# maps rendered with Overpass water had the Atlantic missing entirely.
+#
+# `waterway` layer holds river/stream line geometries for narrow features
+# that don't warrant a polygon.
+
+
+def _choose_water_zoom(bbox: tuple[float, float, float, float]) -> int:
+    """Choose zoom level for water fetch.
+
+    Water features are large and don't need as much detail as streets.
+    Using a lower zoom than streets means fewer tiles for the same bbox,
+    which matters for large coastal counties where the street fetch is
+    already at max-tiles-capped zoom.
+    """
+    south, west, north, east = bbox
+    area = (north - south) * (east - west)
+
+    if area > 1.0:
+        return 8   # Very large (full province)
+    elif area > 0.1:
+        return 10  # Large county / metro
+    elif area > 0.01:
+        return 11  # Medium city
+    elif area > 0.001:
+        return 12  # Small city
+    else:
+        return 13  # Neighborhood
+
+
+async def fetch_water_maptiler(
+    bbox: tuple[float, float, float, float],
+) -> dict:
+    """Fetch water features using MapTiler Vector Tiles API.
+
+    Returns same format as water_fetcher.fetch_water_features():
+        {"water_polygons": [(coords, water_type, name), ...],
+         "waterways":      [(coords, water_type, name), ...]}
+
+    MapTiler's `water` layer contains pre-built ocean/lake/river polygons
+    from the OpenMapTiles land-polygon dataset — this is the only way to
+    get an OCEAN polygon (OSM has no ocean, only coastlines).
+    """
+    api_key = settings.MAPTILER_API_KEY
+    if not api_key:
+        log.warning("MAPTILER_API_KEY not set — cannot use MapTiler for water")
+        return {"water_polygons": [], "waterways": []}
+
+    start = time.monotonic()
+    south, west, north, east = bbox
+    zoom = _choose_water_zoom(bbox)
+
+    x_min, y_min = _lng_lat_to_tile(west, north, zoom)
+    x_max, y_max = _lng_lat_to_tile(east, south, zoom)
+
+    total_tiles = (x_max - x_min + 1) * (y_max - y_min + 1)
+    log.info(f"MapTiler water: fetching {total_tiles} tiles at zoom {zoom}")
+
+    # Cap tile count — water fetches at the whole-county level can balloon.
+    MAX_WATER_TILES = 64
+    while total_tiles > MAX_WATER_TILES and zoom > 6:
+        zoom -= 1
+        x_min, y_min = _lng_lat_to_tile(west, north, zoom)
+        x_max, y_max = _lng_lat_to_tile(east, south, zoom)
+        total_tiles = (x_max - x_min + 1) * (y_max - y_min + 1)
+        log.info(f"MapTiler water: reduced to zoom {zoom} ({total_tiles} tiles)")
+
+    water_polygons: list[tuple] = []
+    waterways: list[tuple] = []
+    tiles_fetched = 0
+    tiles_failed = 0
+
+    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+        for tx in range(x_min, x_max + 1):
+            for ty in range(y_min, y_max + 1):
+                url = MAPTILER_TILE_URL.format(z=zoom, x=tx, y=ty) + f"?key={api_key}"
+                try:
+                    resp = await client.get(url)
+                    if resp.status_code != 200:
+                        tiles_failed += 1
+                        if resp.status_code == 204:
+                            continue  # Empty tile
+                        log.warning(f"MapTiler water HTTP {resp.status_code} for tile {zoom}/{tx}/{ty}")
+                        continue
+
+                    tiles_fetched += 1
+                    tile_data = resp.content
+                    if tile_data[:2] == b'\x1f\x8b':
+                        import gzip
+                        tile_data = gzip.decompress(tile_data)
+
+                    layers = _parse_mvt(tile_data)
+                    for layer in layers:
+                        lname = layer["name"]
+                        if lname not in ("water", "waterway"):
+                            continue
+
+                        extent = layer["extent"]
+                        keys = layer["keys"]
+                        values = layer["values"]
+
+                        for feat_data in layer["features"]:
+                            feature = _parse_mvt_feature(feat_data, keys, values)
+                            gtype = feature["geometry_type"]
+                            props = feature["properties"]
+                            water_class = str(props.get("class", "") or "")
+                            name = str(props.get("name", "") or "")
+
+                            # Decode geometry (rings for polygons, lines for waterways)
+                            geom_rings = _decode_geometry(gtype, feature["geometry"])
+
+                            if lname == "water" and gtype == 3:
+                                # Polygon — each ring becomes a fillable polygon.
+                                # We don't distinguish outer/inner because the
+                                # renderer uses area ranking to drop slivers.
+                                for pixel_coords in geom_rings:
+                                    if len(pixel_coords) < 3:
+                                        continue
+                                    coords = [
+                                        _pixel_to_lnglat(px, py, extent, tx, ty, zoom)
+                                        for px, py in pixel_coords
+                                    ]
+                                    water_polygons.append(
+                                        (coords, water_class or "water", name)
+                                    )
+                            elif lname == "waterway" and gtype == 2:
+                                # Line — river, stream, canal
+                                for pixel_coords in geom_rings:
+                                    if len(pixel_coords) < 2:
+                                        continue
+                                    coords = [
+                                        _pixel_to_lnglat(px, py, extent, tx, ty, zoom)
+                                        for px, py in pixel_coords
+                                    ]
+                                    waterways.append(
+                                        (coords, water_class or "river", name)
+                                    )
+
+                except httpx.TimeoutException:
+                    tiles_failed += 1
+                    log.warning(f"MapTiler water timeout for tile {zoom}/{tx}/{ty}")
+                except Exception as e:
+                    tiles_failed += 1
+                    log.warning(f"MapTiler water error for tile {zoom}/{tx}/{ty}: {type(e).__name__}: {e}")
+
+    elapsed = time.monotonic() - start
+    log.info(
+        f"MapTiler water: {tiles_fetched} tiles fetched, {tiles_failed} failed, "
+        f"{len(water_polygons)} polygons + {len(waterways)} waterways in {elapsed:.1f}s"
+    )
+
+    return {"water_polygons": water_polygons, "waterways": waterways}
