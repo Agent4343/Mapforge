@@ -1562,26 +1562,105 @@ async def download_etsy_package(
         except Exception:
             ai = {"title": None, "description": None, "tags": None}
 
+        fallback_title = (
+            f"{location} City Map Print — Printable Wall Art Poster — "
+            f"Home Decor Housewarming Gift — Digital Download"
+        )[:140]
+        fallback_tags = (
+            f"{location} map,city map print,map wall art,printable art,"
+            f"home decor,housewarming gift,digital download,map poster,"
+            f"custom map art,svg dxf file"
+        )
+        fallback_description = (
+            f"A modern minimalist printable city map poster of {location}. "
+            f"Instant digital download — ready to print and frame at standard "
+            f"sizes (8x10, 11x14, 16x20, 18x24, 24x36 inches). High-resolution "
+            f"PNG for wall art, plus bonus SVG and DXF files for CNC hobbyists "
+            f"and laser cutters. Perfect as a housewarming, wedding, anniversary, "
+            f"or hometown pride gift. No physical product shipped."
+        )
+
         listing_lines = [
             f"=== MapForge Etsy Listing — {location} ===",
             "",
-            f"TITLE: {ai.get('title') or location + ' Map SVG — CNC Laser Cut File — Digital Download'}",
+            f"TITLE: {ai.get('title') or fallback_title}",
             "",
-            f"TAGS: {ai.get('tags') or 'map svg, cnc file, laser cut, wall art, digital download'}",
+            f"TAGS: {ai.get('tags') or fallback_tags}",
             "",
             "DESCRIPTION:",
-            ai.get("description") or f"Beautiful CNC-ready map of {location}. Digital download includes SVG source file. Compatible with VCarve Pro, Fusion 360, Carbide Create, and LightBurn.",
+            ai.get("description") or fallback_description,
             "",
             "---",
             "Files included in this package:",
-            f"  - {seo_name}.svg (full detail vector — wall art prints)",
-            f"  - {seo_name}-cnc.svg (CNC-optimized — major roads only, clean toolpaths)",
+            f"  - {seo_name}-print.png (PRIMARY — high-resolution wall art poster, ready to print and frame)",
+            f"  - {seo_name}.svg (full-detail vector source — for scaling and editing)",
+            f"  - {seo_name}-cnc.svg (CNC-optimized vector — major roads only, clean toolpaths)",
             f"  - {seo_name}.dxf (VCarve Pro / CAM import — major roads only)",
-            f"  - {seo_name}-print.png (high-res print)",
-            f"  - {seo_name}-etsy-listing-2700x2025.png (listing image)",
+            f"  - {seo_name}-etsy-listing-2700x2025.png (Etsy listing hero image)",
             f"  - {seo_name}-mockup.png (product mockup)",
+            f"  - {seo_name}-wall-mockup-light_wall.png (lifestyle mockup on a light wall)",
+            f"  - {seo_name}-wall-mockup-dark_wall.png (lifestyle mockup on a dark wall)",
+            f"  - README_FIRST.txt (how-to-print instructions for the buyer)",
         ]
         zf.writestr("listing.txt", "\n".join(listing_lines))
+
+        # 6. Buyer-facing README with print instructions
+        readme_lines = [
+            f"=== Thank you for your {location} Map Art purchase! ===",
+            "",
+            "This is an INSTANT DIGITAL DOWNLOAD — no physical product will be shipped.",
+            "",
+            "WHAT'S IN THIS BUNDLE",
+            "---------------------",
+            f"  - {seo_name}-print.png   <-- START HERE. This is your wall art poster.",
+            "                             High-resolution 300 DPI PNG, ready to print",
+            "                             and frame at standard sizes.",
+            "",
+            f"  - {seo_name}.svg         Full-detail vector source. Use this if you",
+            "                             want to scale up beyond 24x36 inches or",
+            "                             edit the design in Illustrator/Inkscape.",
+            "",
+            f"  - {seo_name}-cnc.svg     Simplified CNC-ready vector (major roads only).",
+            f"  - {seo_name}.dxf         DXF file for CAD/CAM software.",
+            "                             Bonus files for CNC hobbyists and laser cutters",
+            "                             (VCarve Pro, Fusion 360, Carbide Create, LightBurn,",
+            "                             Easel). Works on wood, acrylic, plywood, and MDF.",
+            "",
+            "HOW TO PRINT YOUR WALL ART",
+            "--------------------------",
+            "1. Choose a frame size. The PNG prints beautifully at any of these:",
+            "        8x10 inches   (small desk print)",
+            "       11x14 inches   (accent piece)",
+            "       16x20 inches   (standard wall art)",
+            "       18x24 inches   (statement piece)",
+            "       24x36 inches   (large centerpiece)",
+            "",
+            "2. Pick a print service. Any of these work great:",
+            "     - At home on a color inkjet or laser printer",
+            "     - Local print shop (Staples, FedEx Office, Michael's)",
+            "     - Online print service (Shutterfly, Mpix, Printful, Printique)",
+            "",
+            "3. Frame it. Any standard off-the-shelf frame from IKEA, Target,",
+            "   Amazon, or Michael's will fit — no custom framing needed.",
+            "",
+            "TIPS",
+            "----",
+            "  - Print on matte or semi-gloss paper for the best look.",
+            "  - If printing larger than 18x24, use the SVG file for maximum sharpness.",
+            "  - Cardstock (80-100 lb) is a great home-print choice.",
+            "",
+            "LICENSE",
+            "-------",
+            "For personal use and small-batch handmade resale (wood-carved or",
+            "laser-cut maps you sell yourself). Not for mass-produced resale.",
+            "Map data: OpenStreetMap contributors (ODbL).",
+            "",
+            "Questions? Message us through Etsy — we respond within 24 hours.",
+            "",
+            "Happy decorating!",
+            "— MapForge",
+        ]
+        zf.writestr("README_FIRST.txt", "\n".join(readme_lines))
 
     zip_bytes = buf.getvalue()
     zip_filename = _seo_filename(location, "zip", suffix="etsy-package")
