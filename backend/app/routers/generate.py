@@ -1483,10 +1483,17 @@ async def download_etsy_package(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Download a ZIP bundle with everything needed for an Etsy listing (admin only)."""
+    """Download a ZIP bundle with everything needed for an Etsy listing (admin only).
+
+    Uses the shared customer bundle builder so admin and customer ZIPs stay
+    in sync, then appends admin-only extras: the 2700x2025 Etsy hero image
+    and listing.txt (AI-generated title/tags/description for pasting into
+    the Etsy listing form).
+    """
     if user.tier != "admin":
         raise HTTPException(status_code=403, detail="Admin only.")
     from app.services.ai_description_generator import generate_full_listing
+    from app.services.bundle_zip import build_customer_bundle_zip
 
     result = await db.execute(
         select(GeneratedFile).where(GeneratedFile.id == file_id)
@@ -1498,92 +1505,74 @@ async def download_etsy_package(
     location = file_record.location_name
     seo_name = _seo_filename(location, "").rstrip(".")  # base name without extension
 
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        # 1. SVG source
-        svg_bytes = await retrieve_file(file_record.svg_storage_key)
-        if svg_bytes:
-            zf.writestr(f"{seo_name}.svg", svg_bytes)
+    # Admin-only extras appended to the shared customer bundle
+    extras: dict[str, bytes] = {}
 
-        # 2. CNC-optimized SVG (simplified: major roads only)
-        cnc_key = file_record.svg_storage_key.replace("svg/", "cnc/").replace(".svg", "_cnc.svg")
-        cnc_bytes = await retrieve_file(cnc_key)
-        if cnc_bytes:
-            zf.writestr(f"{seo_name}-cnc.svg", cnc_bytes)
+    # Etsy listing hero image (2700x2025) — seller uses this as the listing hero
+    etsy_key = file_record.svg_storage_key.replace("svg/", "etsy/").replace(
+        ".svg", "_etsy.png"
+    )
+    etsy_bytes = await retrieve_file(etsy_key)
+    if etsy_bytes:
+        extras[f"{seo_name}-etsy-listing-2700x2025.png"] = etsy_bytes
 
-        # 2b. DXF source (CNC-ready)
-        if file_record.dxf_storage_key:
-            dxf_bytes = await retrieve_file(file_record.dxf_storage_key)
-            if dxf_bytes:
-                zf.writestr(f"{seo_name}.dxf", dxf_bytes)
+    # AI-generated listing text (title, description, tags) — pasted into Etsy
+    is_city = file_record.product_type == "city"
+    try:
+        ai = await generate_full_listing(
+            location_name=location,
+            style=file_record.style,
+            country="",
+            province=file_record.province or "",
+            is_city=is_city,
+        )
+    except Exception:
+        ai = {"title": None, "description": None, "tags": None}
 
-        # 3. Print PNG
-        if file_record.print_png_key:
-            png_bytes = await retrieve_file(file_record.print_png_key)
-            if png_bytes:
-                zf.writestr(f"{seo_name}-print.png", png_bytes)
+    fallback_title = (
+        f"{location} City Map Print — Printable Wall Art Poster — "
+        f"Home Decor Housewarming Gift — Digital Download"
+    )[:140]
+    fallback_tags = (
+        f"{location} map,city map print,map wall art,printable art,"
+        f"home decor,housewarming gift,digital download,map poster,"
+        f"custom map art,svg dxf file"
+    )
+    fallback_description = (
+        f"A modern minimalist printable city map poster of {location}. "
+        f"Instant digital download — ready to print and frame at standard "
+        f"sizes (8x10, 11x14, 16x20, 18x24, 24x36 inches). High-resolution "
+        f"PNG for wall art, plus bonus SVG and DXF files for CNC hobbyists "
+        f"and laser cutters. Perfect as a housewarming, wedding, anniversary, "
+        f"or hometown pride gift. No physical product shipped."
+    )
 
-        # 3. Etsy listing image (2700x2025)
-        etsy_key = file_record.svg_storage_key.replace("svg/", "etsy/").replace(".svg", "_etsy.png")
-        etsy_bytes = await retrieve_file(etsy_key)
-        if etsy_bytes:
-            zf.writestr(f"{seo_name}-etsy-listing-2700x2025.png", etsy_bytes)
+    listing_lines = [
+        f"=== MapForge Etsy Listing — {location} ===",
+        "",
+        f"TITLE: {ai.get('title') or fallback_title}",
+        "",
+        f"TAGS: {ai.get('tags') or fallback_tags}",
+        "",
+        "DESCRIPTION:",
+        ai.get("description") or fallback_description,
+        "",
+        "---",
+        "Files included in this package:",
+        f"  - {seo_name}-print.png (PRIMARY — high-resolution wall art poster, ready to print and frame)",
+        f"  - {seo_name}.svg (full-detail vector source — for scaling and editing)",
+        f"  - {seo_name}-cnc.svg (CNC-optimized vector — major roads only, clean toolpaths)",
+        f"  - {seo_name}.dxf (VCarve Pro / CAM import — major roads only)",
+        f"  - {seo_name}-etsy-listing-2700x2025.png (Etsy listing hero image)",
+        f"  - {seo_name}-mockup.png (product mockup)",
+        f"  - {seo_name}-wall-mockup-light_wall.png (lifestyle mockup on a light wall)",
+        f"  - {seo_name}-wall-mockup-dark_wall.png (lifestyle mockup on a dark wall)",
+        f"  - README_FIRST.txt (how-to-print instructions for the buyer)",
+    ]
+    extras["listing.txt"] = "\n".join(listing_lines).encode("utf-8")
 
-        # 4. Thumbnail / mockup
-        if file_record.thumbnail_key:
-            thumb_bytes = await retrieve_file(file_record.thumbnail_key)
-            if thumb_bytes:
-                zf.writestr(f"{seo_name}-mockup.png", thumb_bytes)
-
-        # 4b. Wall mockups (framed on wall — lifestyle photos for listings)
-        if svg_bytes:
-            try:
-                for mockup_style in ("light_wall", "dark_wall"):
-                    mockup_png = generate_wall_mockup(
-                        svg_bytes.decode("utf-8"),
-                        output_width=3000,
-                        output_height=2400,
-                        mockup_style=mockup_style,
-                    )
-                    zf.writestr(f"{seo_name}-wall-mockup-{mockup_style}.png", mockup_png)
-            except Exception as e:
-                log.warning(f"Wall mockup generation failed (non-fatal): {e}")
-
-        # 5. AI-generated listing text (title, description, tags)
-        is_city = file_record.product_type == "city"
-        try:
-            ai = await generate_full_listing(
-                location_name=location,
-                style=file_record.style,
-                country="",
-                province=file_record.province or "",
-                is_city=is_city,
-            )
-        except Exception:
-            ai = {"title": None, "description": None, "tags": None}
-
-        listing_lines = [
-            f"=== MapForge Etsy Listing — {location} ===",
-            "",
-            f"TITLE: {ai.get('title') or location + ' Map SVG — CNC Laser Cut File — Digital Download'}",
-            "",
-            f"TAGS: {ai.get('tags') or 'map svg, cnc file, laser cut, wall art, digital download'}",
-            "",
-            "DESCRIPTION:",
-            ai.get("description") or f"Beautiful CNC-ready map of {location}. Digital download includes SVG source file. Compatible with VCarve Pro, Fusion 360, Carbide Create, and LightBurn.",
-            "",
-            "---",
-            "Files included in this package:",
-            f"  - {seo_name}.svg (full detail vector — wall art prints)",
-            f"  - {seo_name}-cnc.svg (CNC-optimized — major roads only, clean toolpaths)",
-            f"  - {seo_name}.dxf (VCarve Pro / CAM import — major roads only)",
-            f"  - {seo_name}-print.png (high-res print)",
-            f"  - {seo_name}-etsy-listing-2700x2025.png (listing image)",
-            f"  - {seo_name}-mockup.png (product mockup)",
-        ]
-        zf.writestr("listing.txt", "\n".join(listing_lines))
-
-    zip_bytes = buf.getvalue()
+    # Build the shared customer bundle + admin extras
+    zip_bytes = await build_customer_bundle_zip(file_record, extra_files=extras)
     zip_filename = _seo_filename(location, "zip", suffix="etsy-package")
 
     return Response(

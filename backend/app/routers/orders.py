@@ -182,10 +182,17 @@ async def get_credit_status(token: str):
 
 
 @router.get("/download/{token}")
-async def download_files(token: str, format: str = Query("png")):
-    """Download generated files using the design credit token."""
+async def download_files(token: str, format: str = Query("zip")):
+    """Download generated files using the design credit token.
+
+    Default format is "zip" — a complete bundle containing the printable
+    wall art poster, vector sources, CNC/laser files, wall mockups, and a
+    how-to-print README. Individual formats ("png", "svg", "dxf",
+    "thumbnail") are also still supported for buyers who want a single file.
+    """
     from fastapi.responses import StreamingResponse
     from app.services.file_storage import get_file
+    from app.services.bundle_zip import build_customer_bundle_zip, seo_filename
 
     async with async_session() as db:
         result = await db.execute(
@@ -215,7 +222,38 @@ async def download_files(token: str, format: str = Query("png")):
     if not gen_file:
         raise HTTPException(status_code=404, detail="Generated file not found")
 
-    # Determine which file to serve
+    # --- ZIP bundle path (default) ---------------------------------------
+    if format == "zip":
+        try:
+            zip_bytes = await build_customer_bundle_zip(gen_file)
+        except Exception as e:
+            log.error(f"Failed to build customer bundle zip for credit {credit.id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to build download bundle. Please try again.")
+
+        if not zip_bytes:
+            raise HTTPException(status_code=404, detail="No files available for this order.")
+
+        # Increment download count only after a successful bundle build
+        async with async_session() as db:
+            result = await db.execute(select(DesignCredit).where(DesignCredit.id == credit.id))
+            c = result.scalar_one()
+            c.download_count += 1
+            await db.commit()
+
+        zip_filename = seo_filename(
+            gen_file.location_name or credit.location_name or "map",
+            "zip",
+            suffix="bundle",
+        )
+        return StreamingResponse(
+            iter([zip_bytes]),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{zip_filename}"',
+            },
+        )
+
+    # --- Single-file fallback paths (legacy) -----------------------------
     key = None
     content_type = "application/octet-stream"
     filename_ext = format
