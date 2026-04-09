@@ -503,11 +503,43 @@ def render_map_image(
             abs(_ring_signed_area(r)) for r in land_rings_px
         )
         land_ratio = total_land_area / canvas_area if canvas_area else 0
-        if 0 < land_ratio < 0.75:
+
+        # Inland-city guard. The original rule — "any land polygon
+        # covering less than 75% of the canvas is an island/peninsula
+        # and should be clipped" — breaks on inland cities like
+        # Calgary whose admin boundaries follow township section
+        # lines (giving a rectangular staircase outline). Without
+        # this guard we paint the "outside" of the city limits with
+        # water colour and the poster looks like Calgary is floating
+        # in an ocean.
+        #
+        # Real islands/peninsulas always have a LARGE water polygon
+        # (ocean or big lake) nearby — that's the definition of a
+        # coastline. We only apply the mask when water_data contains
+        # at least one polygon that takes up >=8% of the canvas.
+        has_large_water = False
+        if water_data:
+            for coords, _wt, _wn in water_data.get("water_polygons", []):
+                if len(coords) < 3:
+                    continue
+                ring_px = [to_px(lon, lat) for lon, lat in coords]
+                area = abs(_ring_signed_area(ring_px))
+                if area >= canvas_area * 0.08:
+                    has_large_water = True
+                    break
+
+        if 0 < land_ratio < 0.75 and has_large_water:
             apply_ocean_mask = True
             log.info(
                 f"Ocean mask will be applied post-draw: land "
-                f"{land_ratio*100:.1f}% of canvas ({len(land_rings_px)} polygons)"
+                f"{land_ratio*100:.1f}% of canvas ({len(land_rings_px)} polygons), "
+                f"large water polygon detected"
+            )
+        elif 0 < land_ratio < 0.75 and not has_large_water:
+            log.info(
+                f"Ocean mask skipped: land {land_ratio*100:.1f}% "
+                f"but no large water polygon — treating as inland city "
+                f"(admin boundary is not a coastline)"
             )
         else:
             log.info(
@@ -583,10 +615,13 @@ def render_map_image(
         waterways = water_data.get("waterways", [])
         if waterways:
             river_color = theme.get("water", (188, 208, 226))
-            # River lines ~4x the coastline edge weight — fat enough
-            # to read as a dominant landmark but not so heavy that it
-            # fights with major roads.
-            river_w = max(6, int(min(img_w, img_h) * 0.006))
+            # River lines fat enough to read as the dominant non-road
+            # landmark on landlocked cities like Calgary where the
+            # signature river (Bow, Elbow) is the whole reason the
+            # map looks like itself. 9 per-mil of canvas puts the
+            # river at ~22px on a 2400px render — wider than a
+            # primary road, thinner than a motorway trunk.
+            river_w = max(8, int(min(img_w, img_h) * 0.009))
             kept_rivers = 0
             for coords, wtype, name in waterways:
                 if len(coords) < 2:
@@ -631,38 +666,46 @@ def render_map_image(
         # Scale line widths + minor-road length threshold to viewport.
         # Larger viewport = drop more residentials so the map breathes.
         # Premium wall-art hierarchy: majors ~2.2–2.5x the width of
-        # minors so the primary grid reads instantly, and the minor
-        # length threshold is ~50% more aggressive than before so the
-        # residential grid thins to a calm background texture instead
-        # of a busy mesh. Minor colour also lightened toward 180 grey
-        # in the theme for extra separation.
+        # minors so the primary grid reads instantly. At metro scale
+        # we drop ALL residential streets — the arterial skeleton is
+        # the whole point of a city-art poster, and the suburban grid
+        # just muddies the frame. At downtown scale we keep the grid
+        # because it's the character of the place.
+        drop_all_residentials = False
         if bbox_area > 2.0:
             minor_mult, major_mult = 3, 9
             minor_min, major_min = 2, 6
             min_residential_px = 440
+            drop_all_residentials = True
         elif bbox_area > 0.5:
             minor_mult, major_mult = 5, 12
             minor_min, major_min = 2, 7
             min_residential_px = 320
+            drop_all_residentials = True
         elif bbox_area > 0.1:
             minor_mult, major_mult = 6, 14
             minor_min, major_min = 3, 8
             min_residential_px = 230
+            drop_all_residentials = True
         elif bbox_area > 0.03:
+            # Calgary-sized metro: drop ALL residentials so only the
+            # motorway/trunk/primary/secondary/tertiary skeleton
+            # shows. This is the "iconic city outline" look.
             minor_mult, major_mult = 8, 18
             minor_min, major_min = 3, 10
             min_residential_px = 160
+            drop_all_residentials = True
         elif bbox_area > 0.01:
-            # Halifax/Calgary-sized downtown: aggressively drop micro
-            # streets so the arterial grid breathes. Calgary's Deerfoot
-            # / Memorial / Crowchild backbone should dominate the frame.
+            # Halifax-sized downtown: aggressively drop micro streets
+            # so the arterial grid breathes, but keep the residential
+            # character of the urban core.
             minor_mult, major_mult = 8, 20
             minor_min, major_min = 3, 11
             min_residential_px = 180
         elif bbox_area > 0.002:
             # Sydney NS-sized small city: stronger hierarchy + denser
             # residential cleanup. Hierarchy reinforced via both width
-            # AND colour contrast (15,15,15 vs 180,180,180).
+            # AND colour contrast (15,15,15 vs 190,190,190).
             minor_mult, major_mult = 8, 18
             minor_min, major_min = 3, 10
             min_residential_px = 170
@@ -706,6 +749,11 @@ def render_map_image(
                 dropped_minor += 1
                 continue
             if rclass in _DROP_HIGHWAYS:
+                dropped_minor += 1
+                continue
+            # Metro-scale drop: kill every residential so only the
+            # arterial skeleton (tertiary and up) remains.
+            if drop_all_residentials and rclass in _RESIDENTIAL_HIGHWAYS:
                 dropped_minor += 1
                 continue
             px_coords = [to_px(lon, lat) for lon, lat in coords]
