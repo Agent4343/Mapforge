@@ -751,9 +751,11 @@ def render_map_image(
             if rclass in _DROP_HIGHWAYS:
                 dropped_minor += 1
                 continue
-            # Metro-scale drop: kill every residential so only the
-            # arterial skeleton (tertiary and up) remains.
-            if drop_all_residentials and rclass in _RESIDENTIAL_HIGHWAYS:
+            # Metro-scale: drop the ENTIRE minor layer (tertiary,
+            # residential, unclassified, living_street). At city scale
+            # only the arterial skeleton (motorway/trunk/primary/
+            # secondary in the major_roads list) is wanted.
+            if drop_all_residentials:
                 dropped_minor += 1
                 continue
             px_coords = [to_px(lon, lat) for lon, lat in coords]
@@ -849,6 +851,38 @@ def render_map_image(
             log.info("Ocean mask composited onto render")
         except Exception as e:
             log.warning(f"Ocean mask composite failed: {e}", exc_info=True)
+
+    # ── Inland-city clip mask (admin-boundary crop) ──
+    # For inland cities we don't want ocean — we want a clean white
+    # background with every feature clipped to the city's administrative
+    # boundary. Stray highways, rivers, and reservoirs bleed in from
+    # outside the bbox (Trans-Canada west of Calgary, Glenmore
+    # Reservoir, etc.) and wreck the contained premium look. This mask
+    # paints the background colour OUTSIDE the land polygon so every
+    # stray feature disappears onto the white page.
+    #
+    # Skipped when the ocean mask already ran (coastal cities) so we
+    # don't double-clip.
+    if land_rings_px and not apply_ocean_mask:
+        try:
+            bg_color = theme.get("map_bg", (255, 255, 255))
+            SS = 2
+            hires_mask = Image.new("L", (img_w * SS, img_h * SS), 255)
+            hires_draw = ImageDraw.Draw(hires_mask)
+            for ring_px in land_rings_px:
+                ss_ring = [(x * SS, y * SS) for (x, y) in ring_px]
+                hires_draw.polygon(ss_ring, fill=0)
+            clip_mask = hires_mask.resize(
+                (img_w, img_h), Image.LANCZOS
+            )
+            bg_layer = Image.new("RGB", (img_w, img_h), bg_color)
+            img.paste(bg_layer, (0, 0), clip_mask)
+            log.info(
+                "Inland-city clip mask applied: features outside the "
+                "admin boundary erased onto map_bg"
+            )
+        except Exception as e:
+            log.warning(f"Inland-city clip mask failed: {e}", exc_info=True)
 
     # Compute pin pixel in the rendered image
     if pin_lat is not None and pin_lng is not None:
