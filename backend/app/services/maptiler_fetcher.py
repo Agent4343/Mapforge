@@ -310,6 +310,7 @@ async def fetch_streets_maptiler(
     bbox: tuple[float, float, float, float],
     include_minor: bool = True,
     skip_detail: bool = False,
+    api_key: str | None = None,
 ) -> dict:
     """Fetch street network using MapTiler Vector Tiles API.
 
@@ -318,7 +319,7 @@ async def fetch_streets_maptiler(
         each entry is (coords, road_class, width, name)
         where coords is list of (lon, lat) tuples.
     """
-    api_key = settings.MAPTILER_API_KEY
+    api_key = (api_key or settings.MAPTILER_API_KEY or "").strip()
     if not api_key:
         log.warning("MAPTILER_API_KEY not set — cannot use MapTiler")
         return {"major_roads": [], "minor_roads": []}
@@ -502,6 +503,7 @@ def _choose_water_zoom(bbox: tuple[float, float, float, float]) -> int:
 
 async def fetch_water_maptiler(
     bbox: tuple[float, float, float, float],
+    api_key: str | None = None,
 ) -> dict:
     """Fetch water features using MapTiler Vector Tiles API.
 
@@ -513,7 +515,7 @@ async def fetch_water_maptiler(
     from the OpenMapTiles land-polygon dataset — this is the only way to
     get an OCEAN polygon (OSM has no ocean, only coastlines).
     """
-    api_key = settings.MAPTILER_API_KEY
+    api_key = (api_key or settings.MAPTILER_API_KEY or "").strip()
     if not api_key:
         log.warning("MAPTILER_API_KEY not set — cannot use MapTiler for water")
         return {"water_polygons": [], "waterways": []}
@@ -679,6 +681,7 @@ def _choose_parks_zoom(bbox: tuple[float, float, float, float]) -> int:
 
 async def fetch_parks_maptiler(
     bbox: tuple[float, float, float, float],
+    api_key: str | None = None,
 ) -> dict:
     """Fetch park + green-space features from MapTiler vector tiles.
 
@@ -691,7 +694,7 @@ async def fetch_parks_maptiler(
         landcover layer — wood + grass classes only
         landuse layer   — cemetery + recreation_ground (read as green)
     """
-    api_key = settings.MAPTILER_API_KEY
+    api_key = (api_key or settings.MAPTILER_API_KEY or "").strip()
     if not api_key:
         log.warning("MAPTILER_API_KEY not set — cannot use MapTiler for parks")
         return {"parks": []}
