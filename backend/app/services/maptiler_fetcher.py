@@ -352,6 +352,22 @@ async def fetch_streets_maptiler(
     tiles_fetched = 0
     tiles_failed = 0
 
+    # ── Tile-seam deduplication ───────────────────────────────────
+    # MVT tiles ship with an ~8-256 unit buffer zone, so features
+    # that straddle a tile boundary are present in BOTH adjacent
+    # tiles. Without dedup, every such road is drawn twice by the
+    # poster renderer — and the double-draw lines up exactly on the
+    # tile grid, producing the visible "square edges" the user
+    # reported on the Calgary render.
+    #
+    # Signature = tuple of ~1m-precision (lng, lat) coordinate
+    # pairs. Two tiles containing the same feature will emit
+    # identical signatures because MapTiler encodes identical
+    # geometry in both buffer zones. A set lookup is O(1) and the
+    # hashable-tuple conversion adds <1ms per tile.
+    seen_road_sigs: set = set()
+    dedup_skipped = 0
+
     async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
         for tx in range(x_min, x_max + 1):
             for ty in range(y_min, y_max + 1):
@@ -445,6 +461,20 @@ async def fetch_streets_maptiler(
                                 if not in_bbox:
                                     continue
 
+                                # Tile-seam deduplication: roads in
+                                # buffer zones appear in multiple
+                                # tiles. Rounding to ~1m precision
+                                # gives two tiles the same signature
+                                # for the same underlying geometry.
+                                sig = tuple(
+                                    (round(lng * 1e5), round(lat * 1e5))
+                                    for lng, lat in coords
+                                )
+                                if sig in seen_road_sigs:
+                                    dedup_skipped += 1
+                                    continue
+                                seen_road_sigs.add(sig)
+
                                 entry = (coords, mapped_class, road_info["width"], name)
 
                                 if road_info["layer"] == "major":
@@ -460,8 +490,11 @@ async def fetch_streets_maptiler(
                     log.warning(f"MapTiler error for tile {zoom}/{tx}/{ty}: {type(e).__name__}: {e}")
 
     elapsed = time.monotonic() - start
-    log.info(f"MapTiler: {tiles_fetched} tiles fetched, {tiles_failed} failed, "
-             f"{len(major_roads)} major + {len(minor_roads)} minor roads in {elapsed:.1f}s")
+    log.info(
+        f"MapTiler: {tiles_fetched} tiles fetched, {tiles_failed} failed, "
+        f"{len(major_roads)} major + {len(minor_roads)} minor roads "
+        f"({dedup_skipped} tile-seam duplicates removed) in {elapsed:.1f}s"
+    )
 
     return {"major_roads": major_roads, "minor_roads": minor_roads}
 
@@ -544,6 +577,14 @@ async def fetch_water_maptiler(
     tiles_fetched = 0
     tiles_failed = 0
 
+    # Tile-seam dedup: same rationale as the streets fetcher.
+    # Rivers (waterways) span multiple tiles and the buffer-zone
+    # duplicates cause visible double-drawn river lines at tile
+    # boundaries. Polygon dedup also helps but is less visually
+    # obvious because the fill colour hides overdraw.
+    seen_water_sigs: set = set()
+    water_dedup_skipped = 0
+
     async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
         for tx in range(x_min, x_max + 1):
             for ty in range(y_min, y_max + 1):
@@ -594,6 +635,14 @@ async def fetch_water_maptiler(
                                         _pixel_to_lnglat(px, py, extent, tx, ty, zoom)
                                         for px, py in pixel_coords
                                     ]
+                                    sig = tuple(
+                                        (round(lng * 1e5), round(lat * 1e5))
+                                        for lng, lat in coords
+                                    )
+                                    if sig in seen_water_sigs:
+                                        water_dedup_skipped += 1
+                                        continue
+                                    seen_water_sigs.add(sig)
                                     water_polygons.append(
                                         (coords, water_class or "water", name)
                                     )
@@ -606,6 +655,14 @@ async def fetch_water_maptiler(
                                         _pixel_to_lnglat(px, py, extent, tx, ty, zoom)
                                         for px, py in pixel_coords
                                     ]
+                                    sig = tuple(
+                                        (round(lng * 1e5), round(lat * 1e5))
+                                        for lng, lat in coords
+                                    )
+                                    if sig in seen_water_sigs:
+                                        water_dedup_skipped += 1
+                                        continue
+                                    seen_water_sigs.add(sig)
                                     waterways.append(
                                         (coords, water_class or "river", name)
                                     )
@@ -620,7 +677,8 @@ async def fetch_water_maptiler(
     elapsed = time.monotonic() - start
     log.info(
         f"MapTiler water: {tiles_fetched} tiles fetched, {tiles_failed} failed, "
-        f"{len(water_polygons)} polygons + {len(waterways)} waterways in {elapsed:.1f}s"
+        f"{len(water_polygons)} polygons + {len(waterways)} waterways "
+        f"({water_dedup_skipped} tile-seam duplicates removed) in {elapsed:.1f}s"
     )
 
     return {"water_polygons": water_polygons, "waterways": waterways}

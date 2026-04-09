@@ -38,11 +38,17 @@ POSTER_THEMES = {
         "bg": (245, 245, 245), "map_bg": (255, 255, 255),
         "title": (25, 25, 25), "subtitle": (100, 100, 100),
         "border": (200, 200, 200), "line": (180, 180, 180),
-        "road_major": (15, 15, 15), "road_minor": (165, 165, 165),
-        # Water with enough presence to read as a focal point against white
+        # Premium wall-art hierarchy: near-black major, light-grey
+        # minor. The 15/190 gap is intentional — roads should read as
+        # two clear tiers, not a single medium-grey mesh.
+        "road_major": (15, 15, 15), "road_minor": (190, 190, 190),
+        # Water reads as the main non-road feature against white.
+        # Slightly darker edge keeps rivers and coastlines crisp.
         "map_mode": "light", "water": (188, 208, 226),
-        "water_edge": (135, 162, 188),
-        "park": (216, 230, 205),
+        "water_edge": (110, 140, 170),
+        # Parks are intentionally not rendered (see render_map_image).
+        # Keeping the key here for other themes to reference.
+        "park": None,
     },
     "classic": {
         "bg": (250, 248, 244), "map_bg": (252, 250, 246),
@@ -564,38 +570,58 @@ def render_map_image(
                 f"(largest {largest/canvas_area*100:.1f}% canvas)"
             )
 
-    # ── Draw parks / green space (between water and roads) ──
-    # Parks are filled with a muted theme green so iconic landmarks
-    # (Stanley Park, Central Park, Wentworth Park, Point Pleasant) read
-    # as visual anchors without competing with the road hierarchy.
-    # We filter out specks smaller than ~0.1% of canvas so tiny slivers
-    # (clipped landcover polygons at tile boundaries) don't clutter.
-    if parks_data:
-        park_color = theme.get("park")
-        if park_color is not None:
-            parks = parks_data.get("parks", [])
-            canvas_area = img_w * img_h
-            # 0.03% of canvas — keeps small urban parks (Wentworth,
-            # Point Pleasant) visible while dropping true slivers from
-            # tile-boundary clipping.
-            min_park_area = canvas_area * 0.0003
-            kept_parks = 0
-            for coords, pclass, name in parks:
-                if len(coords) < 3:
+    # ── Draw waterway lines (rivers, canals) ──
+    # Wide rivers (Bow, Mississippi, Thames) show up twice in MapTiler:
+    # as polygon bodies in the `water` layer AND as centerlines in the
+    # `waterway` layer. The centerlines extend further upstream than
+    # the polygon bodies, which gives the river a natural tapered look
+    # that leads the eye through the frame. We render them as fatter
+    # versions of the water edge so the river reads as the strongest
+    # non-road feature on the map — exactly what a premium city-art
+    # poster demands when the city has a signature river.
+    if water_data:
+        waterways = water_data.get("waterways", [])
+        if waterways:
+            river_color = theme.get("water", (188, 208, 226))
+            # River lines ~4x the coastline edge weight — fat enough
+            # to read as a dominant landmark but not so heavy that it
+            # fights with major roads.
+            river_w = max(6, int(min(img_w, img_h) * 0.006))
+            kept_rivers = 0
+            for coords, wtype, name in waterways:
+                if len(coords) < 2:
+                    continue
+                # Drop streams/ditches/drains — we only want named
+                # rivers + canals. Everything else reads as noise.
+                wtype_l = (wtype or "").lower()
+                if wtype_l not in ("river", "canal", ""):
                     continue
                 px_coords = [to_px(lon, lat) for lon, lat in coords]
-                area = abs(_ring_signed_area(px_coords))
-                if area < min_park_area:
-                    continue
                 try:
-                    draw.polygon(px_coords, fill=park_color)
-                    kept_parks += 1
+                    draw.line(
+                        px_coords,
+                        fill=river_color,
+                        width=river_w,
+                        joint="curve",
+                    )
+                    # Round caps so river ends don't look chopped
+                    r = river_w // 2
+                    for px, py in (px_coords[0], px_coords[-1]):
+                        draw.ellipse(
+                            [px - r, py - r, px + r, py + r],
+                            fill=river_color,
+                        )
+                    kept_rivers += 1
                 except Exception:
                     pass
-            log.info(
-                f"Park render: {kept_parks}/{len(parks)} polygons kept "
-                f"(min area {min_park_area:.0f}px)"
-            )
+            log.info(f"Waterway render: {kept_rivers}/{len(waterways)} rivers drawn")
+
+    # Parks are intentionally NOT rendered. The premium wall-art look
+    # is land (white) + water (blue) + roads (black/grey) — nothing
+    # else. The `parks_data` argument is accepted for API compatibility
+    # but dropped on the floor. If a future theme wants parks back,
+    # re-introduce a theme-gated draw block here.
+    _ = parks_data  # explicitly unused
 
     # ── Draw roads ──
     if streets_data:
@@ -604,42 +630,49 @@ def render_map_image(
 
         # Scale line widths + minor-road length threshold to viewport.
         # Larger viewport = drop more residentials so the map breathes.
-        # Major thickness reduced ~10% for refined hierarchy.
+        # Premium wall-art hierarchy: majors ~2.2–2.5x the width of
+        # minors so the primary grid reads instantly, and the minor
+        # length threshold is ~50% more aggressive than before so the
+        # residential grid thins to a calm background texture instead
+        # of a busy mesh. Minor colour also lightened toward 180 grey
+        # in the theme for extra separation.
         if bbox_area > 2.0:
-            minor_mult, major_mult = 4, 8
-            minor_min, major_min = 2, 5
-            min_residential_px = 290
+            minor_mult, major_mult = 3, 9
+            minor_min, major_min = 2, 6
+            min_residential_px = 440
         elif bbox_area > 0.5:
-            minor_mult, major_mult = 6, 10
-            minor_min, major_min = 3, 6
-            min_residential_px = 210
+            minor_mult, major_mult = 5, 12
+            minor_min, major_min = 2, 7
+            min_residential_px = 320
         elif bbox_area > 0.1:
-            minor_mult, major_mult = 8, 12
-            minor_min, major_min = 3, 7
-            min_residential_px = 145
+            minor_mult, major_mult = 6, 14
+            minor_min, major_min = 3, 8
+            min_residential_px = 230
         elif bbox_area > 0.03:
-            minor_mult, major_mult = 10, 15
-            minor_min, major_min = 4, 8
-            min_residential_px = 95
+            minor_mult, major_mult = 8, 18
+            minor_min, major_min = 3, 10
+            min_residential_px = 160
         elif bbox_area > 0.01:
-            # Halifax-sized downtown: still aggressively drop micro streets
-            minor_mult, major_mult = 10, 18
-            minor_min, major_min = 4, 10
-            min_residential_px = 110
+            # Halifax/Calgary-sized downtown: aggressively drop micro
+            # streets so the arterial grid breathes. Calgary's Deerfoot
+            # / Memorial / Crowchild backbone should dominate the frame.
+            minor_mult, major_mult = 8, 20
+            minor_min, major_min = 3, 11
+            min_residential_px = 180
         elif bbox_area > 0.002:
-            # Sydney NS-sized small city: stronger hierarchy + denser cleanup
-            # Major roads thinned again — the bold arterials were still
-            # dominating the frame. Hierarchy gap maintained via color
-            # contrast (15,15,15 vs 165,165,165).
-            minor_mult, major_mult = 10, 14
-            minor_min, major_min = 4, 8
-            min_residential_px = 105
+            # Sydney NS-sized small city: stronger hierarchy + denser
+            # residential cleanup. Hierarchy reinforced via both width
+            # AND colour contrast (15,15,15 vs 180,180,180).
+            minor_mult, major_mult = 8, 18
+            minor_min, major_min = 3, 10
+            min_residential_px = 170
         else:
-            # Truly tiny viewport (single neighbourhood) — keep most streets
-            # but widen the major:minor ratio so the structure still reads
-            minor_mult, major_mult = 12, 21
-            minor_min, major_min = 5, 12
-            min_residential_px = 40
+            # Truly tiny viewport (single neighbourhood) — keep more
+            # streets but widen the major:minor ratio so the structure
+            # still reads at a glance.
+            minor_mult, major_mult = 10, 24
+            minor_min, major_min = 4, 13
+            min_residential_px = 60
 
         # Normalise the residential length threshold so it's a constant
         # in meters, independent of the chosen viewport. Without this,
