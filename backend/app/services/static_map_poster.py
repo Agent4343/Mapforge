@@ -460,9 +460,14 @@ def render_map_image(
     # ocean polygons but needs an API key. The Nominatim boundary
     # polygon, however, is ALWAYS available for the selected feature —
     # and for an island like Cape Breton, it's exactly the land shape
-    # we need. Strategy: fill the whole canvas with water colour, then
-    # punch the land polygon on top. Inland lakes get re-painted blue
-    # by the subsequent water-polygon pass.
+    # we need.
+    #
+    # Strategy: draw everything normally (streets, water, parks, roads).
+    # At the END of rendering, composite the image over a pure-ocean
+    # layer using the land polygon as a mask. Everything outside the
+    # island — including ghost roads/waterways from the expanded bbox
+    # that bleed in from mainland Nova Scotia — gets overwritten with
+    # the water colour. Land pixels are untouched.
     #
     # Only applies when the land covers less than ~75% of the canvas.
     # For tight urban views (Edmonton fills ~90% of the frame) we skip
@@ -485,6 +490,7 @@ def render_map_image(
             log.warning(f"Land polygon projection failed: {e}")
             land_rings_px = []
 
+    apply_ocean_mask = False
     if land_rings_px:
         canvas_area = img_w * img_h
         total_land_area = sum(
@@ -492,21 +498,14 @@ def render_map_image(
         )
         land_ratio = total_land_area / canvas_area if canvas_area else 0
         if 0 < land_ratio < 0.75:
-            water_color = theme.get("water", (188, 208, 226))
-            draw.rectangle([0, 0, img_w, img_h], fill=water_color)
-            # Re-paint land on top of ocean
-            for ring_px in land_rings_px:
-                try:
-                    draw.polygon(ring_px, fill=bg_color)
-                except Exception:
-                    pass
+            apply_ocean_mask = True
             log.info(
-                f"Ocean background applied: land {land_ratio*100:.1f}% "
-                f"of canvas ({len(land_rings_px)} polygons)"
+                f"Ocean mask will be applied post-draw: land "
+                f"{land_ratio*100:.1f}% of canvas ({len(land_rings_px)} polygons)"
             )
         else:
             log.info(
-                f"Ocean background skipped: land {land_ratio*100:.1f}% "
+                f"Ocean mask skipped: land {land_ratio*100:.1f}% "
                 f"of canvas (>=75%, treating as inland)"
             )
 
@@ -745,6 +744,30 @@ def render_map_image(
             f"({dropped_minor} dropped, {dropped_orphan} orphan stubs), "
             f"threshold={min_residential_px}px"
         )
+
+    # ── Ocean mask composite (island / peninsula clip) ──
+    # Repaint everything outside the land polygon with the water
+    # colour. This kills ghost features (roads, waterways, parks) that
+    # got fetched from mainland Nova Scotia because the street/water
+    # bboxes are expanded beyond the island boundary. A 2x-supersampled
+    # mask + LANCZOS downsample gives a smooth coastline edge.
+    if apply_ocean_mask and land_rings_px:
+        try:
+            water_color = theme.get("water", (188, 208, 226))
+            SS = 2
+            hires_mask = Image.new("L", (img_w * SS, img_h * SS), 255)
+            hires_draw = ImageDraw.Draw(hires_mask)
+            for ring_px in land_rings_px:
+                ss_ring = [(x * SS, y * SS) for (x, y) in ring_px]
+                hires_draw.polygon(ss_ring, fill=0)
+            ocean_mask = hires_mask.resize(
+                (img_w, img_h), Image.LANCZOS
+            )
+            ocean_layer = Image.new("RGB", (img_w, img_h), water_color)
+            img.paste(ocean_layer, (0, 0), ocean_mask)
+            log.info("Ocean mask composited onto render")
+        except Exception as e:
+            log.warning(f"Ocean mask composite failed: {e}", exc_info=True)
 
     # Compute pin pixel in the rendered image
     if pin_lat is not None and pin_lng is not None:
