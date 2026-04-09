@@ -27,12 +27,12 @@ async def lifespan(app: FastAPI):
     log.info(f"DATABASE_URL dialect: {settings.DATABASE_URL.split('://')[0]}")
     log.info(f"PORT: {os.environ.get('PORT', 'not set (defaulting to 8000)')}")
     if settings.MAPTILER_API_KEY:
-        log.info("MAPTILER_API_KEY: set (water + parks + streets via vector tiles)")
+        log.info("MAPTILER_API_KEY (env): set")
     else:
-        log.warning(
-            "MAPTILER_API_KEY: NOT SET — coastal maps will fall back to Overpass "
-            "(noisy water, no ocean polygons, no parks rendering). "
-            "Register at https://cloud.maptiler.com and set the env var."
+        log.info(
+            "MAPTILER_API_KEY (env): not set — will read from app_settings DB "
+            "row (configurable via /admin). If neither is set, coastal maps "
+            "fall back to Overpass (noisy water, no ocean polygons, no parks)."
         )
     try:
         await init_db()

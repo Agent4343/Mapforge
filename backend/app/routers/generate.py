@@ -177,6 +177,16 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     """Core generation logic shared by single and batch endpoints."""
     warnings: list[str] = []
 
+    # Resolve effective MapTiler API key: prefer the DB-stored value set
+    # via the admin panel, fall back to the env var. Settings.MAPTILER_API_KEY
+    # alone is NOT sufficient — the admin UI writes to the app_settings table.
+    from app.services.app_settings import get_maptiler_key
+    maptiler_key = await get_maptiler_key(db)
+    if maptiler_key:
+        log.info("MapTiler key resolved (DB or env)")
+    else:
+        log.info("MapTiler key not configured — MapTiler fetches will be skipped")
+
     # Resolve board dimensions
     if req.board_width_inches and req.board_height_inches:
         w_in, h_in = req.board_width_inches, req.board_height_inches
@@ -244,7 +254,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     # Always fetch water for provinces — lakes/rivers give the shape character
     need_water = req.product_type.value in water_types or req.product_type.value == "province"
     # Parks — only fetched for city-art via MapTiler. No effect if key absent.
-    need_parks = req.product_type.value in ("city", "community") and bool(settings.MAPTILER_API_KEY)
+    need_parks = req.product_type.value in ("city", "community") and bool(maptiler_key)
 
     # Always fetch major highways for provinces — with cased road styling
     # they look professional and give the map structure
@@ -339,12 +349,13 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
 
         # Try MapTiler first (faster, more reliable), fall back to Overpass
         result = None
-        if settings.MAPTILER_API_KEY:
+        if maptiler_key:
             log.info("Trying MapTiler for street data")
             result = await fetch_streets_maptiler(
                 bbox=street_bbox,
                 include_minor=include_minor_streets,
                 skip_detail=is_large_city,
+                api_key=maptiler_key,
             )
             has_data = result and (result.get("major_roads") or result.get("minor_roads"))
             if has_data:
@@ -379,10 +390,10 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         # is the only way to fill the Atlantic on coastal maps like
         # Cape Breton County, Halifax, Vancouver, etc.
         result = None
-        if settings.MAPTILER_API_KEY:
+        if maptiler_key:
             log.info("Trying MapTiler for water data")
             from app.services.maptiler_fetcher import fetch_water_maptiler
-            result = await fetch_water_maptiler(bbox=water_bbox)
+            result = await fetch_water_maptiler(bbox=water_bbox, api_key=maptiler_key)
             has_data = result and (result.get("water_polygons") or result.get("waterways"))
             if has_data:
                 log.info(
@@ -420,7 +431,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             log.info("Using cached park data")
             return _overpass_cache[cache_key]
         from app.services.maptiler_fetcher import fetch_parks_maptiler
-        result = await fetch_parks_maptiler(bbox=water_bbox)
+        result = await fetch_parks_maptiler(bbox=water_bbox, api_key=maptiler_key)
         if result and result.get("parks"):
             _cache_overpass(cache_key, result)
             return result
