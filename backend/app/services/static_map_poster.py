@@ -178,6 +178,14 @@ _RESIDENTIAL_HIGHWAYS = frozenset({
     "residential", "unclassified", "living_street", "tertiary_link",
 })
 
+# The "iconic arterial backbone" of a metro map. At metro scale we
+# drop every major-road class that isn't in this set — so secondary
+# avenues and all *_link ramps vanish, leaving just motorway / trunk
+# / primary. This is what transforms Calgary from "dense grid" into
+# "recognizable skeleton" (Deerfoot, Crowchild, Macleod, Memorial,
+# Stoney, 16th Ave, etc.).
+_BACKBONE_MAJOR = frozenset({"motorway", "trunk", "primary"})
+
 
 def _polyline_pixel_length(px_coords: list[tuple[float, float]]) -> float:
     total = 0.0
@@ -668,60 +676,56 @@ def render_map_image(
         # Premium wall-art hierarchy: majors ~2.2–2.5x the width of
         # minors so the primary grid reads instantly. At metro scale
         # we drop the ENTIRE minor layer (tertiary + residential) AND
-        # filter out short major fragments — the arterial skeleton is
-        # the whole point of a city-art poster, and anything else is
-        # noise. At downtown scale we keep the minor grid because the
+        # drop the `secondary` + link classes from major_roads so
+        # only the iconic motorway/trunk/primary backbone survives.
+        # At downtown scale we keep the minor grid because the
         # walkable core is the character of the place.
         drop_all_residentials = False
-        # Minimum length for a major road to be drawn (pixels). At
-        # metro scale short majors are ramps, slip roads, and island
-        # fragments that read as visual noise. Kept tight for
-        # downtown views so the arterial network stays continuous.
-        min_major_px = 0
+        # When True, filter major_roads to only the top three
+        # classes (motorway, trunk, primary). Secondary avenues
+        # and every *_link ramp get dropped. This is what turns
+        # Calgary from "dense grid" to "iconic arterial skeleton".
+        drop_secondary_majors = False
         if bbox_area > 2.0:
             minor_mult, major_mult = 3, 9
             minor_min, major_min = 2, 6
             min_residential_px = 440
             drop_all_residentials = True
-            min_major_px = 50
+            drop_secondary_majors = True
         elif bbox_area > 0.5:
             minor_mult, major_mult = 5, 12
             minor_min, major_min = 2, 7
             min_residential_px = 320
             drop_all_residentials = True
-            min_major_px = 80
+            drop_secondary_majors = True
         elif bbox_area > 0.1:
             minor_mult, major_mult = 6, 14
             minor_min, major_min = 3, 8
             min_residential_px = 230
             drop_all_residentials = True
-            min_major_px = 100
+            drop_secondary_majors = True
         elif bbox_area > 0.03:
             # Calgary-sized metro: drop the entire minor layer and
-            # filter short majors. Only the iconic arterial backbone
-            # (Deerfoot, Crowchild, Memorial, Macleod, Stoney, 16th)
-            # should survive.
+            # drop secondary majors so only motorway/trunk/primary
+            # survives. The result is the iconic Deerfoot/Crowchild/
+            # Macleod/Memorial/Stoney/16th backbone.
             minor_mult, major_mult = 8, 18
             minor_min, major_min = 3, 10
             min_residential_px = 160
             drop_all_residentials = True
-            min_major_px = 90
+            drop_secondary_majors = True
         elif bbox_area > 0.008:
             # Medium city (Calgary tight-crop, Edmonton downtown,
-            # Winnipeg). Still metro-scale for wall-art purposes —
-            # drop the whole minor layer so only arterials show.
-            # Threshold intentionally wider than the old 0.01 cutoff
-            # so tight Calgary bboxes reliably trigger the metro path.
+            # Winnipeg). Metro-scale — drop minors and secondaries.
             minor_mult, major_mult = 8, 20
             minor_min, major_min = 3, 11
             min_residential_px = 180
             drop_all_residentials = True
-            min_major_px = 70
+            drop_secondary_majors = True
         elif bbox_area > 0.002:
-            # Sydney NS / Halifax downtown: stronger hierarchy +
-            # denser residential cleanup, but keep the minor grid
-            # because these cities are small enough that dropping it
-            # would leave the poster almost empty.
+            # Sydney NS / Halifax downtown: keep the minor grid and
+            # all major classes. These cities are too small to
+            # afford any further trimming.
             minor_mult, major_mult = 8, 18
             minor_min, major_min = 3, 10
             min_residential_px = 170
@@ -823,19 +827,18 @@ def render_map_image(
                 pass
 
         # Major roads on top (thicker, darker). At metro scale we
-        # apply a minimum-length filter so short fragments (ramps,
-        # slip roads, orphan island segments) don't pollute the
-        # arterial backbone.
+        # drop every class except the iconic backbone (motorway,
+        # trunk, primary) so secondary avenues and *_link ramps
+        # stop cluttering the poster.
         kept_major = 0
         dropped_major = 0
         for coords, rclass, width_mm, name in streets_data.get("major_roads", []):
             if len(coords) < 2:
                 continue
+            if drop_secondary_majors and rclass not in _BACKBONE_MAJOR:
+                dropped_major += 1
+                continue
             px_coords = [to_px(lon, lat) for lon, lat in coords]
-            if min_major_px > 0:
-                if _polyline_pixel_length(px_coords) < min_major_px:
-                    dropped_major += 1
-                    continue
             line_w = max(major_min, int(width_mm * major_mult))
             try:
                 draw.line(px_coords, fill=major_color, width=line_w, joint="curve")
@@ -847,10 +850,11 @@ def render_map_image(
                 pass
 
         log.info(
-            f"Road render: {kept_major} major ({dropped_major} short), "
+            f"Road render: {kept_major} major ({dropped_major} off-class), "
             f"{kept_minor} minor "
             f"({dropped_minor} dropped, {dropped_orphan} orphan stubs), "
-            f"thresholds: minor={min_residential_px}px major={min_major_px}px"
+            f"minor_thresh={min_residential_px}px "
+            f"backbone_only={drop_secondary_majors}"
         )
 
     # ── Ocean mask composite (island / peninsula clip) ──
