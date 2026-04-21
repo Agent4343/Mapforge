@@ -521,15 +521,71 @@ async def fetch_streets_maptiler(
     #   2. Stitch adjacent segments whose endpoints coincide (within
     #      ~2m) and that share the same road class + name. This
     #      reassembles ways that MVT split across tile boundaries.
+    #   3. Drop isolated stubs — chains that share no endpoint with
+    #      any other road across either fetch list. Rural township
+    #      stubs outside the urban area have no neighbours and
+    #      clutter the render with random stripes.
     before_major, before_minor = len(major_roads), len(minor_roads)
     major_roads = _stitch_road_segments(major_roads)
     minor_roads = _stitch_road_segments(minor_roads)
+    major_roads, minor_roads = _drop_isolated_stubs(major_roads, minor_roads)
     log.info(
         f"MapTiler stitch: major {before_major}->{len(major_roads)}, "
         f"minor {before_minor}->{len(minor_roads)}"
     )
 
     return {"major_roads": major_roads, "minor_roads": minor_roads}
+
+
+def _drop_isolated_stubs(
+    major_roads: list[tuple],
+    minor_roads: list[tuple],
+    snap_m: float = 5.0,
+) -> tuple[list[tuple], list[tuple]]:
+    """Drop chains whose endpoints don't connect to any other road.
+
+    Rural township roads outside the urban core often show up as
+    single straight lines with no intersecting network, producing
+    stray horizontal / vertical stripes on the poster. A chain is
+    kept only when at least one of its two endpoints coincides with
+    another chain's endpoint or interior vertex (within `snap_m`).
+    """
+    tol = snap_m * 1.1e-5 * 1.5
+
+    def _key(pt):
+        return (round(pt[0] / tol), round(pt[1] / tol))
+
+    # Build a vertex-occupancy index across every chain in both lists.
+    # We record how many chains touch each node; >1 means the vertex
+    # is a real junction rather than a dead-end.
+    from collections import defaultdict
+    vertex_hits: dict[tuple, int] = defaultdict(int)
+    for chain_list in (major_roads, minor_roads):
+        for coords, *_ in chain_list:
+            seen_in_chain = set()
+            for pt in coords:
+                k = _key(pt)
+                if k not in seen_in_chain:
+                    vertex_hits[k] += 1
+                    seen_in_chain.add(k)
+
+    def _keep(chain_list: list[tuple]) -> list[tuple]:
+        kept: list[tuple] = []
+        for seg in chain_list:
+            coords = seg[0]
+            if len(coords) < 2:
+                continue
+            start_hits = vertex_hits.get(_key(coords[0]), 0)
+            end_hits = vertex_hits.get(_key(coords[-1]), 0)
+            # Each chain contributes +1 to its own endpoints. A real
+            # junction shows ≥2 hits. Drop chains where both ends are
+            # dead-ends (hits == 1 on each side).
+            if start_hits <= 1 and end_hits <= 1:
+                continue
+            kept.append(seg)
+        return kept
+
+    return _keep(major_roads), _keep(minor_roads)
 
 
 def _segment_length_m(coords: list[tuple[float, float]]) -> float:

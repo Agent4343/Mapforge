@@ -16,8 +16,8 @@ from app.logging_config import log
 
 # Poster layout
 MAT_PCT = 0.03        # Outer mat border
-MAP_AREA_PCT = 0.72   # Map takes 72% of poster height
-TEXT_AREA_PCT = 0.28   # Text/title takes 28%
+MAP_AREA_PCT = 0.80   # Map takes 80% of poster height (Mapiful-style)
+TEXT_AREA_PCT = 0.20  # Text/title takes 20%
 
 # Poster sizes at 300 DPI
 POSTER_SIZES = {
@@ -426,21 +426,24 @@ def render_map_image(
     draw = ImageDraw.Draw(img)
 
     # Calculate viewport: how many meters of geography to show
-    # Bigger bbox_area → show more area → smaller scale
+    # Bigger bbox_area → show more area → smaller scale. Calibrated to
+    # frame the urban core (Mapiful-style) rather than admin-boundary
+    # extents, so rural township stubs outside the city don't end up
+    # ringing the render.
     if bbox_area > 2.0:
-        meters_wide = 250_000
+        meters_wide = 180_000
     elif bbox_area > 0.5:
-        meters_wide = 150_000
-    elif bbox_area > 0.1:
         meters_wide = 80_000
+    elif bbox_area > 0.1:
+        meters_wide = 40_000  # Large city urban core (Calgary, Edmonton)
     elif bbox_area > 0.03:
-        meters_wide = 40_000
+        meters_wide = 25_000
     elif bbox_area > 0.005:
-        meters_wide = 20_000
-    elif bbox_area > 0.001:
-        meters_wide = 10_000
-    else:
         meters_wide = 15_000
+    elif bbox_area > 0.001:
+        meters_wide = 8_000
+    else:
+        meters_wide = 12_000
 
     # Remember the default so the residential length filter (which is
     # calibrated in pixels against the default viewport for each tier)
