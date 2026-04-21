@@ -459,12 +459,18 @@ async def fetch_streets_maptiler(
                                     for px, py in pixel_coords
                                 ]
 
-                                # Filter coords to bbox
-                                in_bbox = any(
-                                    south <= lat <= north and west <= lng <= east
-                                    for lng, lat in coords
+                                # Filter coords to bbox. Require at
+                                # least two points inside so we drop
+                                # the MVT tile-corner shards that only
+                                # dip a single vertex past the frame
+                                # edge — those are the "L" artifacts
+                                # that floated in empty space on the
+                                # previous Calgary render.
+                                inside = sum(
+                                    1 for lng, lat in coords
+                                    if south <= lat <= north and west <= lng <= east
                                 )
-                                if not in_bbox:
+                                if inside < 2:
                                     continue
 
                                 # Tile-seam deduplication: roads in
@@ -502,7 +508,134 @@ async def fetch_streets_maptiler(
         f"({dedup_skipped} tile-seam duplicates removed) in {elapsed:.1f}s"
     )
 
+    # ── Tile-edge cleanup ───────────────────────────────────────────
+    # MVT clips each feature to the tile boundary, so a residential
+    # street that spans 3 tiles arrives as 3 separate segments. When
+    # rendered directly this produces the "broken stroke" look (visible
+    # dashes lined up on the tile grid). It also leaves short
+    # corner-shaped fragments in the buffer zone at tile corners.
+    #
+    # Strategy:
+    #   1. Drop ultra-short fragments (<15m) that are almost always
+    #      tile-buffer artifacts, not real roads.
+    #   2. Stitch adjacent segments whose endpoints coincide (within
+    #      ~2m) and that share the same road class + name. This
+    #      reassembles ways that MVT split across tile boundaries.
+    before_major, before_minor = len(major_roads), len(minor_roads)
+    major_roads = _stitch_road_segments(major_roads)
+    minor_roads = _stitch_road_segments(minor_roads)
+    log.info(
+        f"MapTiler stitch: major {before_major}->{len(major_roads)}, "
+        f"minor {before_minor}->{len(minor_roads)}"
+    )
+
     return {"major_roads": major_roads, "minor_roads": minor_roads}
+
+
+def _segment_length_m(coords: list[tuple[float, float]]) -> float:
+    """Rough polyline length in meters (equirectangular)."""
+    if len(coords) < 2:
+        return 0.0
+    import math
+    total = 0.0
+    for i in range(1, len(coords)):
+        lng1, lat1 = coords[i - 1]
+        lng2, lat2 = coords[i]
+        mlat = math.radians((lat1 + lat2) * 0.5)
+        dx = (lng2 - lng1) * 111_320 * math.cos(mlat)
+        dy = (lat2 - lat1) * 110_540
+        total += math.hypot(dx, dy)
+    return total
+
+
+def _stitch_road_segments(
+    segments: list[tuple],
+    min_length_m: float = 15.0,
+    snap_m: float = 2.0,
+) -> list[tuple]:
+    """Drop tiny fragments and merge segments whose endpoints meet.
+
+    Each segment is (coords, rclass, width, name). Segments are only
+    merged when class + name match and the join is head-to-tail within
+    `snap_m` metres — so we never splice together unrelated ways.
+    Snap tolerance converts to ~1.8e-5 degrees at 45°N which covers
+    MapTiler's 1e-5 rounding slack plus tile-corner jitter.
+    """
+    # 1 metre ~= 1.1e-5 degrees of longitude at the equator; at 45°N
+    # the longitude factor shrinks to ~1/sqrt(2). A flat 2e-5 degree
+    # threshold is close enough for stitching and cheaper than a
+    # per-pair haversine.
+    tol = snap_m * 1.1e-5 * 1.5
+
+    def _key(pt):
+        return (round(pt[0] / tol), round(pt[1] / tol))
+
+    # First pass: drop sub-threshold fragments.
+    kept = [s for s in segments if _segment_length_m(s[0]) >= min_length_m]
+
+    # Bucket segments by (class, name) so we only stitch within a group.
+    from collections import defaultdict
+    buckets: dict[tuple, list] = defaultdict(list)
+    for seg in kept:
+        coords, rclass, width, name = seg
+        buckets[(rclass, name)].append([list(coords), width])
+
+    out: list[tuple] = []
+    for (rclass, name), group in buckets.items():
+        # Index each segment's endpoints for O(1) match lookup.
+        endpoints: dict[tuple, list[tuple[int, str]]] = defaultdict(list)
+        for i, (coords, _w) in enumerate(group):
+            endpoints[_key(coords[0])].append((i, "start"))
+            endpoints[_key(coords[-1])].append((i, "end"))
+
+        consumed = [False] * len(group)
+        for i in range(len(group)):
+            if consumed[i]:
+                continue
+            chain_coords = list(group[i][0])
+            width = group[i][1]
+            consumed[i] = True
+
+            # Extend chain forward (match chain tail to another segment's head/tail).
+            while True:
+                tail_key = _key(chain_coords[-1])
+                match = None
+                for j, end in endpoints.get(tail_key, []):
+                    if j == i or consumed[j]:
+                        continue
+                    match = (j, end)
+                    break
+                if not match:
+                    break
+                j, end = match
+                other = group[j][0]
+                if end == "start":
+                    chain_coords.extend(other[1:])
+                else:
+                    chain_coords.extend(reversed(other[:-1]))
+                consumed[j] = True
+
+            # Extend chain backward (match chain head to another segment's head/tail).
+            while True:
+                head_key = _key(chain_coords[0])
+                match = None
+                for j, end in endpoints.get(head_key, []):
+                    if j == i or consumed[j]:
+                        continue
+                    match = (j, end)
+                    break
+                if not match:
+                    break
+                j, end = match
+                other = group[j][0]
+                if end == "end":
+                    chain_coords = list(other[:-1]) + chain_coords
+                else:
+                    chain_coords = list(reversed(other[1:])) + chain_coords
+                consumed[j] = True
+
+            out.append((chain_coords, rclass, width, name))
+    return out
 
 
 # ── Water fetching via MapTiler vector tiles ──────────────────────────
