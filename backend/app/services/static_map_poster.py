@@ -47,9 +47,9 @@ POSTER_THEMES = {
         # reproduce the layered look that makes Mapiful posters
         # instantly recognizable as a city.
         "road_major": (20, 20, 20),    # motorway, trunk
-        "road_arterial": (55, 55, 55), # primary, secondary
-        "road_collector": (95, 95, 95),# tertiary
-        "road_minor": (150, 150, 150), # residential, service
+        "road_arterial": (70, 70, 70), # primary, secondary
+        "road_collector": (125, 125, 125),# tertiary
+        "road_minor": (180, 180, 180), # residential, service — hairline texture
         # Soft teal water: the signature non-road anchor.
         "map_mode": "light", "water": (188, 208, 226),
         "water_edge": (110, 140, 170),
@@ -411,6 +411,7 @@ def render_map_image(
     auto_compose: bool = True,
     parks_data: dict | None = None,
     land_polygon=None,
+    clip_to_admin: bool = True,
 ) -> tuple[Image.Image, tuple[float, float]]:
     """Render road geometry directly onto a PIL Image.
 
@@ -940,7 +941,7 @@ def render_map_image(
     #
     # Skipped when the ocean mask already ran (coastal cities) so we
     # don't double-clip.
-    if land_rings_px and not apply_ocean_mask:
+    if land_rings_px and not apply_ocean_mask and clip_to_admin:
         try:
             bg_color = theme.get("map_bg", (255, 255, 255))
             SS = 2
@@ -1231,6 +1232,10 @@ def generate_road_poster(
         auto_compose=not has_named_override,
         parks_data=parks_data,
         land_polygon=land_polygon,
+        # Mapiful-style posters frame the full rectangle — admin
+        # boundaries are not part of the look. Keep the ocean mask
+        # (coastal cities need it) but skip the inland-city crop.
+        clip_to_admin=(color_theme != "city_art"),
     )
 
     # Compose into poster — pin draws at true location, not center
