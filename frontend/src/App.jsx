@@ -4,8 +4,6 @@ import CustomizePanel from "./components/CustomizePanel.jsx";
 import SVGPreview from "./components/SVGPreview.jsx";
 import ExportPanel from "./components/ExportPanel.jsx";
 import AuthModal from "./components/AuthModal.jsx";
-import LibraryView from "./components/LibraryView.jsx";
-import MarketplaceView from "./components/MarketplaceView.jsx";
 import SellerDashboard from "./components/SellerDashboard.jsx";
 import AdminDashboard from "./components/AdminDashboard.jsx";
 import BatchPanel from "./components/BatchPanel.jsx";
@@ -28,9 +26,9 @@ import {
 const DEFAULT_CONFIG = {
   text: "",
   subtitle: "",
-  boardSize: "print_16x20",
-  customWidth: 16,
-  customHeight: 20,
+  boardSize: "print_18x24",
+  customWidth: 18,
+  customHeight: 24,
   style: "filled",
   exportFormat: "svg",
   productType: "city",
@@ -39,19 +37,19 @@ const DEFAULT_CONFIG = {
   borderStyle: "none",
   showCoordinates: true,
   includeIslands: true,
-  includeStreets: false,
+  includeStreets: true,
   includeContours: false,
   contourType: "depth",
   numDepthBands: 5,
   outputMode: "print",
-  colorTheme: "classic",
-  posterLayout: "classic",
+  colorTheme: "city_art",
+  posterLayout: "city_art",
   heartLat: null,
   heartLon: null,
   showCompass: false,
   showScaleBar: false,
-  gradientWater: true,
-  landShadow: true,
+  gradientWater: false,
+  landShadow: false,
   includeBleed: false,
   includeCropMarks: false,
   printDPI: 300,
@@ -60,7 +58,15 @@ const DEFAULT_CONFIG = {
 function loadSavedConfig() {
   try {
     const saved = localStorage.getItem("mapforge_config");
-    if (saved) return { ...DEFAULT_CONFIG, ...JSON.parse(saved) };
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      // Only restore text/subtitle preferences — force all other defaults
+      return {
+        ...DEFAULT_CONFIG,
+        text: parsed.text || "",
+        subtitle: parsed.subtitle || "",
+      };
+    }
   } catch {}
   return DEFAULT_CONFIG;
 }
@@ -373,6 +379,8 @@ export default function App() {
         const params = {
           osm_id: selectedResult.osm_id,
           osm_type: selectedResult.osm_type,
+          center_lat: selectedResult.lat || undefined,
+          center_lon: selectedResult.lon || undefined,
           product_type: config.productType,
           board_size: config.boardSize,
           style: "filled",
@@ -411,7 +419,7 @@ export default function App() {
         data = await generateSVG(params);
       }
 
-      setSvgContent(data.svg);
+      setSvgContent(data.preview_image || data.svg);
       setResult(data);
 
       // Quality/generation warnings
@@ -430,12 +438,19 @@ export default function App() {
   const handleDownload = useCallback(async () => {
     if (!result) return;
     try {
+      // If MapTiler PNG, download that instead of SVG
+      if (svgContent && svgContent.startsWith("data:image/")) {
+        const resp = await fetch(svgContent);
+        const blob = await resp.blob();
+        _triggerDownload(blob, config.text, "png");
+        return;
+      }
       const blob = await downloadSVG(result.file_id);
       _triggerDownload(blob, config.text, "svg");
     } catch (err) {
       setError(err.message);
     }
-  }, [result, config.text]);
+  }, [result, config.text, svgContent]);
 
   const handleDownloadThumbnail = useCallback(async () => {
     if (!result) return;
@@ -450,12 +465,20 @@ export default function App() {
   const handleDownloadPrintPNG = useCallback(async () => {
     if (!result) return;
     try {
+      // If we have a MapTiler preview image, download it directly
+      if (svgContent && svgContent.startsWith("data:image/")) {
+        const resp = await fetch(svgContent);
+        const blob = await resp.blob();
+        _triggerDownload(blob, config.text + "_print", "png");
+        return;
+      }
       const blob = await downloadPrintPNG(result.file_id);
-      _triggerDownload(blob, config.text + "_print_300dpi", "png");
+      const dpiLabel = config.printDPI || 300;
+      _triggerDownload(blob, config.text + `_print_${dpiLabel}dpi`, "png");
     } catch (err) {
       setError(err.message);
     }
-  }, [result, config.text]);
+  }, [result, config.text, svgContent]);
 
   const handleDownloadDXF = useCallback(async () => {
     if (!result) return;
@@ -500,12 +523,18 @@ export default function App() {
   const handleDownloadPreview = useCallback(async () => {
     if (!result) return;
     try {
+      if (svgContent && svgContent.startsWith("data:image/")) {
+        const resp = await fetch(svgContent);
+        const blob = await resp.blob();
+        _triggerDownload(blob, config.text + "_preview", "png");
+        return;
+      }
       const blob = await downloadPreview(result.file_id);
       _triggerDownload(blob, config.text + "_preview", "png");
     } catch (err) {
       setError(err.message);
     }
-  }, [result, config.text]);
+  }, [result, config.text, svgContent]);
 
   const handleDownloadWallMockup = useCallback(async (style = "light_wall") => {
     if (!result) return;
@@ -564,8 +593,6 @@ export default function App() {
   }
 
   // Sub-views
-  if (view === "library") return <LibraryView onBack={() => setView("main")} />;
-  if (view === "marketplace") return <MarketplaceView user={user} onBack={() => setView("main")} />;
   if (view === "dashboard") return <SellerDashboard onBack={() => setView("main")} />;
   if (view === "purchases") return <PurchasesView onBack={() => setView("main")} />;
   if (view === "admin") return <AdminDashboard onBack={() => setView("main")} />;
@@ -595,8 +622,6 @@ export default function App() {
             ))}
           </select>
           {user?.tier === "admin" && <button className="nav-btn" onClick={() => setShowPricing(true)}>Pricing</button>}
-          {user?.tier === "admin" && <button className="nav-btn" onClick={() => setView("marketplace")}>Marketplace</button>}
-          {user?.tier === "admin" && <button className="nav-btn" onClick={() => setView("library")}>Library</button>}
           {user?.tier === "admin" && <button className="nav-btn" onClick={() => setView("purchases")}>Purchases</button>}
           {user?.tier === "admin" && (
             <button className="nav-btn" onClick={() => setView("dashboard")}>Seller</button>
@@ -793,16 +818,6 @@ export default function App() {
             <span className="mobile-tab-icon">&#9670;</span>
             Generate
           </button>
-          <button className={`mobile-tab${view === "marketplace" ? " active" : ""}`} onClick={() => setView("marketplace")}>
-            <span className="mobile-tab-icon">&#9733;</span>
-            Market
-          </button>
-          {user && (
-            <button className={`mobile-tab${view === "library" ? " active" : ""}`} onClick={() => setView("library")}>
-              <span className="mobile-tab-icon">&#9776;</span>
-              Library
-            </button>
-          )}
           {user ? (
             <button className="mobile-tab" onClick={handleLogout}>
               <span className="mobile-tab-icon">&#8594;</span>

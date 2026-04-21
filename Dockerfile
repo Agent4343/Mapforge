@@ -5,6 +5,7 @@ WORKDIR /frontend
 COPY frontend/package.json ./
 RUN npm install
 COPY frontend/ .
+ARG FRONTEND_VERSION=11
 RUN npm run build
 
 # Stage 2: Python backend + built frontend
@@ -19,6 +20,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpango1.0-dev \
     libgdk-pixbuf-2.0-dev \
     build-essential \
+    fonts-dejavu-core \
+    fonts-liberation \
+    fonts-freefont-ttf \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt .

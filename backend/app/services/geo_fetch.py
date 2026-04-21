@@ -22,26 +22,40 @@ OVERPASS_HEADERS = {"User-Agent": "MapForgeCNC/1.0 (https://mapforge-production.
 OSM_TYPE_MAP = {"node": "N", "way": "W", "relation": "R"}
 
 
-async def fetch_geometry(osm_id: int, osm_type: str = "relation") -> MultiPolygon | Polygon | None:
+async def fetch_geometry(
+    osm_id: int,
+    osm_type: str = "relation",
+    prefer_overpass: bool = False,
+) -> MultiPolygon | Polygon | None:
     """Fetch full polygon geometry for an OSM feature.
 
     Checks cache first, then tries Nominatim (fast path), falls back to Overpass.
+    When prefer_overpass=True (e.g. for provinces where Nominatim's
+    pre-simplified polygon_geojson is too coarse for poster art), Overpass
+    is tried first to get full-resolution boundary nodes.
     """
-    # Check cache
-    cache_key = make_geometry_key(osm_id, osm_type)
+    # Cache key includes source so coarse Nominatim results never shadow
+    # the high-res Overpass results (or vice versa).
+    source_tag = "ovp" if prefer_overpass else "nom"
+    cache_key = f"{make_geometry_key(osm_id, osm_type)}:{source_tag}"
     cached = await cache_get(cache_key)
     if cached is not None:
         try:
             geom = shape(cached)
             if isinstance(geom, (Polygon, MultiPolygon)):
-                log.info(f"Geometry cache hit: {osm_type}/{osm_id}")
+                log.info(f"Geometry cache hit: {osm_type}/{osm_id} ({source_tag})")
                 return geom
         except Exception:
             pass
 
-    geom = await _fetch_via_nominatim(osm_id, osm_type)
-    if geom is None:
+    if prefer_overpass:
         geom = await _fetch_via_overpass(osm_id, osm_type)
+        if geom is None:
+            geom = await _fetch_via_nominatim(osm_id, osm_type)
+    else:
+        geom = await _fetch_via_nominatim(osm_id, osm_type)
+        if geom is None:
+            geom = await _fetch_via_overpass(osm_id, osm_type)
 
     # Cache the result
     if geom is not None:

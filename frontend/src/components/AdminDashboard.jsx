@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { getAdminStats, getEtsySettings, saveEtsySettings, clearEtsySettings, getEtsyDebug } from "../services/api.js";
+import { getAdminStats, getEtsySettings, saveEtsySettings, clearEtsySettings, getEtsyDebug, getMaptilerSettings, saveMaptilerSettings, clearMaptilerSettings, testMaptiler } from "../services/api.js";
 
 export default function AdminDashboard({ onBack }) {
   const [stats, setStats] = useState(null);
@@ -16,6 +16,15 @@ export default function AdminDashboard({ onBack }) {
   const [showEtsyForm, setShowEtsyForm] = useState(false);
   const [etsyDebug, setEtsyDebug] = useState(null);
   const [etsyTesting, setEtsyTesting] = useState(false);
+
+  // MapTiler settings state
+  const [maptilerSettings, setMaptilerSettings] = useState(null);
+  const [maptilerApiKey, setMaptilerApiKey] = useState("");
+  const [maptilerSaving, setMaptilerSaving] = useState(false);
+  const [maptilerMsg, setMaptilerMsg] = useState(null);
+  const [showMaptilerForm, setShowMaptilerForm] = useState(false);
+  const [maptilerTest, setMaptilerTest] = useState(null);
+  const [maptilerTesting, setMaptilerTesting] = useState(false);
 
   async function handleTestEtsy() {
     setEtsyTesting(true);
@@ -42,6 +51,7 @@ export default function AdminDashboard({ onBack }) {
     }
     loadStats();
     loadEtsySettings();
+    loadMaptilerSettings();
   }, []);
 
   async function loadEtsySettings() {
@@ -78,6 +88,54 @@ export default function AdminDashboard({ onBack }) {
       setEtsyMsg({ type: "success", text: "Etsy credentials cleared." });
     } catch (err) {
       setEtsyMsg({ type: "error", text: err.message });
+    }
+  }
+
+  async function loadMaptilerSettings() {
+    try {
+      const s = await getMaptilerSettings();
+      setMaptilerSettings(s);
+    } catch {
+      // Not critical
+    }
+  }
+
+  async function handleSaveMaptiler() {
+    setMaptilerSaving(true);
+    setMaptilerMsg(null);
+    try {
+      await saveMaptilerSettings(maptilerApiKey);
+      setMaptilerMsg({ type: "success", text: "MapTiler API key saved!" });
+      setMaptilerApiKey("");
+      await loadMaptilerSettings();
+    } catch (err) {
+      setMaptilerMsg({ type: "error", text: err.message });
+    } finally {
+      setMaptilerSaving(false);
+    }
+  }
+
+  async function handleClearMaptiler() {
+    if (!confirm("Clear MapTiler API key from the database?")) return;
+    try {
+      await clearMaptilerSettings();
+      setMaptilerSettings(null);
+      setMaptilerMsg({ type: "success", text: "MapTiler key cleared." });
+    } catch (err) {
+      setMaptilerMsg({ type: "error", text: err.message });
+    }
+  }
+
+  async function handleTestMaptiler() {
+    setMaptilerTesting(true);
+    setMaptilerTest(null);
+    try {
+      const result = await testMaptiler();
+      setMaptilerTest(result);
+    } catch (err) {
+      setMaptilerTest({ test_ok: false, test_error: err.message });
+    } finally {
+      setMaptilerTesting(false);
     }
   }
 
@@ -259,6 +317,82 @@ export default function AdminDashboard({ onBack }) {
               disabled={etsySaving || (!etsyApiKey && !etsyApiSecret && !etsyRedirectUri)}
             >
               {etsySaving ? "Saving..." : "Save Etsy Credentials"}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* MapTiler API Settings */}
+      <div className="admin-section">
+        <h3>MapTiler API Settings</h3>
+        <p style={{ fontSize: "12px", color: "var(--text-muted)", marginBottom: "10px" }}>
+          Used for high-quality city map art rendering. Get a key at maptiler.com/cloud
+        </p>
+        {maptilerSettings?.configured ? (
+          <div className="etsy-settings-status">
+            <div className="etsy-settings-connected">
+              <span className="etsy-badge" style={{ background: "#4a90d9" }}>MapTiler Connected</span>
+              <div className="etsy-settings-detail">
+                <span className="etsy-settings-label">API Key:</span>
+                <span className="etsy-settings-value">{maptilerSettings.api_key}</span>
+              </div>
+            </div>
+            <div className="etsy-settings-actions">
+              <button className="btn btn-secondary btn-sm" onClick={() => setShowMaptilerForm(!showMaptilerForm)}>
+                {showMaptilerForm ? "Cancel" : "Update Key"}
+              </button>
+              <button className="btn btn-secondary btn-sm" onClick={handleClearMaptiler}>
+                Clear Key
+              </button>
+              <button className="btn btn-primary btn-sm" onClick={handleTestMaptiler} disabled={maptilerTesting}>
+                {maptilerTesting ? "Testing..." : "Test Connection"}
+              </button>
+            </div>
+            {maptilerTest && (
+              <div style={{ marginTop: "10px", padding: "10px", background: "var(--bg-input)", borderRadius: "6px", fontSize: "11px", fontFamily: "monospace", lineHeight: "1.6" }}>
+                <div>DB key found: <strong>{maptilerTest.db_key_found ? "YES" : "NO"}</strong></div>
+                <div>Env key found: <strong>{maptilerTest.env_key_found ? "YES" : "NO"}</strong></div>
+                <div>Effective key: <strong>{maptilerTest.effective_key_preview || "NONE"}</strong></div>
+                <div>Test: <strong style={{ color: maptilerTest.test_ok ? "var(--success)" : "var(--error)" }}>
+                  {maptilerTest.test_ok ? "OK — MapTiler is working!" : `FAILED${maptilerTest.test_status ? ` (HTTP ${maptilerTest.test_status})` : ""}`}
+                </strong></div>
+                {maptilerTest.test_error && <div style={{ color: "var(--error)" }}>{maptilerTest.test_error}</div>}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="etsy-settings-status">
+            <p className="etsy-settings-unconfigured">MapTiler API not configured. City maps will use basic road rendering.</p>
+            {!showMaptilerForm && (
+              <button className="btn btn-primary btn-sm" onClick={() => setShowMaptilerForm(true)}>
+                Configure MapTiler API
+              </button>
+            )}
+          </div>
+        )}
+
+        {showMaptilerForm && (
+          <div className="etsy-settings-form">
+            <div className="control-group">
+              <label>MapTiler API Key</label>
+              <input
+                type="text"
+                value={maptilerApiKey}
+                onChange={(e) => setMaptilerApiKey(e.target.value)}
+                placeholder="Your MapTiler API key"
+              />
+            </div>
+            {maptilerMsg && (
+              <div className={maptilerMsg.type === "error" ? "error-message" : "success-message"}>
+                {maptilerMsg.text}
+              </div>
+            )}
+            <button
+              className="btn btn-primary btn-full"
+              onClick={handleSaveMaptiler}
+              disabled={maptilerSaving || !maptilerApiKey}
+            >
+              {maptilerSaving ? "Saving..." : "Save MapTiler Key"}
             </button>
           </div>
         )}

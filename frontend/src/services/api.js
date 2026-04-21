@@ -282,6 +282,15 @@ async function deleteLibraryFile(fileId) {
   }
 }
 
+async function deleteAllLibraryFiles() {
+  const resp = await fetchWithTimeout(`${API_BASE}/library/all`, { method: "DELETE", timeout: 120000 });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Delete all failed"));
+  }
+  return resp.json();
+}
+
 // --- Marketplace ---
 
 async function browseMarketplace(page = 1, perPage = 20, filters = {}) {
@@ -557,6 +566,50 @@ async function clearEtsySettings() {
   return resp.json();
 }
 
+// --- Admin MapTiler Settings ---
+
+async function getMaptilerSettings() {
+  const resp = await fetchWithTimeout(`${API_BASE}/admin/maptiler-settings`);
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Failed to load MapTiler settings"));
+  }
+  return resp.json();
+}
+
+async function saveMaptilerSettings(apiKey) {
+  const resp = await fetchWithTimeout(`${API_BASE}/admin/maptiler-settings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ api_key: apiKey }),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Failed to save MapTiler settings"));
+  }
+  return resp.json();
+}
+
+async function clearMaptilerSettings() {
+  const resp = await fetchWithTimeout(`${API_BASE}/admin/maptiler-settings`, {
+    method: "DELETE",
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "Failed to clear MapTiler settings"));
+  }
+  return resp.json();
+}
+
+async function testMaptiler() {
+  const resp = await fetchWithTimeout(`${API_BASE}/admin/maptiler-test`);
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+    throw new Error(extractErrorMessage(err.detail, "MapTiler test failed"));
+  }
+  return resp.json();
+}
+
 // --- Design Credits (Etsy-paid customers) ---
 
 async function redeemCredit(token) {
@@ -604,7 +657,7 @@ export {
   searchLocations, generateSVG, generatePin, batchGenerate,
   downloadSVG, downloadDXF, downloadSTL, downloadThumbnail, downloadPrintPNG,
   downloadEtsyListing, downloadEtsyPackage, downloadPreview, downloadWallMockup, getPrintSizes,
-  getLibrary, deleteLibraryFile,
+  getLibrary, deleteLibraryFile, deleteAllLibraryFiles,
   browseMarketplace, createListing, purchaseListing,
   getMyPurchases, updateListing, removeListing,
   getSellerDashboard, submitReview, getReviews,
@@ -612,5 +665,6 @@ export {
   getEtsyStatus, connectEtsy, disconnectEtsy, publishToEtsy,
   getShowcaseCities, showcasePublish,
   getEtsyDebug, getAdminStats, getEtsySettings, saveEtsySettings, clearEtsySettings,
+  getMaptilerSettings, saveMaptilerSettings, clearMaptilerSettings, testMaptiler,
   redeemCredit, generateForCredit, getCreditStatus, downloadCreditFile,
 };

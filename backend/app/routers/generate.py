@@ -29,6 +29,8 @@ from app.services.geo_fetch import fetch_area_around_point, fetch_geometry
 from app.services.geometry_processor import process_geometry, transform_wgs84_to_board
 from app.services.svg_generator import generate_svg
 from app.services.street_fetcher import fetch_streets
+from app.services.maptiler_fetcher import fetch_streets_maptiler
+from app.services.maptiler_poster import generate_maptiler_poster_svg
 from app.services.water_fetcher import fetch_water_features
 from app.services.contour_fetcher import fetch_contour_lines, generate_depth_bands
 from app.services.file_storage import store_file, retrieve_file
@@ -41,6 +43,92 @@ from app.services.thumbnail_generator import (
 
 router = APIRouter(prefix="/api/v1", tags=["generate"])
 limiter = Limiter(key_func=get_remote_address)
+
+
+def _compute_street_viewport(streets_data: dict, transform: dict, bounds_mm: tuple,
+                              center_latlon: tuple | None = None,
+                              board_mm: tuple | None = None,
+                              padding_pct: float = 0.05) -> tuple | None:
+    """Compute a zoomed viewport centered on the street grid median.
+
+    Strategy: center on the MEDIAN of street coordinates (not Nominatim center),
+    which naturally avoids water for coastal cities. Then use per-axis percentiles
+    to determine extent and match the poster's map area aspect ratio.
+    Returns new bounds_mm tuple or None if not enough data.
+    """
+    if not streets_data or not transform:
+        return None
+
+    # Collect all road coordinate points, transform to board mm
+    all_x = []
+    all_y = []
+    for road_list_key in ("major_roads", "minor_roads"):
+        for coords, _class, _width, _name in streets_data.get(road_list_key, []):
+            board_coords = transform_wgs84_to_board(coords, transform)
+            for x, y in board_coords:
+                all_x.append(x)
+                all_y.append(y)
+
+    if len(all_x) < 100:
+        return None  # Not enough data points
+
+    all_x.sort()
+    all_y.sort()
+    n = len(all_x)
+
+    # Use median of street coords as center — this naturally avoids water
+    # for coastal cities (Toronto, Miami, Vancouver) since streets only
+    # exist on land.
+    cx = all_x[n // 2]
+    cy = all_y[n // 2]
+
+    # Per-axis percentiles to find the dense core extent
+    p15 = int(n * 0.15)
+    p85 = int(n * 0.85)
+    extent_x = (all_x[p85] - all_x[p15]) / 2
+    extent_y = (all_y[p85] - all_y[p15]) / 2
+
+    # Ensure minimum extent
+    min_extent = 20.0
+    extent_x = max(extent_x, min_extent)
+    extent_y = max(extent_y, min_extent)
+
+    # Match poster's map area aspect ratio
+    if board_mm:
+        board_w, board_h = board_mm
+        map_w = board_w * 0.95
+        map_h = board_h * 0.67
+        target_ratio = map_h / map_w  # height / width
+    else:
+        target_ratio = 1.0
+
+    # Adjust extents to match target ratio: extent_y / extent_x = target_ratio
+    current_ratio = extent_y / extent_x
+    if current_ratio < target_ratio:
+        extent_y = extent_x * target_ratio
+    else:
+        extent_x = extent_y / target_ratio
+
+    # Add padding
+    extent_x *= (1 + padding_pct)
+    extent_y *= (1 + padding_pct)
+
+    x_min = cx - extent_x
+    x_max = cx + extent_x
+    y_min = cy - extent_y
+    y_max = cy + extent_y
+
+    # Log viewport info
+    orig_min_x, orig_min_y, orig_max_x, orig_max_y = bounds_mm
+    orig_area = (orig_max_x - orig_min_x) * (orig_max_y - orig_min_y)
+    street_area = (x_max - x_min) * (y_max - y_min)
+    if orig_area <= 0:
+        return None
+
+    log.info(f"Street viewport: centered on ({cx:.0f},{cy:.0f}), "
+             f"extent {extent_x:.0f}x{extent_y:.0f}mm, "
+             f"{street_area / orig_area:.0%} of boundary area")
+    return (x_min, y_min, x_max, y_max)
 
 # In-memory cache for Overpass API results (streets, water) keyed by bbox.
 # Avoids hitting Overpass repeatedly for the same geographic area.
@@ -89,6 +177,16 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     """Core generation logic shared by single and batch endpoints."""
     warnings: list[str] = []
 
+    # Resolve effective MapTiler API key: prefer the DB-stored value set
+    # via the admin panel, fall back to the env var. Settings.MAPTILER_API_KEY
+    # alone is NOT sufficient — the admin UI writes to the app_settings table.
+    from app.services.app_settings import get_maptiler_key
+    maptiler_key = await get_maptiler_key(db)
+    if maptiler_key:
+        log.info("MapTiler key resolved (DB or env)")
+    else:
+        log.info("MapTiler key not configured — MapTiler fetches will be skipped")
+
     # Resolve board dimensions
     if req.board_width_inches and req.board_height_inches:
         w_in, h_in = req.board_width_inches, req.board_height_inches
@@ -110,9 +208,19 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             log.info(f"Capped DPI from {req.print_dpi} to {effective_dpi} for {w_in}x{h_in}\" ({pixels_at_requested_dpi/1e6:.0f}M pixels)")
             req = req.model_copy(update={"print_dpi": effective_dpi})
 
-    # Fetch geometry
+    # Fetch geometry.
+    # For provinces, try the bundled Natural Earth dataset first — it's
+    # pre-curated by professional cartographers (clean silhouettes, no
+    # rectangular notches from server-side simplification, no Overpass
+    # rate limits). Falls back to Overpass for anything not bundled.
     log.info(f"Generating {req.product_type.value} for OSM {req.osm_type}/{req.osm_id}")
-    geom = await fetch_geometry(req.osm_id, req.osm_type)
+    geom = None
+    if req.product_type.value == "province" and req.text:
+        from app.services.boundary_loader import load_local_province
+        geom = load_local_province(req.text)
+    if geom is None:
+        prefer_overpass = req.product_type.value == "province"
+        geom = await fetch_geometry(req.osm_id, req.osm_type, prefer_overpass=prefer_overpass)
     if geom is None:
         raise HTTPException(
             status_code=404,
@@ -138,12 +246,15 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     # Fetch streets and water concurrently for faster generation
     streets_data = None
     water_data = None
+    parks_data = None
     street_types = ("city", "community", "park")
     water_types = ("community", "city", "park")
     auto_streets = req.product_type.value in street_types
     need_streets = req.include_streets or auto_streets
     # Always fetch water for provinces — lakes/rivers give the shape character
     need_water = req.product_type.value in water_types or req.product_type.value == "province"
+    # Parks — only fetched for city-art via MapTiler. No effect if key absent.
+    need_parks = req.product_type.value in ("city", "community") and bool(maptiler_key)
 
     # Always fetch major highways for provinces — with cased road styling
     # they look professional and give the map structure
@@ -153,6 +264,59 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
 
     bounds = geom.bounds  # minx, miny, maxx, maxy
     bbox = (bounds[1], bounds[0], bounds[3], bounds[2])
+    # Store geographic extent for scale-aware rendering (used by vintage maps)
+    processed["geo_lat_span"] = bounds[3] - bounds[1]
+    processed["geo_lon_span"] = bounds[2] - bounds[0]
+
+    # Expand the street fetch area beyond the boundary for all street-based maps.
+    # This ensures surrounding roads fill the map edges instead of cutting off
+    # at invisible admin boundaries. Larger product types get less expansion.
+    street_bbox = bbox
+    street_osm_id = req.osm_id
+    street_osm_type = req.osm_type
+    is_street_product = req.product_type.value in ("city", "community", "park", "name_sign")
+    if is_street_product:
+        lat_span = bounds[3] - bounds[1]
+        lon_span = bounds[2] - bounds[0]
+        # Scale expansion based on area size: small areas get more expansion
+        if lat_span * lon_span < 0.005:
+            expand_pct = 0.6   # Very small (community/village): 60% expansion
+        elif lat_span * lon_span < 0.05:
+            expand_pct = 0.3   # Small city: 30% expansion
+        else:
+            expand_pct = 0.15  # Large city: 15% expansion
+        expand_lat = lat_span * expand_pct
+        expand_lon = lon_span * expand_pct
+        street_bbox = (
+            bounds[1] - expand_lat,  # south
+            bounds[0] - expand_lon,  # west
+            bounds[3] + expand_lat,  # north
+            bounds[2] + expand_lon,  # east
+        )
+        # Force bbox query instead of area query so we get roads OUTSIDE the boundary
+        street_osm_id = None
+        street_osm_type = None
+        log.info(f"Street map: expanded bbox by {int(expand_pct*100)}% (area {lat_span * lon_span:.4f} deg²)")
+
+    # Water fetch bbox: for street-product cities, use a more aggressive
+    # expansion than streets so coastal/harbour features outside the tight
+    # admin polygon get captured. Sydney NS, Halifax, Vancouver, etc. all
+    # have their defining water bodies extending well beyond the city limits.
+    water_bbox = bbox
+    if is_street_product:
+        lat_span = bounds[3] - bounds[1]
+        lon_span = bounds[2] - bounds[0]
+        # ~2x the street expansion — coastlines need wider context
+        water_expand_pct = 1.0 if lat_span * lon_span < 0.005 else 0.6
+        water_expand_lat = lat_span * water_expand_pct
+        water_expand_lon = lon_span * water_expand_pct
+        water_bbox = (
+            bounds[1] - water_expand_lat,
+            bounds[0] - water_expand_lon,
+            bounds[3] + water_expand_lat,
+            bounds[2] + water_expand_lon,
+        )
+        log.info(f"Water fetch bbox expanded by {int(water_expand_pct*100)}%")
 
     # Size thresholds for street fetching:
     #   Cities (<1 deg²): full streets with all road types
@@ -172,18 +336,42 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
 
     # Provinces get major roads only (highways) unless user explicitly enabled streets.
     # Cities always get full street grid.
+    # Large cities (>0.08 deg²) skip detail roads (footway, cycleway, path, steps)
+    # at the Overpass level to avoid downloading 1M+ elements.
+    is_large_city = bbox_area_deg2 > 0.08 and is_street_product
     include_minor_streets = not is_medium_area and not (is_province and not req.include_streets)
 
     async def _get_streets():
-        cache_key = _bbox_cache_key("streets", bbox)
+        cache_key = _bbox_cache_key("streets", street_bbox)
         if cache_key in _overpass_cache:
             log.info("Using cached street data")
             return _overpass_cache[cache_key]
+
+        # Try MapTiler first (faster, more reliable), fall back to Overpass
+        result = None
+        if maptiler_key:
+            log.info("Trying MapTiler for street data")
+            result = await fetch_streets_maptiler(
+                bbox=street_bbox,
+                include_minor=include_minor_streets,
+                skip_detail=is_large_city,
+                api_key=maptiler_key,
+            )
+            has_data = result and (result.get("major_roads") or result.get("minor_roads"))
+            if has_data:
+                log.info("MapTiler street fetch succeeded")
+                _cache_overpass(cache_key, result)
+                return result
+            else:
+                log.warning("MapTiler returned no data — falling back to Overpass")
+                result = None
+
         result = await fetch_streets(
-            bbox=bbox,
+            bbox=street_bbox,
             include_minor=include_minor_streets,
-            osm_id=req.osm_id,
-            osm_type=req.osm_type,
+            skip_detail=is_large_city,
+            osm_id=street_osm_id,
+            osm_type=street_osm_type,
         )
         has_data = result and (result.get("major_roads") or result.get("minor_roads"))
         if has_data:
@@ -192,11 +380,33 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         return None
 
     async def _get_water():
-        cache_key = _bbox_cache_key("water", bbox)
+        cache_key = _bbox_cache_key("water", water_bbox)
         if cache_key in _overpass_cache:
             log.info("Using cached water data")
             return _overpass_cache[cache_key]
-        result = await fetch_water_features(bbox=bbox)
+
+        # Try MapTiler first — its `water` layer includes pre-built ocean
+        # polygons (OSM has no ocean polygon, only coastline lines), which
+        # is the only way to fill the Atlantic on coastal maps like
+        # Cape Breton County, Halifax, Vancouver, etc.
+        result = None
+        if maptiler_key:
+            log.info("Trying MapTiler for water data")
+            from app.services.maptiler_fetcher import fetch_water_maptiler
+            result = await fetch_water_maptiler(bbox=water_bbox, api_key=maptiler_key)
+            has_data = result and (result.get("water_polygons") or result.get("waterways"))
+            if has_data:
+                log.info(
+                    f"MapTiler water fetch succeeded: "
+                    f"{len(result.get('water_polygons', []))} polygons, "
+                    f"{len(result.get('waterways', []))} waterways"
+                )
+                _cache_overpass(cache_key, result)
+                return result
+            log.warning("MapTiler water returned no data — falling back to Overpass")
+            result = None
+
+        result = await fetch_water_features(bbox=water_bbox)
         has_data = result and (result.get("water_polygons") or result.get("waterways"))
         if has_data:
             _cache_overpass(cache_key, result)
@@ -210,6 +420,21 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         )
         if contours:
             return generate_depth_bands(contours, num_bands=req.num_depth_bands)
+        return None
+
+    async def _get_parks():
+        # Parks only come from MapTiler (OpenMapTiles park + landcover +
+        # landuse layers). There is no Overpass fallback — parks are a
+        # pure-enhancement feature, empty result just means no greens.
+        cache_key = _bbox_cache_key("parks", water_bbox)
+        if cache_key in _overpass_cache:
+            log.info("Using cached park data")
+            return _overpass_cache[cache_key]
+        from app.services.maptiler_fetcher import fetch_parks_maptiler
+        result = await fetch_parks_maptiler(bbox=water_bbox, api_key=maptiler_key)
+        if result and result.get("parks"):
+            _cache_overpass(cache_key, result)
+            return result
         return None
 
     # Fetch streets, water, and contours concurrently to minimise total wall time.
@@ -231,6 +456,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         tasks.append(("streets", _get_streets_staggered()))
     if need_water:
         tasks.append(("water", _get_water_staggered()))
+    if need_parks:
+        tasks.append(("parks", _get_parks()))
     if req.include_contours:
         tasks.append(("contours", _get_contours()))
 
@@ -241,17 +468,21 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         for (label, _), result in zip(tasks, results):
             if isinstance(result, Exception):
                 log.warning(f"{label.title()} fetch failed (non-fatal): {result}")
-                warnings.append(f"{label.title()} data unavailable — map generated without {label}.")
+                # Parks are pure enhancement — no user-facing warning.
+                if label != "parks":
+                    warnings.append(f"{label.title()} data unavailable — map generated without {label}.")
             elif result is None:
                 log.warning(f"{label.title()} fetch returned empty results — not caching")
-                if label != "contours":
-                    # Contour data is optional; empty results are normal for many areas.
+                if label not in ("contours", "parks"):
+                    # Contour + parks data is optional; empty results are normal.
                     # Only warn users when streets/water are unavailable.
                     warnings.append(f"{label.title()} data unavailable — the Overpass API may be busy. Try regenerating in a minute.")
             elif label == "streets":
                 streets_data = result
             elif label == "water":
                 water_data = result
+            elif label == "parks":
+                parks_data = result
             elif label == "contours":
                 contour_data = result
 
@@ -280,8 +511,97 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             if heart_coords:
                 heart_mm = heart_coords[0]
 
-    # Generate print poster SVG (the primary and only output)
+    # Count roads for quality validation
+    _road_count = 0
+    if streets_data:
+        _road_count = len(streets_data.get("major_roads", [])) + len(streets_data.get("minor_roads", []))
+
+    # Override center_latlon with accurate city center from Nominatim search
+    if req.center_lat is not None and req.center_lon is not None:
+        processed["center_latlon"] = (req.center_lat, req.center_lon)
+
+    # Cap road count to prevent massive SVGs that timeout the browser.
+    # Dense cities like Toronto can have 300K+ roads — cap aggressively.
+    # Even 5K+10K=15K roads produces a very dense, visually rich map.
+    MAX_MAJOR_ROADS = 5000
+    MAX_MINOR_ROADS = 10000
+    if streets_data:
+        major = streets_data.get("major_roads", [])
+        minor = streets_data.get("minor_roads", [])
+        if len(major) > MAX_MAJOR_ROADS:
+            # Keep longest roads (most visually important)
+            major.sort(key=lambda r: len(r[0]), reverse=True)
+            streets_data["major_roads"] = major[:MAX_MAJOR_ROADS]
+            log.info(f"Capped major roads: {len(major)} -> {MAX_MAJOR_ROADS}")
+        if len(minor) > MAX_MINOR_ROADS:
+            # Sample evenly to preserve geographic coverage
+            step = len(minor) / MAX_MINOR_ROADS
+            streets_data["minor_roads"] = [minor[int(i * step)] for i in range(MAX_MINOR_ROADS)]
+            log.info(f"Capped minor roads: {len(minor)} -> {MAX_MINOR_ROADS}")
+        _road_count = len(streets_data.get("major_roads", [])) + len(streets_data.get("minor_roads", []))
+
+    # Quality gate: warn if too few roads for a good city map print
+    MIN_ROADS_FOR_QUALITY = 150
+    _quality_ok = _road_count >= MIN_ROADS_FOR_QUALITY
+    if not _quality_ok and req.product_type.value == "city":
+        warnings.append(
+            f"This location has only {_road_count} roads. City map art prints look best with "
+            f"dense street grids (200+ roads). Consider searching for a larger city or a "
+            f"more urban area for the best result."
+        )
+
+    # For city maps: zoom viewport to dense urban area centered on city center
+    if req.product_type.value in ("city", "community") and streets_data:
+        street_viewport = _compute_street_viewport(
+            streets_data, processed.get("transform"), processed.get("bounds_mm"),
+            center_latlon=processed.get("center_latlon"),
+            board_mm=processed.get("board_mm"),
+        )
+        if street_viewport:
+            processed = dict(processed)  # don't mutate original
+            processed["bounds_mm"] = street_viewport
+            log.info(f"Zoomed viewport to urban street grid")
+
+    # Generate map art output
     location_name = req.text or f"Location {req.osm_id}"
+    board_w, board_h = processed["board_mm"]
+
+    # For city_art maps: generate PNG poster directly from road geometry (no tiles)
+    preview_image = None
+    from app.services.static_map_poster import POSTER_THEMES
+    is_city_art = req.color_theme in POSTER_THEMES or req.color_theme in ("city_map_art", "cityart")
+    is_city_type = req.product_type.value in ("city", "community")
+    log.info(f"Poster check: city_art={is_city_art}, city_type={is_city_type}, theme={req.color_theme}, roads={bool(streets_data)}")
+    if is_city_art and is_city_type and streets_data:
+        center = processed.get("center_latlon")
+        if center and center[0] is not None:
+            lat_span = bounds[3] - bounds[1] if bounds else 0
+            lon_span = bounds[2] - bounds[0] if bounds else 0
+            try:
+                import base64
+                from app.services.static_map_poster import generate_road_poster
+                poster_bytes = generate_road_poster(
+                    streets_data=streets_data,
+                    water_data=water_data,
+                    center_lat=center[0],
+                    center_lng=center[1],
+                    bbox_area=lat_span * lon_span,
+                    city_name=location_name,
+                    subtitle=req.subtitle or "",
+                    board_size=req.board_size.value,
+                    show_coordinates=req.show_coordinates,
+                    color_theme=req.color_theme,
+                    parks_data=parks_data,
+                    land_polygon=geom,
+                )
+                if poster_bytes:
+                    b64 = base64.b64encode(poster_bytes).decode("ascii")
+                    preview_image = f"data:image/png;base64,{b64}"
+                    log.info(f"Road poster generated: {len(poster_bytes)} bytes, theme={req.color_theme}")
+            except Exception as e:
+                log.warning(f"Road poster failed, falling back to SVG: {e}", exc_info=True)
+
+    # Generate SVG (used as fallback or for non-city_art maps)
     result = generate_svg(
         processed=processed,
         location_name=location_name,
@@ -310,7 +630,6 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
 
     # Store files + generate derivatives (only for authenticated users)
     # Visitors just get the SVG preview — no file storage needed
-    board_w, board_h = processed["board_mm"]
     svg_key = None
     dxf_key = None
     stl_key = None
@@ -325,6 +644,33 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         except Exception as e:
             log.error(f"Failed to store SVG: {e}")
             raise HTTPException(status_code=500, detail="Failed to save generated file. Please try again.")
+
+        # Generate CNC-optimized SVG (simplified: major roads only, fewer paths)
+        try:
+            cnc_result = generate_svg(
+                processed=processed,
+                location_name=location_name,
+                style=req.style,
+                show_coordinates=req.show_coordinates,
+                font_size_mm=req.font_size_mm,
+                streets_data=streets_data,
+                contour_data=contour_data,
+                water_data=water_data,
+                markers=board_markers,
+                subtitle=req.subtitle,
+                font_family=req.font_family.value,
+                border_style=req.border_style.value,
+                heart_location=heart_mm,
+                output_mode="cnc",
+                color_theme=req.color_theme,
+                product_type=req.product_type.value,
+            )
+            cnc_svg_key = svg_key.replace("svg/", "cnc/").replace(".svg", "_cnc.svg")
+            await store_file(cnc_svg_key, cnc_result["svg"].encode("utf-8"))
+            log.info(f"CNC SVG generated: {cnc_result['path_count']} paths")
+        except Exception as e:
+            log.warning(f"CNC SVG generation failed (non-fatal): {e}")
+            cnc_svg_key = None
 
         # Generate DXF (CNC-ready vector) alongside SVG
         try:
@@ -366,20 +712,50 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         except Exception as e:
             log.warning(f"Thumbnail generation failed (non-fatal): {e}")
 
-        # Generate high-res print PNG from poster SVG (themed, with proper layout)
-        try:
-            print_bytes = generate_print_image(
-                result["svg"],
-                color_theme=req.color_theme,
-                skip_remap=True,
-                board_size=req.board_size.value,
-                dpi=req.print_dpi,
-            )
+        # Generate high-res print PNG — use road poster for city maps
+        static_poster_bytes = None
+        if is_city_art and is_city_type and streets_data:
+            center = processed.get("center_latlon", (None, None))
+            if center and center[0] is not None:
+                lat_span = bounds[3] - bounds[1] if bounds else 0
+                lon_span = bounds[2] - bounds[0] if bounds else 0
+                try:
+                    from app.services.static_map_poster import generate_road_poster
+                    static_poster_bytes = generate_road_poster(
+                        streets_data=streets_data,
+                        water_data=water_data,
+                        center_lat=center[0],
+                        center_lng=center[1],
+                        bbox_area=lat_span * lon_span,
+                        city_name=location_name,
+                        subtitle=req.subtitle or "",
+                        board_size=req.board_size.value,
+                        show_coordinates=req.show_coordinates,
+                        color_theme=req.color_theme,
+                        parks_data=parks_data,
+                        land_polygon=geom,
+                    )
+                except Exception as e:
+                    log.warning(f"Road poster for print failed (non-fatal): {e}")
+
+        if static_poster_bytes:
             print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
-            await store_file(print_png_key, print_bytes, content_type="image/png")
-        except Exception as e:
-            log.error(f"Print PNG generation failed: {type(e).__name__}: {e}")
-            print_png_key = None
+            await store_file(print_png_key, static_poster_bytes, content_type="image/png")
+            log.info(f"Print PNG from road poster: {len(static_poster_bytes)} bytes")
+        else:
+            try:
+                print_bytes = generate_print_image(
+                    result["svg"],
+                    color_theme=req.color_theme,
+                    skip_remap=True,
+                    board_size=req.board_size.value,
+                    dpi=req.print_dpi,
+                )
+                print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
+                await store_file(print_png_key, print_bytes, content_type="image/png")
+            except Exception as e:
+                log.error(f"Print PNG generation failed: {type(e).__name__}: {e}")
+                print_png_key = None
 
         # Generate Etsy listing image (4:3 ratio for Etsy grid)
         try:
@@ -449,7 +825,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         log.info(f"Preview generated (visitor): {location_name} ({result['node_count']} nodes)")
 
     return GenerateResponse(
-        svg=result["svg"],
+        svg=result["svg"] if not preview_image else None,
+        preview_image=preview_image,
         thumbnail_available=thumbnail_key is not None,
         print_png_available=print_png_key is not None,
         etsy_listing_available=etsy_key is not None,
@@ -461,6 +838,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         node_count=result["node_count"],
         path_count=result["path_count"],
         layer_count=result["layer_count"],
+        road_count=_road_count,
+        quality_ok=_quality_ok,
         print_dpi=req.print_dpi,
         print_pixels=print_pixels,
         warnings=warnings,
@@ -1104,10 +1483,17 @@ async def download_etsy_package(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Download a ZIP bundle with everything needed for an Etsy listing (admin only)."""
+    """Download a ZIP bundle with everything needed for an Etsy listing (admin only).
+
+    Uses the shared customer bundle builder so admin and customer ZIPs stay
+    in sync, then appends admin-only extras: the 2700x2025 Etsy hero image
+    and listing.txt (AI-generated title/tags/description for pasting into
+    the Etsy listing form).
+    """
     if user.tier != "admin":
         raise HTTPException(status_code=403, detail="Admin only.")
     from app.services.ai_description_generator import generate_full_listing
+    from app.services.bundle_zip import build_customer_bundle_zip
 
     result = await db.execute(
         select(GeneratedFile).where(GeneratedFile.id == file_id)
@@ -1119,85 +1505,74 @@ async def download_etsy_package(
     location = file_record.location_name
     seo_name = _seo_filename(location, "").rstrip(".")  # base name without extension
 
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        # 1. SVG source
-        svg_bytes = await retrieve_file(file_record.svg_storage_key)
-        if svg_bytes:
-            zf.writestr(f"{seo_name}.svg", svg_bytes)
+    # Admin-only extras appended to the shared customer bundle
+    extras: dict[str, bytes] = {}
 
-        # 2. DXF source (CNC-ready)
-        if file_record.dxf_storage_key:
-            dxf_bytes = await retrieve_file(file_record.dxf_storage_key)
-            if dxf_bytes:
-                zf.writestr(f"{seo_name}.dxf", dxf_bytes)
+    # Etsy listing hero image (2700x2025) — seller uses this as the listing hero
+    etsy_key = file_record.svg_storage_key.replace("svg/", "etsy/").replace(
+        ".svg", "_etsy.png"
+    )
+    etsy_bytes = await retrieve_file(etsy_key)
+    if etsy_bytes:
+        extras[f"{seo_name}-etsy-listing-2700x2025.png"] = etsy_bytes
 
-        # 3. Print PNG
-        if file_record.print_png_key:
-            png_bytes = await retrieve_file(file_record.print_png_key)
-            if png_bytes:
-                zf.writestr(f"{seo_name}-print.png", png_bytes)
+    # AI-generated listing text (title, description, tags) — pasted into Etsy
+    is_city = file_record.product_type == "city"
+    try:
+        ai = await generate_full_listing(
+            location_name=location,
+            style=file_record.style,
+            country="",
+            province=file_record.province or "",
+            is_city=is_city,
+        )
+    except Exception:
+        ai = {"title": None, "description": None, "tags": None}
 
-        # 3. Etsy listing image (2700x2025)
-        etsy_key = file_record.svg_storage_key.replace("svg/", "etsy/").replace(".svg", "_etsy.png")
-        etsy_bytes = await retrieve_file(etsy_key)
-        if etsy_bytes:
-            zf.writestr(f"{seo_name}-etsy-listing-2700x2025.png", etsy_bytes)
+    fallback_title = (
+        f"{location} City Map Print — Printable Wall Art Poster — "
+        f"Home Decor Housewarming Gift — Digital Download"
+    )[:140]
+    fallback_tags = (
+        f"{location} map,city map print,map wall art,printable art,"
+        f"home decor,housewarming gift,digital download,map poster,"
+        f"custom map art,svg dxf file"
+    )
+    fallback_description = (
+        f"A modern minimalist printable city map poster of {location}. "
+        f"Instant digital download — ready to print and frame at standard "
+        f"sizes (8x10, 11x14, 16x20, 18x24, 24x36 inches). High-resolution "
+        f"PNG for wall art, plus bonus SVG and DXF files for CNC hobbyists "
+        f"and laser cutters. Perfect as a housewarming, wedding, anniversary, "
+        f"or hometown pride gift. No physical product shipped."
+    )
 
-        # 4. Thumbnail / mockup
-        if file_record.thumbnail_key:
-            thumb_bytes = await retrieve_file(file_record.thumbnail_key)
-            if thumb_bytes:
-                zf.writestr(f"{seo_name}-mockup.png", thumb_bytes)
+    listing_lines = [
+        f"=== MapForge Etsy Listing — {location} ===",
+        "",
+        f"TITLE: {ai.get('title') or fallback_title}",
+        "",
+        f"TAGS: {ai.get('tags') or fallback_tags}",
+        "",
+        "DESCRIPTION:",
+        ai.get("description") or fallback_description,
+        "",
+        "---",
+        "Files included in this package:",
+        f"  - {seo_name}-print.png (PRIMARY — high-resolution wall art poster, ready to print and frame)",
+        f"  - {seo_name}.svg (full-detail vector source — for scaling and editing)",
+        f"  - {seo_name}-cnc.svg (CNC-optimized vector — major roads only, clean toolpaths)",
+        f"  - {seo_name}.dxf (VCarve Pro / CAM import — major roads only)",
+        f"  - {seo_name}-etsy-listing-2700x2025.png (Etsy listing hero image)",
+        f"  - {seo_name}-mockup.png (product mockup)",
+        f"  - {seo_name}-wall-mockup-light_wall.png (lifestyle mockup on a light wall)",
+        f"  - {seo_name}-wall-mockup-dark_wall.png (lifestyle mockup on a dark wall)",
+        f"  - README_FIRST.txt (how-to-print instructions for the buyer)",
+    ]
+    extras["listing.txt"] = "\n".join(listing_lines).encode("utf-8")
 
-        # 4b. Wall mockups (framed on wall — lifestyle photos for listings)
-        if svg_bytes:
-            try:
-                for mockup_style in ("light_wall", "dark_wall"):
-                    mockup_png = generate_wall_mockup(
-                        svg_bytes.decode("utf-8"),
-                        output_width=3000,
-                        output_height=2400,
-                        mockup_style=mockup_style,
-                    )
-                    zf.writestr(f"{seo_name}-wall-mockup-{mockup_style}.png", mockup_png)
-            except Exception as e:
-                log.warning(f"Wall mockup generation failed (non-fatal): {e}")
-
-        # 5. AI-generated listing text (title, description, tags)
-        is_city = file_record.product_type == "city"
-        try:
-            ai = await generate_full_listing(
-                location_name=location,
-                style=file_record.style,
-                country="",
-                province=file_record.province or "",
-                is_city=is_city,
-            )
-        except Exception:
-            ai = {"title": None, "description": None, "tags": None}
-
-        listing_lines = [
-            f"=== MapForge Etsy Listing — {location} ===",
-            "",
-            f"TITLE: {ai.get('title') or location + ' Map SVG — CNC Laser Cut File — Digital Download'}",
-            "",
-            f"TAGS: {ai.get('tags') or 'map svg, cnc file, laser cut, wall art, digital download'}",
-            "",
-            "DESCRIPTION:",
-            ai.get("description") or f"Beautiful CNC-ready map of {location}. Digital download includes SVG source file. Compatible with VCarve Pro, Fusion 360, Carbide Create, and LightBurn.",
-            "",
-            "---",
-            "Files included in this package:",
-            f"  - {seo_name}.svg (CNC-ready vector source)",
-            f"  - {seo_name}.dxf (VCarve Pro / CAM import)",
-            f"  - {seo_name}-print.png (high-res print)",
-            f"  - {seo_name}-etsy-listing-2700x2025.png (listing image)",
-            f"  - {seo_name}-mockup.png (product mockup)",
-        ]
-        zf.writestr("listing.txt", "\n".join(listing_lines))
-
-    zip_bytes = buf.getvalue()
+    # Build the shared customer bundle + admin extras
+    zip_bytes = await build_customer_bundle_zip(file_record, extra_files=extras)
     zip_filename = _seo_filename(location, "zip", suffix="etsy-package")
 
     return Response(

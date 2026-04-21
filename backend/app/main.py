@@ -1,4 +1,10 @@
-"""MapForge CNC — FastAPI Application Entry Point."""
+"""MapForge — FastAPI Application Entry Point.
+
+MapForge is a printable city map wall art generator. The primary product is
+a high-resolution PNG poster ready to print and frame. Each download also
+bundles SVG and DXF vector files as a bonus for CNC hobbyists and laser
+cutters (VCarve Pro, Fusion 360, Carbide Create, LightBurn, Easel).
+"""
 
 import os
 from contextlib import asynccontextmanager
@@ -23,9 +29,17 @@ STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
-    log.info("MapForge CNC starting up...")
+    log.info("MapForge starting up...")
     log.info(f"DATABASE_URL dialect: {settings.DATABASE_URL.split('://')[0]}")
     log.info(f"PORT: {os.environ.get('PORT', 'not set (defaulting to 8000)')}")
+    if settings.MAPTILER_API_KEY:
+        log.info("MAPTILER_API_KEY (env): set")
+    else:
+        log.info(
+            "MAPTILER_API_KEY (env): not set — will read from app_settings DB "
+            "row (configurable via /admin). If neither is set, coastal maps "
+            "fall back to Overpass (noisy water, no ocean polygons, no parks)."
+        )
     try:
         await init_db()
         log.info("Database initialized")
@@ -44,15 +58,18 @@ async def lifespan(app: FastAPI):
         log.info("Popular locations pre-fetch started in background")
 
     yield
-    log.info("MapForge CNC shutting down...")
+    log.info("MapForge shutting down...")
 
 
 # Rate limiter
 limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(
-    title="MapForge CNC",
-    description="Geographic SVG Generator for CNC Routing — Canada, US, and Global",
+    title="MapForge",
+    description=(
+        "Printable City Map Wall Art Generator — high-resolution PNG posters "
+        "for framing, with bonus SVG/DXF files for CNC and laser cutting."
+    ),
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -149,8 +166,11 @@ else:
     @app.get("/")
     async def root():
         return {
-            "app": "MapForge CNC",
+            "app": "MapForge",
             "version": "1.0.0",
-            "description": "Canadian Geographic SVG Generator for CNC Routing",
+            "description": (
+                "Printable City Map Wall Art Generator — PNG posters for "
+                "framing, with bonus SVG/DXF files for CNC hobbyists."
+            ),
             "docs": "/docs",
         }

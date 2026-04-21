@@ -1,13 +1,17 @@
 """Template library router — save, list, filter, re-export."""
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models.db_models import GeneratedFile, MarketplaceListing, User
+from app.models.db_models import GeneratedFile, MarketplaceListing, User, DesignCredit
 from app.models.schemas import LibraryFileResponse, LibraryResponse
 from app.services.auth import get_current_user
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/library", tags=["library"])
 
@@ -78,6 +82,85 @@ async def list_library(
     return LibraryResponse(files=items, total=total, page=page, per_page=per_page)
 
 
+@router.delete("/all", status_code=200)
+async def delete_all_files(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete all files from the user's library (skips marketplace-listed files)."""
+    from app.services.file_storage import delete_file as delete_stored
+
+    # Get all user's files
+    result = await db.execute(
+        select(GeneratedFile).where(GeneratedFile.owner_id == user.id)
+    )
+    all_files = result.scalars().all()
+
+    if not all_files:
+        return {"deleted": 0, "skipped": 0}
+
+    # Find which ones are listed on marketplace
+    file_ids = [f.id for f in all_files]
+    listings_result = await db.execute(
+        select(MarketplaceListing.file_id).where(
+            MarketplaceListing.file_id.in_(file_ids),
+            MarketplaceListing.is_active == True,
+        )
+    )
+    listed_ids = {row[0] for row in listings_result.all()}
+
+    # Also find files referenced by design credits (can't delete those, just nullify the FK)
+    credit_refs = await db.execute(
+        select(DesignCredit.file_id).where(
+            DesignCredit.file_id.in_(file_ids),
+            DesignCredit.file_id.isnot(None),
+        )
+    )
+    credit_file_ids = {row[0] for row in credit_refs.all()}
+
+    # Also find files with ANY marketplace listing (active or inactive)
+    all_listings = await db.execute(
+        select(MarketplaceListing.file_id).where(
+            MarketplaceListing.file_id.in_(file_ids),
+        )
+    )
+    any_listed_ids = {row[0] for row in all_listings.all()}
+
+    deleted = 0
+    skipped = 0
+    for f in all_files:
+        if f.id in listed_ids:
+            skipped += 1
+            continue
+        # Nullify design credit references before deleting
+        if f.id in credit_file_ids:
+            await db.execute(
+                select(DesignCredit).where(DesignCredit.file_id == f.id)
+            )
+            from sqlalchemy import update
+            await db.execute(
+                update(DesignCredit).where(DesignCredit.file_id == f.id).values(file_id=None)
+            )
+        # Remove inactive marketplace listings that reference this file
+        if f.id in any_listed_ids and f.id not in listed_ids:
+            await db.execute(
+                delete(MarketplaceListing).where(MarketplaceListing.file_id == f.id)
+            )
+        # Clean up all storage keys, tolerating errors on individual files
+        for key in (f.svg_storage_key, f.dxf_storage_key, f.thumbnail_key, f.print_png_key):
+            if key:
+                try:
+                    await delete_stored(key)
+                except Exception as exc:
+                    log.warning("Failed to delete storage key %s: %s", key, exc)
+        await db.delete(f)
+        deleted += 1
+
+    await db.commit()
+    log.info("User %s deleted all library files: %d deleted, %d skipped", user.id, deleted, skipped)
+    return {"deleted": deleted, "skipped": skipped}
+
+
 @router.delete("/{file_id}", status_code=204)
 async def delete_file(
     file_id: str,
@@ -102,10 +185,20 @@ async def delete_file(
     if listing_result.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Cannot delete a file that is listed on the marketplace. Remove the listing first.")
 
+    # Nullify any design credit references to this file
+    from sqlalchemy import update
+    await db.execute(
+        update(DesignCredit).where(DesignCredit.file_id == file_id).values(file_id=None)
+    )
+
     from app.services.file_storage import delete_file as delete_stored
-    await delete_stored(file_record.svg_storage_key)
-    if file_record.dxf_storage_key:
-        await delete_stored(file_record.dxf_storage_key)
+    for key in (file_record.svg_storage_key, file_record.dxf_storage_key,
+                file_record.thumbnail_key, file_record.print_png_key):
+        if key:
+            try:
+                await delete_stored(key)
+            except Exception as exc:
+                log.warning("Failed to delete storage key %s: %s", key, exc)
 
     await db.delete(file_record)
     await db.commit()

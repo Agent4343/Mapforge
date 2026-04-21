@@ -69,6 +69,9 @@ class Settings:
     # AI Description Generation (Claude API)
     ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
 
+    # MapTiler (vector tile API for street data — faster/more reliable than Overpass)
+    MAPTILER_API_KEY: str = os.getenv("MAPTILER_API_KEY", "")
+
     # Etsy API (OAuth 2.0 — register at https://www.etsy.com/developers)
     ETSY_API_KEY: str = os.getenv("ETSY_API_KEY", "")
     ETSY_API_SECRET: str = os.getenv("ETSY_API_SECRET", "")
