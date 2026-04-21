@@ -885,24 +885,53 @@ def render_map_image(
             draw_list.append((_tier_for(rclass), px_coords, rclass, width_mm))
             kept_major += 1
 
-        draw_list.sort(key=lambda t: t[0])
+        # Road-casing technique (cartographic convention used by
+        # Mapiful et al.): each arterial/motorway is drawn twice —
+        # first a wider stroke in the background colour, then the
+        # coloured stroke on top. The bg-coloured casing masks out
+        # any tier-below stroke that crosses the arterial, producing
+        # clean intersections instead of the "star" of gray arms
+        # poking out of a black cross block.
+        #
+        # Draw order (every tier twice: casing then fill):
+        #   tier 0 (residential/service)     → single pass, no casing
+        #   tier 1 (tertiary)                → single pass, no casing
+        #   tier 2 (primary/secondary)       → casing + fill
+        #   tier 3 (motorway/trunk)          → casing + fill
+        # Each higher tier's casing wipes the lower tier's stroke
+        # inside its own footprint.
+        casing_color = theme.get("map_bg", (238, 238, 238))
+        _CASING_SCALE = 1.55  # casing width = 1.55 × line width
+
+        def _sort_key(entry):
+            # (tier, pass) where pass 0 = casing, pass 1 = fill.
+            # Casings draw before fills of the same tier, and both
+            # draw after the full previous-tier fills.
+            return (entry[0], entry[1])
+
+        render_list: list[tuple[int, int, list, str, float]] = []
         for tier, px_coords, rclass, width_mm in draw_list:
+            if tier >= 2:
+                render_list.append((tier, 0, px_coords, rclass, width_mm))
+                render_list.append((tier, 1, px_coords, rclass, width_mm))
+            else:
+                render_list.append((tier, 1, px_coords, rclass, width_mm))
+
+        render_list.sort(key=_sort_key)
+        for tier, pass_idx, px_coords, rclass, width_mm in render_list:
             mult = minor_mult if tier <= 1 else major_mult
             floor_px = minor_min if tier <= 1 else major_min
             line_w = max(floor_px, int(width_mm * mult * _road_width_scale(rclass)))
-            colour = _road_color(rclass)
+            if pass_idx == 0:
+                casing_w = max(line_w + 4, int(line_w * _CASING_SCALE))
+                colour = casing_color
+                w = casing_w
+            else:
+                colour = _road_color(rclass)
+                w = line_w
             try:
-                # `joint="curve"` rounds the joins inside each
-                # polyline. We deliberately skip end-cap ellipses:
-                # every stitched chain that terminates at a real
-                # intersection would otherwise stamp a dot on top of
-                # the perpendicular road, and dozens of those stamps
-                # at one junction merge into the "plus-star" artifact
-                # seen on early city_art renders. Butt ends leave a
-                # sub-pixel gap at orthogonal joins which is
-                # invisible at print resolution.
-                draw.line(px_coords, fill=colour, width=line_w, joint="curve")
-                if tier <= 1:
+                draw.line(px_coords, fill=colour, width=w, joint="curve")
+                if pass_idx == 1 and tier <= 1:
                     kept_minor += 1
             except Exception:
                 pass

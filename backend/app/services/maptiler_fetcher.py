@@ -32,9 +32,13 @@ _MAPTILER_ROAD_MAP = {
     "secondary": "secondary",
     "tertiary": "tertiary",
     "minor": "residential",
-    "service": "service",
-    "track": "track",
-    "path": "path",
+    # service + track clutter the downtown core with driveways,
+    # parking aisles, and unpaved access lanes without adding
+    # structural character to the poster. Drop them like the
+    # rail / aerialway classes.
+    "service": None,
+    "track": None,
+    "path": None,
     "raceway": None,
     "ferry": None,
     "rail": None,
