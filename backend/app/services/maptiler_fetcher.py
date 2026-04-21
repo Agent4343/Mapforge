@@ -83,8 +83,11 @@ def _tile_to_lng_lat(tx: int, ty: int, zoom: int) -> tuple[float, float]:
 def _choose_zoom(bbox: tuple[float, float, float, float]) -> int:
     """Choose appropriate zoom level based on bbox size.
 
-    Higher zoom = more detail but more tiles to fetch.
-    For city maps we want zoom 12-14 for good street detail.
+    Higher zoom = more detail but more tiles to fetch. OpenMapTiles
+    only starts emitting residential roads at zoom 13, and the full
+    residential grid is only available at 14. We bias toward the
+    higher tier so city-scale posters get the dense Mapiful-style
+    lattice rather than just arterial backbones.
     """
     south, west, north, east = bbox
     lat_span = north - south
@@ -92,15 +95,15 @@ def _choose_zoom(bbox: tuple[float, float, float, float]) -> int:
     area = lat_span * lon_span
 
     if area > 1.0:
-        return 10  # Very large area
-    elif area > 0.1:
-        return 12  # Large city (Toronto)
-    elif area > 0.01:
-        return 13  # Medium city
-    elif area > 0.001:
-        return 14  # Small city / community
+        return 11  # Province / country
+    elif area > 0.3:
+        return 12  # Regional metro (Toronto greater, GTA)
+    elif area > 0.05:
+        return 13  # Large city (Calgary, Edmonton) — residentials appear
+    elif area > 0.005:
+        return 14  # Medium / downtown city — full residential grid
     else:
-        return 14  # Very small area
+        return 15  # Neighbourhood portrait
 
 
 def _decode_varint(data: bytes, pos: int) -> tuple[int, int]:
@@ -336,8 +339,11 @@ async def fetch_streets_maptiler(
     log.info(f"MapTiler: fetching {total_tiles} tiles at zoom {zoom} "
              f"(x:{x_min}-{x_max}, y:{y_min}-{y_max})")
 
-    # Cap tile count to prevent excessive API usage
-    MAX_TILES = 100
+    # Cap tile count to prevent excessive API usage. Raised from 100
+    # so city-scale bboxes can keep zoom 13 (which is where
+    # OpenMapTiles starts emitting residential streets). MapTiler
+    # comfortably serves 400 tiles in a few seconds.
+    MAX_TILES = 400
     if total_tiles > MAX_TILES:
         # Reduce zoom to fit within tile limit
         while total_tiles > MAX_TILES and zoom > 8:

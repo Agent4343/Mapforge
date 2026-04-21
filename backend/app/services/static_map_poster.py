@@ -35,15 +35,22 @@ MAP_RENDER_H = 2400
 # ── Color themes ───────────────────────────────────────────────────────
 POSTER_THEMES = {
     "city_art": {
-        "bg": (245, 245, 245), "map_bg": (255, 255, 255),
+        # Mapiful-style mat + light-gray land backdrop so the white
+        # negative space between streets reads as city blocks and the
+        # black road lattice pops off the page.
+        "bg": (250, 250, 250), "map_bg": (238, 238, 238),
         "title": (25, 25, 25), "subtitle": (100, 100, 100),
         "border": (200, 200, 200), "line": (180, 180, 180),
-        # Premium wall-art hierarchy: near-black major, light-grey
-        # minor. The 15/190 gap is intentional — roads should read as
-        # two clear tiers, not a single medium-grey mesh.
-        "road_major": (15, 15, 15), "road_minor": (190, 190, 190),
-        # Water reads as the main non-road feature against white.
-        # Slightly darker edge keeps rivers and coastlines crisp.
+        # Four-tier road hierarchy — motorway/trunk reads as near-black,
+        # primary/secondary a shade lighter, tertiary mid-gray, and
+        # residentials as hairline dark-gray texture. Together they
+        # reproduce the layered look that makes Mapiful posters
+        # instantly recognizable as a city.
+        "road_major": (20, 20, 20),    # motorway, trunk
+        "road_arterial": (55, 55, 55), # primary, secondary
+        "road_collector": (95, 95, 95),# tertiary
+        "road_minor": (150, 150, 150), # residential, service
+        # Soft teal water: the signature non-road anchor.
         "map_mode": "light", "water": (188, 208, 226),
         "water_edge": (110, 140, 170),
         # Parks are intentionally not rendered (see render_map_image).
@@ -668,8 +675,45 @@ def render_map_image(
 
     # ── Draw roads ──
     if streets_data:
-        minor_color = theme.get("road_minor", (90, 90, 90))
-        major_color = theme.get("road_major", (30, 30, 30))
+        # Four-tier colour hierarchy (Mapiful-style). Themes without
+        # the mid tiers fall back to a gradient between major/minor
+        # so legacy themes keep working.
+        minor_color = theme.get("road_minor", (150, 150, 150))
+        major_color = theme.get("road_major", (20, 20, 20))
+        arterial_color = theme.get(
+            "road_arterial",
+            tuple((a + b) // 2 for a, b in zip(major_color, minor_color)),
+        )
+        collector_color = theme.get(
+            "road_collector",
+            tuple((a + 2 * b) // 3 for a, b in zip(major_color, minor_color)),
+        )
+
+        def _road_color(rclass: str) -> tuple[int, int, int]:
+            rc = (rclass or "").lower()
+            if rc in ("motorway", "motorway_link", "trunk", "trunk_link"):
+                return major_color
+            if rc in ("primary", "primary_link", "secondary", "secondary_link"):
+                return arterial_color
+            if rc in ("tertiary", "tertiary_link"):
+                return collector_color
+            return minor_color
+
+        def _road_width_scale(rclass: str) -> float:
+            rc = (rclass or "").lower()
+            if rc in ("motorway", "trunk"):
+                return 1.0
+            if rc in ("motorway_link", "trunk_link"):
+                return 0.70
+            if rc == "primary":
+                return 0.78
+            if rc in ("primary_link", "secondary"):
+                return 0.62
+            if rc in ("secondary_link", "tertiary"):
+                return 0.48
+            if rc == "tertiary_link":
+                return 0.38
+            return 0.32  # residential, service, unclassified, living_street
 
         # Scale line widths + minor-road length threshold to viewport.
         # Larger viewport = drop more residentials so the map breathes.
@@ -680,62 +724,53 @@ def render_map_image(
         # only the iconic motorway/trunk/primary backbone survives.
         # At downtown scale we keep the minor grid because the
         # walkable core is the character of the place.
+        # Mapiful-style posters keep the residential grid visible at
+        # every city scale — the dense hairline mesh between arterials
+        # is the whole point of the look. We now only drop residentials
+        # at province/country scale, and keep secondary avenues at
+        # every city scale so the hierarchy reads as four clear tiers
+        # instead of a single backbone.
         drop_all_residentials = False
-        # When True, filter major_roads to only the top three
-        # classes (motorway, trunk, primary). Secondary avenues
-        # and every *_link ramp get dropped. This is what turns
-        # Calgary from "dense grid" to "iconic arterial skeleton".
         drop_secondary_majors = False
         if bbox_area > 2.0:
+            # Province / country: residential grid is noise at this
+            # scale. Keep secondary so mid-weight roads still read.
             minor_mult, major_mult = 3, 9
             minor_min, major_min = 2, 6
             min_residential_px = 440
             drop_all_residentials = True
-            drop_secondary_majors = True
         elif bbox_area > 0.5:
-            minor_mult, major_mult = 5, 12
-            minor_min, major_min = 2, 7
-            min_residential_px = 320
-            drop_all_residentials = True
-            drop_secondary_majors = True
+            # Regional metro (Toronto/Montreal greater area).
+            minor_mult, major_mult = 4, 11
+            minor_min, major_min = 2, 6
+            min_residential_px = 150
         elif bbox_area > 0.1:
-            minor_mult, major_mult = 6, 14
-            minor_min, major_min = 3, 8
-            min_residential_px = 230
-            drop_all_residentials = True
-            drop_secondary_majors = True
+            # Large city (Calgary, Edmonton): hairline residentials,
+            # secondary avenues visible as a mid-weight tier.
+            minor_mult, major_mult = 4, 12
+            minor_min, major_min = 2, 7
+            min_residential_px = 90
         elif bbox_area > 0.03:
-            # Calgary-sized metro: drop the entire minor layer and
-            # drop secondary majors so only motorway/trunk/primary
-            # survives. The result is the iconic Deerfoot/Crowchild/
-            # Macleod/Memorial/Stoney/16th backbone.
-            minor_mult, major_mult = 8, 18
-            minor_min, major_min = 3, 10
-            min_residential_px = 160
-            drop_all_residentials = True
-            drop_secondary_majors = True
+            # Medium city / tight metro crop.
+            minor_mult, major_mult = 5, 13
+            minor_min, major_min = 2, 8
+            min_residential_px = 70
         elif bbox_area > 0.008:
-            # Medium city (Calgary tight-crop, Edmonton downtown,
-            # Winnipeg). Metro-scale — drop minors and secondaries.
-            minor_mult, major_mult = 8, 20
-            minor_min, major_min = 3, 11
-            min_residential_px = 180
-            drop_all_residentials = True
-            drop_secondary_majors = True
+            # Halifax-sized downtown.
+            minor_mult, major_mult = 6, 15
+            minor_min, major_min = 3, 9
+            min_residential_px = 60
         elif bbox_area > 0.002:
-            # Sydney NS / Halifax downtown: keep the minor grid and
-            # all major classes. These cities are too small to
-            # afford any further trimming.
+            # Very tight downtown viewport.
             minor_mult, major_mult = 8, 18
             minor_min, major_min = 3, 10
-            min_residential_px = 170
+            min_residential_px = 50
         else:
-            # Truly tiny viewport (single neighbourhood) — keep more
-            # streets but widen the major:minor ratio so the structure
-            # still reads at a glance.
+            # Single neighbourhood — widen major:minor ratio so the
+            # structure still reads at a glance.
             minor_mult, major_mult = 10, 24
             minor_min, major_min = 4, 13
-            min_residential_px = 60
+            min_residential_px = 40
 
         # Normalise the residential length threshold so it's a constant
         # in meters, independent of the chosen viewport. Without this,
@@ -813,39 +848,52 @@ def render_map_image(
                 dropped_orphan += 1
                 dropped_minor += 1
 
-        for i, (_coords, px_coords, _rc, width_mm) in enumerate(candidates):
+        # Assemble every road to be drawn into a single list with its
+        # tier (0=residential/service, 1=tertiary, 2=primary/secondary,
+        # 3=motorway/trunk). We then draw in tier order so heavier,
+        # darker classes always stack on top of lighter ones — the
+        # hallmark of a premium wall-art map.
+        _TIER = {
+            "motorway": 3, "motorway_link": 3, "trunk": 3, "trunk_link": 3,
+            "primary": 2, "primary_link": 2,
+            "secondary": 2, "secondary_link": 2,
+            "tertiary": 1, "tertiary_link": 1,
+        }
+
+        def _tier_for(rclass: str) -> int:
+            return _TIER.get((rclass or "").lower(), 0)
+
+        draw_list: list[tuple[int, list[tuple[float, float]], str, float]] = []
+        for i, (_coords, px_coords, rclass, width_mm) in enumerate(candidates):
             if not alive[i]:
                 continue
-            line_w = max(minor_min, int(width_mm * minor_mult))
-            try:
-                draw.line(px_coords, fill=minor_color, width=line_w, joint="curve")
-                r = line_w // 2
-                for px, py in (px_coords[0], px_coords[-1]):
-                    draw.ellipse([px - r, py - r, px + r, py + r], fill=minor_color)
-                kept_minor += 1
-            except Exception:
-                pass
+            draw_list.append((_tier_for(rclass), px_coords, rclass, width_mm))
 
-        # Major roads on top (thicker, darker). At metro scale we
-        # drop every class except the iconic backbone (motorway,
-        # trunk, primary) so secondary avenues and *_link ramps
-        # stop cluttering the poster.
         kept_major = 0
         dropped_major = 0
-        for coords, rclass, width_mm, name in streets_data.get("major_roads", []):
+        for coords, rclass, width_mm, _name in streets_data.get("major_roads", []):
             if len(coords) < 2:
                 continue
             if drop_secondary_majors and rclass not in _BACKBONE_MAJOR:
                 dropped_major += 1
                 continue
             px_coords = [to_px(lon, lat) for lon, lat in coords]
-            line_w = max(major_min, int(width_mm * major_mult))
+            draw_list.append((_tier_for(rclass), px_coords, rclass, width_mm))
+            kept_major += 1
+
+        draw_list.sort(key=lambda t: t[0])
+        for tier, px_coords, rclass, width_mm in draw_list:
+            mult = minor_mult if tier <= 1 else major_mult
+            floor_px = minor_min if tier <= 1 else major_min
+            line_w = max(floor_px, int(width_mm * mult * _road_width_scale(rclass)))
+            colour = _road_color(rclass)
             try:
-                draw.line(px_coords, fill=major_color, width=line_w, joint="curve")
+                draw.line(px_coords, fill=colour, width=line_w, joint="curve")
                 r = line_w // 2
                 for px, py in (px_coords[0], px_coords[-1]):
-                    draw.ellipse([px - r, py - r, px + r, py + r], fill=major_color)
-                kept_major += 1
+                    draw.ellipse([px - r, py - r, px + r, py + r], fill=colour)
+                if tier <= 1:
+                    kept_minor += 1
             except Exception:
                 pass
 
@@ -854,7 +902,7 @@ def render_map_image(
             f"{kept_minor} minor "
             f"({dropped_minor} dropped, {dropped_orphan} orphan stubs), "
             f"minor_thresh={min_residential_px}px "
-            f"backbone_only={drop_secondary_majors}"
+            f"tiers={sorted({t for t, *_ in draw_list})}"
         )
 
     # ── Ocean mask composite (island / peninsula clip) ──
