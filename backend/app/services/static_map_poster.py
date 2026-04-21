@@ -892,10 +892,16 @@ def render_map_image(
             line_w = max(floor_px, int(width_mm * mult * _road_width_scale(rclass)))
             colour = _road_color(rclass)
             try:
+                # `joint="curve"` rounds the joins inside each
+                # polyline. We deliberately skip end-cap ellipses:
+                # every stitched chain that terminates at a real
+                # intersection would otherwise stamp a dot on top of
+                # the perpendicular road, and dozens of those stamps
+                # at one junction merge into the "plus-star" artifact
+                # seen on early city_art renders. Butt ends leave a
+                # sub-pixel gap at orthogonal joins which is
+                # invisible at print resolution.
                 draw.line(px_coords, fill=colour, width=line_w, joint="curve")
-                r = line_w // 2
-                for px, py in (px_coords[0], px_coords[-1]):
-                    draw.ellipse([px - r, py - r, px + r, py + r], fill=colour)
                 if tier <= 1:
                     kept_minor += 1
             except Exception:
