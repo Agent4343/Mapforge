@@ -25,6 +25,17 @@ MAPTILER_TILE_URL = "https://api.maptiler.com/tiles/v3/{z}/{x}/{y}.pbf"
 # OpenMapTiles road class → our ROAD_CLASSES mapping
 # MapTiler uses OpenMapTiles schema where roads are in the "transportation" layer
 # with a "class" property
+# Subclasses to drop even when the parent class passes the road map.
+# OpenMapTiles sometimes folds these into generic transportation lines;
+# they're never interesting as wall-art map features.
+_DROP_SUBCLASSES = frozenset({
+    "runway", "taxiway", "apron",          # airports
+    "siding", "yard", "spur", "rail_yard", # rail yards
+    "parking_aisle", "driveway", "alley",  # private / drivable surfaces
+    "emergency_access",
+})
+
+
 _MAPTILER_ROAD_MAP = {
     "motorway": "motorway",
     "trunk": "trunk",
@@ -426,6 +437,18 @@ async def fetch_streets_maptiler(
                             # Map MapTiler class to our road class
                             mapped_class = _MAPTILER_ROAD_MAP.get(road_class)
                             if mapped_class is None:
+                                continue
+
+                            # Drop airport / rail-yard subclasses that
+                            # sometimes ride in the transportation layer
+                            # (OpenMapTiles occasionally includes runway
+                            # stubs, apron edges, rail sidings, and yard
+                            # tracks as plain "service"-ish lines). These
+                            # render as stray horizontal parallels near
+                            # the city's transport infrastructure and
+                            # destroy the wall-art look.
+                            subclass = (props.get("subclass") or "").lower()
+                            if subclass in _DROP_SUBCLASSES:
                                 continue
 
                             # Handle link roads
