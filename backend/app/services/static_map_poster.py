@@ -433,13 +433,54 @@ def render_map_image(
     land_rings_px: list[list[tuple[float, float]]] = []
     if land_polygon is not None:
         try:
-            if hasattr(land_polygon, "geoms"):
-                polys = list(land_polygon.geoms)
-            elif hasattr(land_polygon, "exterior"):
-                polys = [land_polygon]
+            # Subtract MapTiler's water polygons from the admin land
+            # polygon so the resulting outline follows the natural
+            # coastline, not the township-line staircase that admin
+            # boundaries leave on coastal cities like Sydney NS, Cape
+            # Breton, or HRM. Falls back silently to the raw admin
+            # polygon if the difference operation fails.
+            natural_land = land_polygon
+            if water_data and water_data.get("water_polygons"):
+                try:
+                    from shapely.geometry import Polygon as _ShPoly
+                    from shapely.ops import unary_union
+                    from shapely.validation import make_valid
+
+                    water_shapes = []
+                    for coords, _wt, _wn in water_data["water_polygons"]:
+                        if len(coords) < 3:
+                            continue
+                        try:
+                            sp = _ShPoly(coords)
+                            if not sp.is_valid:
+                                sp = make_valid(sp)
+                            if not sp.is_empty:
+                                water_shapes.append(sp)
+                        except Exception:
+                            continue
+                    if water_shapes:
+                        water_union = unary_union(water_shapes)
+                        if not land_polygon.is_valid:
+                            land_polygon = make_valid(land_polygon)
+                        carved = land_polygon.difference(water_union)
+                        if not carved.is_empty:
+                            natural_land = carved
+                            log.info(
+                                "Natural land mask: carved water polygons "
+                                "from admin boundary"
+                            )
+                except Exception as e:
+                    log.warning(f"Natural-land carve failed, using admin: {e}")
+
+            if hasattr(natural_land, "geoms"):
+                polys = list(natural_land.geoms)
+            elif hasattr(natural_land, "exterior"):
+                polys = [natural_land]
             else:
                 polys = []
             for poly in polys:
+                if not hasattr(poly, "exterior") or poly.exterior is None:
+                    continue
                 exterior = list(poly.exterior.coords)
                 px_coords = [to_px(lon, lat) for lon, lat in exterior]
                 if len(px_coords) >= 3:
