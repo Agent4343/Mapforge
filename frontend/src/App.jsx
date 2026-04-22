@@ -85,16 +85,21 @@ const COUNTRIES = [
   { code: "", label: "Global" },
 ];
 
-// Toast notification system
+// Toast notification system. Success / info auto-dismiss in 4 s so
+// the UI stays uncluttered; errors stay up for 8 s and require a
+// click to dismiss, giving the user time to read actionable failure
+// messages they might otherwise miss.
 function Toast({ message, type, onDismiss }) {
   useEffect(() => {
-    const timer = setTimeout(onDismiss, 4000);
+    const ttl = type === "error" ? 8000 : 4000;
+    const timer = setTimeout(onDismiss, ttl);
     return () => clearTimeout(timer);
-  }, [onDismiss]);
+  }, [onDismiss, type]);
 
   return (
     <div className={`toast toast-${type}`} onClick={onDismiss}>
       {message}
+      {type === "error" && <span className="toast-dismiss"> ×</span>}
     </div>
   );
 }

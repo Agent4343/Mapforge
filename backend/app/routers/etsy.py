@@ -489,17 +489,52 @@ async def _do_showcase_publish(req: ShowcasePublishRequest, user: User, db: Asyn
                 tags_str = ai_result.get("tags") or f"{city.name} map, city map, map print, wall art, poster"
         except Exception as e:
             log.warning("AI description failed for showcase %s: %s", city.name, e)
+            # Rich location-aware fallback: same structure a top Etsy
+            # wall-art seller would write by hand. Uses city name,
+            # province, country, and sells the emotional hook rather
+            # than a bare product description.
+            loc_long = city.name
+            if city.province:
+                loc_long = f"{city.name}, {city.province}"
+            elif city.country:
+                loc_long = f"{city.name}, {city.country.upper()}"
+
             if not title:
-                title = f"{city.name} Map Print - City Street Map Poster Wall Art"
+                title = (
+                    f"{city.name} Map Print | Minimalist City Street Map Wall Art "
+                    f"| Custom {city.name} Poster | Printable Digital Download"
+                )[:140]  # Etsy title cap
             if not description:
                 description = (
-                    f"Beautiful map poster of {city.name}. "
-                    "Detailed street-level map art perfect for home decor. "
-                    "High-quality digital download includes print-ready PNG and SVG source file. "
-                    "Map data © OpenStreetMap contributors."
+                    f"A minimalist black-and-white street map of {loc_long} — "
+                    f"printable wall art for anyone who calls {city.name} home, "
+                    f"or wants to remember the city where it all began.\n\n"
+                    f"★ INSTANT DIGITAL DOWNLOAD\n"
+                    f"You'll receive a ZIP containing:\n"
+                    f"  • Print-ready PNG at 300 DPI (18x24, 12x16, 24x36, 11x14, 8x10)\n"
+                    f"  • Scalable SVG source for any custom size\n"
+                    f"  • README with print-shop instructions\n\n"
+                    f"★ SIZES & PRINTING\n"
+                    f"Ready to print at home, online print shop, or local framer. "
+                    f"Fits standard US and international poster frames.\n\n"
+                    f"★ PERFECT FOR\n"
+                    f"Housewarming gifts, anniversary keepsakes, hometown pride, "
+                    f"travel memory walls, modern nursery decor, and Scandi-style "
+                    f"minimalist interiors.\n\n"
+                    f"★ FINE PRINT\n"
+                    f"Digital product — nothing is shipped. No refunds on digital "
+                    f"downloads (Etsy policy). Map data © OpenStreetMap contributors, "
+                    f"rendered by MapForge.\n"
                 )
             if not tags_str:
-                tags_str = f"{city.name} map, city map, map print, wall art, poster, street map, home decor"
+                tag_loc = city.name.lower()
+                tags_str = (
+                    f"{tag_loc} map, {tag_loc} print, city map print, "
+                    f"street map poster, minimalist wall art, hometown gift, "
+                    f"printable map, digital download, housewarming gift, "
+                    f"black and white art, custom city map, map wall art, "
+                    f"map poster"
+                )
 
     tags_str = tags_str or f"{city.name} map, city map, map print, wall art, poster"
     tag_list = [t.strip() for t in tags_str.split(",") if t.strip()][:13]

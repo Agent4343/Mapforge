@@ -1165,10 +1165,14 @@ def compose_poster(
     text_cx = poster_w // 2
     title_y = map_area_h + int(text_area_h * 0.14)
 
-    title_size = int(poster_h * 0.052)
+    # Typography tuned toward Mapiful-style gallery posters: a
+    # slightly smaller, tighter-tracked title makes room for a
+    # relatively larger subtitle, so the title and subtitle feel
+    # like a single composed block instead of a shouting headline.
+    title_size = int(poster_h * 0.046)
     title_font = _load_font(title_size, bold=True)
     title_text = city_name.upper()
-    title_spacing = int(title_size * 0.45)
+    title_spacing = int(title_size * 0.38)
 
     # Auto-shrink to fit
     test_w = _draw_spaced_text(
@@ -1187,9 +1191,9 @@ def compose_poster(
 
     # ── Subtitle ──
     if subtitle:
-        sub_size = int(title_size * 0.40)
+        sub_size = int(title_size * 0.48)
         sub_font = _load_font(sub_size, bold=False)
-        sub_spacing = int(sub_size * 0.30)
+        sub_spacing = int(sub_size * 0.32)
         _draw_spaced_text(draw, text_cx, next_y, subtitle, sub_font, theme["subtitle"], sub_spacing)
         next_y += int(sub_size * 2.5)
 
