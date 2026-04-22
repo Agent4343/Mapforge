@@ -50,9 +50,12 @@ POSTER_THEMES = {
         "road_arterial": (70, 70, 70), # primary, secondary
         "road_collector": (125, 125, 125),# tertiary
         "road_minor": (180, 180, 180), # residential, service — hairline texture
-        # Soft teal water: the signature non-road anchor.
-        "map_mode": "light", "water": (188, 208, 226),
-        "water_edge": (110, 140, 170),
+        # Soft slate-blue water — saturated enough to read as the
+        # strongest non-road anchor after the title, not the sky-
+        # coloured tint of the earlier palette. Target closer to
+        # Mapiful/Grafomap's tonal weight.
+        "map_mode": "light", "water": (143, 180, 204),
+        "water_edge": (90, 125, 155),
         # Mapiful-style posters: parks are a subtle slightly-warmer
         # gray patch under the road network. Just dark enough to
         # read as "green space here" without breaking the b&w look.
@@ -1052,8 +1055,17 @@ def _format_dms(degrees: float, pos: str, neg: str) -> str:
 
 
 def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
-    """Load best available font with fallback chain."""
+    """Load best available font with fallback chain.
+
+    URW Gothic (fonts-urw-base35) is first in the chain — it's a
+    Debian-bundled Avant-Garde-Gothic / Futura-style geometric sans,
+    which matches the premium wall-art look sellers like Mapiful and
+    Grafomap use for their titles. Falls back through Liberation /
+    DejaVu / FreeFont if the URW pack isn't installed.
+    """
     paths = [
+        "/usr/share/fonts/opentype/urw-base35/URWGothic-Demi.otf" if bold
+        else "/usr/share/fonts/opentype/urw-base35/URWGothic-Book.otf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf" if bold
         else "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold

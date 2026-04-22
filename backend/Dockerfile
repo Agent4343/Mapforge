@@ -6,6 +6,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgeos-dev \
     libproj-dev \
     build-essential \
+    fonts-dejavu-core \
+    fonts-liberation \
+    fonts-freefont-ttf \
+    fonts-urw-base35 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
