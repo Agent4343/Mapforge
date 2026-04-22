@@ -220,35 +220,55 @@ def _ring_signed_area(coords: list[tuple[float, float]]) -> float:
     return a * 0.5
 
 
-def _auto_compose_center(
-    center_lat: float, center_lng: float,
+def _auto_frame(
     streets_data: dict | None,
-    meters_wide: float, meters_high: float,
-) -> tuple[float, float]:
-    """Universal visual centering: shift the viewport toward the road
-    network centroid when the geographic center sits over empty space
-    (ocean, lake, undeveloped land).
+    center_lat: float,
+    center_lng: float,
+    img_aspect: float,
+    bbox_area: float,
+) -> tuple[float, float, float]:
+    """Derive viewport center + width from the fetched road network.
 
-    The pin still draws at its true location — only the viewport moves.
-    Replaces the hand-curated _CENTER_OVERRIDES table with a method
-    that works for any coastal/island/peninsular city automatically.
+    Replaces the bbox-area ladder + per-city viewport overrides with
+    geometry: whatever urban area a buyer typed in, frame *that area*.
+    Works identically for a dense inland metro, a peninsular downtown,
+    or an island city — no hand-tuning required.
+
+    Strategy:
+      1. Length-weighted road-segment midpoints give us a dense
+         distribution of "where the city actually is." Highways get
+         down-weighted by per-segment length, residential grids up-
+         weight naturally because they have many short segments.
+      2. Length-weighted median → robust urban centroid. Unlike mean,
+         the median ignores long outliers (the Trans-Canada extending
+         40 km past the city, a lone rural highway, etc).
+      3. Length-weighted 5th/95th percentile on each axis → urban
+         bounding box that ignores ~10% outliers. This is the frame.
+      4. Pad by 12%, enforce sane floors and caps, and match the
+         canvas aspect ratio so the city doesn't get squished.
+
+    Returns (center_lat, center_lng, meters_wide). When no road data
+    is available we fall back to a bbox-area heuristic so province /
+    country shapes still render, and the admin center stays put.
     """
+    # Area-based fallback for empty / province-scale fetches.
+    def _fallback_width() -> float:
+        if bbox_area > 2.0:      return 180_000.0
+        if bbox_area > 0.5:      return 80_000.0
+        if bbox_area > 0.1:      return 40_000.0
+        if bbox_area > 0.03:     return 25_000.0
+        if bbox_area > 0.005:    return 15_000.0
+        if bbox_area > 0.001:    return 8_000.0
+        return 12_000.0
+
     if not streets_data:
-        return center_lat, center_lng
+        return center_lat, center_lng, _fallback_width()
 
-    # Compute road-network centroid in Mercator space, weighted by
-    # segment length so a few long highways don't dominate over a
-    # dense urban grid.
-    cx0, cy0 = _to_mercator(center_lat, center_lng)
-    half_w = meters_wide / 2
-    half_h = meters_high / 2
-    sum_x, sum_y, sum_w = 0.0, 0.0, 0.0
+    # Collect length-weighted midpoints in Mercator.
+    samples_x: list[tuple[float, float]] = []  # (mercator_x, weight)
+    samples_y: list[tuple[float, float]] = []
+    total_weight = 0.0
 
-    # Only consider roads inside the candidate viewport itself (not 1.5×).
-    # Including segments that fan out beyond the viewport biases the
-    # centroid toward whatever lies past the frame — for Sydney's CBRM
-    # admin polygon that's the highway 125 ring across all of east
-    # Cape Breton, which would drag the center off downtown.
     for road_list in (
         streets_data.get("major_roads", []),
         streets_data.get("minor_roads", []),
@@ -262,141 +282,68 @@ def _auto_compose_center(
                 lon2, lat2 = coords[i]
                 mx1, my1 = _to_mercator(lat1, lon1)
                 mx2, my2 = _to_mercator(lat2, lon2)
-                if (abs(mx1 - cx0) > half_w or
-                        abs(my1 - cy0) > half_h):
-                    continue
                 seg_len = math.hypot(mx2 - mx1, my2 - my1)
                 if seg_len <= 0:
                     continue
                 mid_x = (mx1 + mx2) * 0.5
                 mid_y = (my1 + my2) * 0.5
-                sum_x += mid_x * seg_len
-                sum_y += mid_y * seg_len
-                sum_w += seg_len
+                samples_x.append((mid_x, seg_len))
+                samples_y.append((mid_y, seg_len))
+                total_weight += seg_len
 
-    if sum_w <= 0:
-        return center_lat, center_lng
+    if total_weight <= 0 or len(samples_x) < 20:
+        return center_lat, center_lng, _fallback_width()
 
-    centroid_x = sum_x / sum_w
-    centroid_y = sum_y / sum_w
+    def _weighted_percentile(samples: list[tuple[float, float]], pct: float) -> float:
+        samples.sort(key=lambda s: s[0])
+        target = total_weight * pct
+        running = 0.0
+        for v, w in samples:
+            running += w
+            if running >= target:
+                return v
+        return samples[-1][0]
 
-    # Distance from geographic center to road centroid, normalised by
-    # viewport half-extent. Below 15% = already well centered; above,
-    # nudge gently toward the road centroid.
-    dx_norm = (centroid_x - cx0) / half_w
-    dy_norm = (centroid_y - cy0) / half_h
-    drift = math.hypot(dx_norm, dy_norm)
-    if drift < 0.15:
-        return center_lat, center_lng
+    # Median (50th) is the robust centroid. 5/95 bracket the urban
+    # core and drop the top/bottom 5% of length as outliers.
+    cx = _weighted_percentile(samples_x, 0.50)
+    cy = _weighted_percentile(samples_y, 0.50)
+    x05 = _weighted_percentile(samples_x, 0.05)
+    x95 = _weighted_percentile(samples_x, 0.95)
+    y05 = _weighted_percentile(samples_y, 0.05)
+    y95 = _weighted_percentile(samples_y, 0.95)
 
-    # Subtle shift only — 35% of the way (was 60%), capped at 15% of
-    # viewport (was 35%). The auto-compose is a polish, not a relocation.
-    shift = 0.35
-    cap = 0.15
-    shift_x = max(-cap, min(cap, dx_norm * shift))
-    shift_y = max(-cap, min(cap, dy_norm * shift))
+    # Make the viewport symmetric around the centroid so the city
+    # stays centered instead of drifting toward whichever side has
+    # more road. Use the larger half-extent on each axis.
+    half_span_x = max(cx - x05, x95 - cx)
+    half_span_y = max(cy - y05, y95 - cy)
 
-    new_cx = cx0 + shift_x * half_w
-    new_cy = cy0 + shift_y * half_h
+    # 12% padding so the outermost streets don't hit the frame edge.
+    pad = 1.12
+    needed_w = 2 * half_span_x * pad
+    needed_h = 2 * half_span_y * pad
 
-    # Inverse Mercator
-    new_lng = new_cx / 20037508.34 * 180.0
-    new_lat = math.atan(math.sinh(new_cy * math.pi / 20037508.34))
-    new_lat = math.degrees(new_lat)
+    # Fit to canvas aspect: take the larger of (width to contain x-span,
+    # width to contain y-span at canvas aspect).
+    w_for_x = needed_w
+    w_for_y = needed_h / img_aspect if img_aspect > 0 else needed_w
+    meters_wide = max(w_for_x, w_for_y)
+
+    # Sane floors and caps so tiny neighbourhoods don't render at
+    # 400m and entire provinces don't try to fit in 20km.
+    meters_wide = max(5_000.0, min(200_000.0, meters_wide))
+
+    # Inverse Mercator on the centroid gives us the new center.
+    new_lng = cx / 20037508.34 * 180.0
+    new_lat = math.degrees(math.atan(math.sinh(cy * math.pi / 20037508.34)))
 
     log.info(
-        f"Auto-compose: road centroid drift {drift:.2f} viewports, "
-        f"shifted by ({shift_x:+.2f},{shift_y:+.2f})"
+        f"Auto-frame: centroid=({new_lat:.4f},{new_lng:.4f}) "
+        f"urban_span={needed_w/1000:.1f}x{needed_h/1000:.1f}km -> "
+        f"viewport={meters_wide/1000:.1f}km"
     )
-    return new_lat, new_lng
-
-
-# ── Composition centering ────────────────────────────────────────────
-#
-# The geocoded point is geographically correct but not always the
-# best *visual* center for wall art. For coastal cities the true
-# point can sit too far over the harbour, leaving the opposite shore
-# dominating the frame. These overrides shift the map center toward
-# the city's main land mass — the pin still draws at the true location.
-#
-# lat/lng offsets are in degrees.
-_CENTER_OVERRIDES: dict[str, tuple[float, float]] = {
-    # name-key  : (lat_offset, lng_offset)
-    # Direction = where to MOVE the viewport center, away from the pin,
-    # so the dominant water feature fills the frame opposite the city.
-    "halifax":   (0.000, -0.008),   # downtown on east shore -> shift west
-    "vancouver": (0.000, -0.012),
-    "stjohns":   (0.003, -0.010),
-    "victoria":  (0.000, -0.010),
-    "sydney":    (0.018, +0.018),   # downtown on SW shore of Sydney Harbour
-                                    # -> shift NE so harbour fills NE half
-    "saintjohn": (0.000, -0.010),
-    "charlottetown": (0.000, -0.008),
-}
-
-# Per-city viewport width override (meters). Lets us frame "city portrait"
-# cuts that focus on the main peninsula / downtown rather than the wider
-# municipality. None / missing = use the bbox_area heuristic.
-_VIEWPORT_OVERRIDES: dict[str, int] = {
-    "halifax": 12_000,    # Halifax peninsula portrait
-    "sydney":  22_000,    # Sydney NS: downtown + harbour, Sydney proper only
-}
-
-
-def _name_key(s: str) -> str:
-    return "".join(c for c in s.lower() if c.isalpha())
-
-
-def _adjust_center_for_composition(
-    city_name: str, lat: float, lng: float,
-) -> tuple[float, float]:
-    """Return a slightly shifted (lat, lng) for better visual framing.
-
-    The pin is still drawn at the true (lat, lng); only the map viewport
-    moves. Falls back to the original coordinates when no override exists.
-    """
-    if not city_name:
-        return lat, lng
-
-    # Try every word and every cumulative prefix of the first comma chunk:
-    # "Halifax Regional Municipality, NS" → ["halifax", "halifaxregional",
-    # "halifaxregionalmunicipality", "regional", ...]
-    first_chunk = city_name.split(",")[0].strip()
-    words = first_chunk.split()
-    candidates: list[str] = []
-    for i in range(len(words)):
-        # individual word
-        candidates.append(_name_key(words[i]))
-        # cumulative prefix of words[0..i+1]
-        candidates.append(_name_key("".join(words[: i + 1])))
-
-    for k in candidates:
-        if k and k in _CENTER_OVERRIDES:
-            d_lat, d_lng = _CENTER_OVERRIDES[k]
-            log.info(
-                f"Composition override matched '{k}' for '{city_name}': "
-                f"lat{d_lat:+.4f}, lng{d_lng:+.4f}"
-            )
-            return lat + d_lat, lng + d_lng
-
-    log.info(f"Composition: no override for '{city_name}' (tried {candidates[:4]})")
-    return lat, lng
-
-
-def _viewport_override_for(city_name: str) -> int | None:
-    """Return a per-city viewport width in meters, or None for default."""
-    if not city_name:
-        return None
-    first_chunk = city_name.split(",")[0].strip()
-    words = first_chunk.split()
-    candidates: list[str] = []
-    for i in range(len(words)):
-        candidates.append(_name_key(words[i]))
-        candidates.append(_name_key("".join(words[: i + 1])))
-    for k in candidates:
-        if k and k in _VIEWPORT_OVERRIDES:
-            return _VIEWPORT_OVERRIDES[k]
-    return None
+    return new_lat, new_lng, meters_wide
 
 
 # ── Road rendering ───────────────────────────────────────────────────
@@ -429,47 +376,29 @@ def render_map_image(
     img = Image.new("RGB", (img_w, img_h), bg_color)
     draw = ImageDraw.Draw(img)
 
-    # Calculate viewport: how many meters of geography to show
-    # Bigger bbox_area → show more area → smaller scale. Calibrated to
-    # frame the urban core (Mapiful-style) rather than admin-boundary
-    # extents, so rural township stubs outside the city don't end up
-    # ringing the render.
-    if bbox_area > 2.0:
-        meters_wide = 180_000
-    elif bbox_area > 0.5:
-        meters_wide = 80_000
-    elif bbox_area > 0.1:
-        meters_wide = 40_000  # Large city urban core (Calgary, Edmonton)
-    elif bbox_area > 0.03:
-        meters_wide = 25_000
-    elif bbox_area > 0.005:
-        meters_wide = 15_000
-    elif bbox_area > 0.001:
-        meters_wide = 8_000
+    # Derive viewport + center directly from the fetched road network.
+    # Replaces the bbox-area ladder and per-city viewport overrides with
+    # a self-tuning framer that works for any city: dense inland metro,
+    # coastal peninsula, or island town. When we have no street data
+    # (province shapes, empty fetches) _auto_frame falls back to the
+    # bbox-area heuristic and keeps the original admin center.
+    img_aspect = img_h / img_w if img_w else 1.0
+    if auto_compose:
+        center_lat, center_lng, meters_wide = _auto_frame(
+            streets_data, center_lat, center_lng, img_aspect, bbox_area,
+        )
     else:
-        meters_wide = 12_000
+        # Caller explicitly pinned the viewport — e.g. batch jobs that
+        # want deterministic framing. Fall back to the area ladder.
+        meters_wide = _auto_frame(None, center_lat, center_lng, img_aspect, bbox_area)[2]
 
-    # Remember the default so the residential length filter (which is
-    # calibrated in pixels against the default viewport for each tier)
-    # can be scaled when a per-city override widens or narrows the view.
+    # Legacy per-call override: still honoured if a caller passes one.
     default_meters_wide = meters_wide
-
-    # Per-city viewport override (e.g. Halifax peninsula portrait)
     if viewport_meters and viewport_meters > 0:
-        log.info(f"Viewport override: {meters_wide}m -> {viewport_meters}m")
+        log.info(f"Viewport override (explicit): {meters_wide}m -> {viewport_meters}m")
         meters_wide = viewport_meters
 
     meters_high = meters_wide * img_h / img_w
-
-    # Universal auto-composition: shift the viewport center toward the
-    # road network if the geographic center sits over empty space (sea,
-    # lake, undeveloped land). Disabled when the caller already applied
-    # a hand-curated override (Sydney, Halifax, Vancouver, etc.) — the
-    # two shifts would compound and slide the city out of frame.
-    if auto_compose:
-        center_lat, center_lng = _auto_compose_center(
-            center_lat, center_lng, streets_data, meters_wide, meters_high,
-        )
 
     # Center in Mercator
     cx, cy = _to_mercator(center_lat, center_lng)
@@ -802,7 +731,7 @@ def render_map_image(
 
         # Normalise the residential length threshold so it's a constant
         # in meters, independent of the chosen viewport. Without this,
-        # widening the viewport via _VIEWPORT_OVERRIDES (e.g. Sydney's
+        # widening the viewport via the auto-framer (or caller override)
         # 20km -> 30km) makes every road cover fewer pixels and the
         # fixed px threshold silently over-filters the residential grid.
         if meters_wide > 0 and default_meters_wide > 0:
@@ -1282,35 +1211,22 @@ def generate_road_poster(
         log.warning("Zero roads in streets data")
         return None
 
-    # True pin location is the geocoded coordinate. Map viewport may be
-    # shifted slightly for visual balance (coastal cities, etc).
+    # True pin location is the geocoded coordinate. The renderer's
+    # auto-framer derives the actual viewport center + width from the
+    # fetched road network, so we no longer need per-city overrides:
+    # every location self-frames to its urban core.
     pin_lat, pin_lng = center_lat, center_lng
-    adj_lat, adj_lng = _adjust_center_for_composition(
-        city_name, center_lat, center_lng,
-    )
-    has_named_override = (adj_lat, adj_lng) != (pin_lat, pin_lng)
-    if has_named_override:
-        log.info(
-            f"Composition shift for '{city_name}': "
-            f"({pin_lat:.4f},{pin_lng:.4f}) -> ({adj_lat:.4f},{adj_lng:.4f})"
-        )
 
-    # Per-city viewport override (e.g. Halifax peninsula portrait)
-    viewport_meters = _viewport_override_for(city_name)
-
-    # Render roads directly to image. Skip auto-compose when a named
-    # override already shifted the center — the two would compound.
     map_img, pin_image_px = render_map_image(
         streets_data=streets_data,
         water_data=water_data,
-        center_lat=adj_lat,
-        center_lng=adj_lng,
+        center_lat=center_lat,
+        center_lng=center_lng,
         bbox_area=bbox_area,
         theme=theme,
         pin_lat=pin_lat,
         pin_lng=pin_lng,
-        viewport_meters=viewport_meters,
-        auto_compose=not has_named_override,
+        auto_compose=True,
         parks_data=parks_data,
         land_polygon=land_polygon,
         # Mapiful-style posters frame the full rectangle — admin
