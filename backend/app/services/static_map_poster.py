@@ -887,11 +887,16 @@ def render_map_image(
 
         # Road-casing technique (cartographic convention used by
         # Mapiful et al.): each arterial/motorway is drawn twice —
-        # first a wider stroke in the background colour, then the
-        # coloured stroke on top. The bg-coloured casing masks out
-        # any tier-below stroke that crosses the arterial, producing
-        # clean intersections instead of the "star" of gray arms
-        # poking out of a black cross block.
+        # first a wider stroke in a casing colour, then the coloured
+        # stroke on top. The casing masks out tier-below strokes
+        # crossing the arterial, producing clean intersections.
+        #
+        # We use a casing colour slightly darker than map_bg instead
+        # of exactly map_bg. A pure-bg casing is invisible on
+        # crowded areas but creates a visible "halo" around isolated
+        # motorway segments that pass over open terrain. A subtly
+        # darker tone anchors the casing to the road instead of the
+        # background.
         #
         # Draw order (every tier twice: casing then fill):
         #   tier 0 (residential/service)     → single pass, no casing
@@ -900,7 +905,8 @@ def render_map_image(
         #   tier 3 (motorway/trunk)          → casing + fill
         # Each higher tier's casing wipes the lower tier's stroke
         # inside its own footprint.
-        casing_color = theme.get("map_bg", (238, 238, 238))
+        _map_bg = theme.get("map_bg", (238, 238, 238))
+        casing_color = tuple(max(0, c - 14) for c in _map_bg)
         _CASING_SCALE = 1.35  # casing width = 1.35 × line width
 
         def _sort_key(entry):
