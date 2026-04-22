@@ -53,9 +53,10 @@ POSTER_THEMES = {
         # Soft teal water: the signature non-road anchor.
         "map_mode": "light", "water": (188, 208, 226),
         "water_edge": (110, 140, 170),
-        # Parks are intentionally not rendered (see render_map_image).
-        # Keeping the key here for other themes to reference.
-        "park": None,
+        # Mapiful-style posters: parks are a subtle slightly-warmer
+        # gray patch under the road network. Just dark enough to
+        # read as "green space here" without breaking the b&w look.
+        "park": (224, 230, 220),
     },
     "classic": {
         "bg": (250, 248, 244), "map_bg": (252, 250, 246),
@@ -670,12 +671,32 @@ def render_map_image(
                     pass
             log.info(f"Waterway render: {kept_rivers}/{len(waterways)} rivers drawn")
 
-    # Parks are intentionally NOT rendered. The premium wall-art look
-    # is land (white) + water (blue) + roads (black/grey) — nothing
-    # else. The `parks_data` argument is accepted for API compatibility
-    # but dropped on the floor. If a future theme wants parks back,
-    # re-introduce a theme-gated draw block here.
-    _ = parks_data  # explicitly unused
+    # ── Draw park polygons ──
+    # Parks render as a subtle filled patch under the road network.
+    # The fill colour comes from theme["park"] — themes with park=None
+    # opt out (and historically all themes did). Parks layer between
+    # water (already drawn) and roads so arterials still cut across
+    # them visibly.
+    park_color = theme.get("park")
+    if park_color and parks_data:
+        kept_parks = 0
+        canvas_area = img_w * img_h
+        # Drop sub-pixel slivers — at print scale anything under 0.05%
+        # of the canvas adds noise rather than character.
+        min_park_area = canvas_area * 0.0005
+        for entry in parks_data.get("parks", []):
+            coords = entry[0] if isinstance(entry, tuple) else entry.get("coords", [])
+            if len(coords) < 3:
+                continue
+            px_coords = [to_px(lon, lat) for lon, lat in coords]
+            if abs(_ring_signed_area(px_coords)) < min_park_area:
+                continue
+            try:
+                draw.polygon(px_coords, fill=park_color)
+                kept_parks += 1
+            except Exception:
+                pass
+        log.info(f"Park render: {kept_parks}/{len(parks_data.get('parks', []))} polygons")
 
     # ── Draw roads ──
     if streets_data:
