@@ -739,41 +739,41 @@ def render_map_image(
         if bbox_area > 2.0:
             # Province / country: residential grid is noise at this
             # scale. Keep secondary so mid-weight roads still read.
-            minor_mult, major_mult = 3, 9
-            minor_min, major_min = 2, 6
+            minor_mult, major_mult = 3, 6
+            minor_min, major_min = 2, 4
             min_residential_px = 440
             drop_all_residentials = True
         elif bbox_area > 0.5:
             # Regional metro (Toronto/Montreal greater area).
-            minor_mult, major_mult = 4, 11
-            minor_min, major_min = 2, 6
+            minor_mult, major_mult = 4, 7
+            minor_min, major_min = 2, 4
             min_residential_px = 150
         elif bbox_area > 0.1:
             # Large city (Calgary, Edmonton): hairline residentials,
             # secondary avenues visible as a mid-weight tier.
-            minor_mult, major_mult = 4, 12
-            minor_min, major_min = 2, 7
+            minor_mult, major_mult = 4, 9
+            minor_min, major_min = 2, 3
             min_residential_px = 90
         elif bbox_area > 0.03:
             # Medium city / tight metro crop.
-            minor_mult, major_mult = 5, 13
-            minor_min, major_min = 2, 8
+            minor_mult, major_mult = 5, 10
+            minor_min, major_min = 2, 4
             min_residential_px = 70
         elif bbox_area > 0.008:
             # Halifax-sized downtown.
-            minor_mult, major_mult = 6, 15
-            minor_min, major_min = 3, 9
+            minor_mult, major_mult = 6, 11
+            minor_min, major_min = 3, 5
             min_residential_px = 60
         elif bbox_area > 0.002:
             # Very tight downtown viewport.
-            minor_mult, major_mult = 8, 18
-            minor_min, major_min = 3, 10
+            minor_mult, major_mult = 8, 13
+            minor_min, major_min = 3, 6
             min_residential_px = 50
         else:
             # Single neighbourhood — widen major:minor ratio so the
             # structure still reads at a glance.
-            minor_mult, major_mult = 10, 24
-            minor_min, major_min = 4, 13
+            minor_mult, major_mult = 10, 17
+            minor_min, major_min = 4, 8
             min_residential_px = 40
 
         # Normalise the residential length threshold so it's a constant
@@ -901,7 +901,7 @@ def render_map_image(
         # Each higher tier's casing wipes the lower tier's stroke
         # inside its own footprint.
         casing_color = theme.get("map_bg", (238, 238, 238))
-        _CASING_SCALE = 1.55  # casing width = 1.55 × line width
+        _CASING_SCALE = 1.35  # casing width = 1.35 × line width
 
         def _sort_key(entry):
             # (tier, pass) where pass 0 = casing, pass 1 = fill.
@@ -923,7 +923,7 @@ def render_map_image(
             floor_px = minor_min if tier <= 1 else major_min
             line_w = max(floor_px, int(width_mm * mult * _road_width_scale(rclass)))
             if pass_idx == 0:
-                casing_w = max(line_w + 4, int(line_w * _CASING_SCALE))
+                casing_w = max(line_w + 2, int(line_w * _CASING_SCALE))
                 colour = casing_color
                 w = casing_w
             else:
