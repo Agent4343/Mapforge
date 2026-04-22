@@ -520,19 +520,20 @@ async def fetch_streets_maptiler(
     # corner-shaped fragments in the buffer zone at tile corners.
     #
     # Strategy:
-    #   1. Drop ultra-short fragments (<15m) that are almost always
-    #      tile-buffer artifacts, not real roads.
-    #   2. Stitch adjacent segments whose endpoints coincide (within
-    #      ~2m) and that share the same road class + name. This
-    #      reassembles ways that MVT split across tile boundaries.
-    #   3. Drop isolated stubs — chains that share no endpoint with
-    #      any other road across either fetch list. Rural township
-    #      stubs outside the urban area have no neighbours and
-    #      clutter the render with random stripes.
+    #   1. Drop isolated stubs BEFORE stitching, while each segment
+    #      is still its own MVT-sized piece. Running this step AFTER
+    #      stitching is a bug: unnamed residentials all share name=""
+    #      and chain into one mega-polyline per neighbourhood; that
+    #      mega-chain has only two endpoints (at cul-de-sac dead-ends)
+    #      so the filter drops the entire neighbourhood at once.
+    #   2. Drop ultra-short fragments (<15m) — tile-buffer artifacts.
+    #   3. Stitch adjacent segments whose endpoints coincide (within
+    #      ~2m) and that share the same road class + name, so MVT
+    #      tile-split ways reassemble into continuous polylines.
     before_major, before_minor = len(major_roads), len(minor_roads)
+    major_roads, minor_roads = _drop_isolated_stubs(major_roads, minor_roads)
     major_roads = _stitch_road_segments(major_roads)
     minor_roads = _stitch_road_segments(minor_roads)
-    major_roads, minor_roads = _drop_isolated_stubs(major_roads, minor_roads)
     log.info(
         f"MapTiler stitch: major {before_major}->{len(major_roads)}, "
         f"minor {before_minor}->{len(minor_roads)}"
