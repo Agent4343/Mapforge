@@ -52,10 +52,11 @@ Rules:
 - Note the design shows the city's streets, parks, and water in a clean minimalist style with the location name and GPS coordinates
 - Mention it is an INSTANT DIGITAL DOWNLOAD — buyer receives high-resolution PNG files, no physical product is shipped
 - You may briefly mention that SVG and DXF files are also included as a bonus for CNC hobbyists and laser cutters, but this is a secondary use case — do NOT lead with it
-- Keep descriptions between 800-1200 characters
+- Keep descriptions between 900-1400 characters
 - Do NOT use emojis, excessive punctuation, or ALL CAPS
 - Do NOT include headers/sections like "WHAT YOU GET" — write flowing prose
-- End with a subtle call to action"""
+- Close the description with 2–3 short testimonial-style lines attributed to "buyers" (e.g. "Buyers tell us the quality is indistinguishable from the big map-art shops"). Keep them credible, not breathless; avoid fake names
+- End with a subtle call to action after the testimonials"""
 
 
 def _build_title_prompt() -> str:

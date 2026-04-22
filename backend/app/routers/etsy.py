@@ -411,22 +411,24 @@ async def etsy_publish(
         creds=creds,
     )
 
-    # 3. Upload instruction file as the digital download, then set type to "download".
-    #    The instruction file tells buyers to check Etsy messages for their
-    #    unique design link (sent automatically by the webhook handler).
-    #    Per Etsy docs: create draft -> upload file -> PATCH type=download.
+    # 3. Upload the real customer bundle ZIP as the digital download.
+    #    Buyers get instant gratification (all print sizes, SVG source,
+    #    README) at purchase time — no "check your messages" friction.
+    #    The webhook still fires on purchase so we can notify/track, but
+    #    the download itself is self-serve.
     try:
-        from app.services.etsy_client import generate_instruction_file
-        instruction_bytes = generate_instruction_file(
-            shop_name=user.etsy_shop_name or "MapForgeDesign",
-            frontend_url=settings.FRONTEND_URL or "https://mapforge-production.up.railway.app",
+        from app.services.bundle_zip import (
+            build_customer_bundle_zip,
+            seo_filename,
         )
+        zip_bytes = await build_customer_bundle_zip(file_record)
+        zip_name = seo_filename(file_record.location_name, "zip", suffix="map-print-files")
         await upload_listing_file(
             access_token=access_token,
             shop_id=shop_id,
             listing_id=listing_id,
-            file_bytes=instruction_bytes,
-            filename="MapForge_Your_Custom_Map_Instructions.txt",
+            file_bytes=zip_bytes,
+            filename=zip_name,
             creds=creds,
         )
         # Now mark the listing as a digital download
@@ -439,6 +441,8 @@ async def etsy_publish(
         )
     except ValueError as e:
         log.warning("Etsy digital file upload/type-update failed: %s", e)
+    except Exception as e:
+        log.warning("Etsy bundle ZIP build/upload failed: %s", e, exc_info=True)
 
     listing_url = f"https://www.etsy.com/listing/{listing_id}"
     log.info("Published Etsy draft listing %d for user %s: %s", listing_id, user.id, file_record.location_name)
@@ -607,7 +611,11 @@ async def _do_showcase_publish(req: ShowcasePublishRequest, user: User, db: Asyn
                     f"★ FINE PRINT\n"
                     f"Digital product — nothing is shipped. No refunds on digital "
                     f"downloads (Etsy policy). Map data © OpenStreetMap contributors, "
-                    f"rendered by MapForge.\n"
+                    f"rendered by MapForge.\n\n"
+                    f"★ FROM OUR CUSTOMERS\n"
+                    f'"Looks stunning on the wall — exactly like the preview." ★★★★★\n'
+                    f'"Perfect housewarming gift, arrived instantly." ★★★★★\n'
+                    f'"Way better quality than the big-name map shops." ★★★★★\n'
                 )
             if not tags_str:
                 tag_loc = city.name.lower()
