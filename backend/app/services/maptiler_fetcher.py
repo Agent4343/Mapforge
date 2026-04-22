@@ -573,7 +573,7 @@ def _drop_isolated_stubs(
                     vertex_hits[k] += 1
                     seen_in_chain.add(k)
 
-    def _keep(chain_list: list[tuple], strict: bool) -> list[tuple]:
+    def _keep(chain_list: list[tuple]) -> list[tuple]:
         kept: list[tuple] = []
         for seg in chain_list:
             coords = seg[0]
@@ -581,23 +581,19 @@ def _drop_isolated_stubs(
                 continue
             start_hits = vertex_hits.get(_key(coords[0]), 0)
             end_hits = vertex_hits.get(_key(coords[-1]), 0)
-            # Each chain contributes +1 to each of its endpoints.
-            # Strict (majors): require at least one endpoint to hit
-            # a real junction (≥3 chains meeting) — this kills the
-            # overpass-stub case where a ramp connects only to a
-            # grade-separated crossing partner.
-            # Lenient (minors): keep residential cul-de-sacs whose
-            # dead-end tip has hit count 1.
-            if strict:
-                if max(start_hits, end_hits) < 3:
-                    continue
-            else:
-                if start_hits <= 1 and end_hits <= 1:
-                    continue
+            # Drop chains where both endpoints are fully dangling
+            # (hit count 1 = only this chain touches that node). A
+            # tighter rule (require ≥3 hits = a real junction) also
+            # killed every legitimate T-intersection, so we stay
+            # with the lenient rule. The bridge-stub outliers that
+            # survive this filter are a small price compared to
+            # losing the urban grid.
+            if start_hits <= 1 and end_hits <= 1:
+                continue
             kept.append(seg)
         return kept
 
-    return _keep(major_roads, strict=True), _keep(minor_roads, strict=False)
+    return _keep(major_roads), _keep(minor_roads)
 
 
 def _segment_length_m(coords: list[tuple[float, float]]) -> float:
