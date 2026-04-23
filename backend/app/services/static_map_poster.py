@@ -645,13 +645,17 @@ def render_map_image(
             log.info(f"Waterway render: {kept_rivers}/{len(waterways)} rivers drawn")
 
     # ── Draw park polygons ──
-    # Parks render as a subtle filled patch under the road network.
-    # The fill colour comes from theme["park"] — themes with park=None
-    # opt out (and historically all themes did). Parks layer between
-    # water (already drawn) and roads so arterials still cut across
-    # them visibly.
+    # Parks render as a subtle filled patch under the road network so
+    # green space reads without breaking the b&w discipline. Two gates:
+    #  * Theme opt-in (theme["park"] non-None)
+    #  * Scale gate: skip entirely at region / province / island scale
+    #    (bbox_area > 0.5 deg²). At that scale parks stop being an
+    #    accent and start covering most of the visible land — Cape
+    #    Breton Highlands + regional parks fill ~80% of the island
+    #    polygon and the poster turns pale green. Cities and sub-
+    #    regional areas still render parks.
     park_color = theme.get("park")
-    if park_color and parks_data:
+    if park_color and parks_data and bbox_area <= 0.5:
         kept_parks = 0
         canvas_area = img_w * img_h
         # Drop sub-pixel slivers — at print scale anything under 0.05%
@@ -670,6 +674,11 @@ def render_map_image(
             except Exception:
                 pass
         log.info(f"Park render: {kept_parks}/{len(parks_data.get('parks', []))} polygons")
+    elif park_color and parks_data:
+        log.info(
+            f"Park render skipped: bbox_area {bbox_area:.2f} deg² "
+            f"(>0.5 region scale — parks overwhelm the land)"
+        )
 
     # ── Draw roads ──
     if streets_data:
