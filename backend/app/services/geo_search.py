@@ -21,7 +21,12 @@ _nominatim_lock = asyncio.Lock()
 _nominatim_last_request: float = 0.0
 
 # Validation thresholds
-MIN_IMPORTANCE = 0.30   # Nominatim's confidence equivalent (0–1)
+# Name match (does the query appear in the display_name?) is the
+# primary relevance filter. Importance is a very loose safety net —
+# just enough to filter out Nominatim's null-island and noise hits.
+# Raising this above ~0.10 blocks legitimate small communities like
+# Little Narrows NS (importance ≈ 0.08) whose names match exactly.
+MIN_IMPORTANCE = 0.05
 MAX_LAT = 85.0          # Web Mercator practical limit
 MIN_LAT = -85.0
 
