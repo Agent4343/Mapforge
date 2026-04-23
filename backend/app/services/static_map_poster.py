@@ -226,6 +226,7 @@ def _auto_frame(
     center_lng: float,
     img_aspect: float,
     bbox_area: float,
+    land_polygon=None,
 ) -> tuple[float, float, float]:
     """Derive viewport center + width from the fetched road network.
 
@@ -324,6 +325,38 @@ def _auto_frame(
     needed_w = 2 * half_span_x * pad
     needed_h = 2 * half_span_y * pad
 
+    # Coastal-village clamp: cap the viewport at 1.5× the land bbox.
+    # Without this, a coastal hamlet whose Trans-Canada highway runs
+    # over long bridges produces a road bbox far wider than the actual
+    # land mass — the auto-framer then renders mostly water with the
+    # village as a tiny island (Baddeck NS, Iona, Whycocomagh). The
+    # 1.5× factor still allows water context around the land but
+    # prevents the village from being lost in the frame.
+    if land_polygon is not None:
+        try:
+            land_bounds = land_polygon.bounds  # (minx, miny, maxx, maxy)
+            lx_min, ly_min = _to_mercator(land_bounds[1], land_bounds[0])
+            lx_max, ly_max = _to_mercator(land_bounds[3], land_bounds[2])
+            land_w = (lx_max - lx_min) * 1.5
+            land_h = (ly_max - ly_min) * 1.5
+            if land_w > 0 and needed_w > land_w:
+                needed_w = land_w
+            if land_h > 0 and needed_h > land_h:
+                needed_h = land_h
+            # Recenter on land centroid since the road bbox might have
+            # pulled the centroid out over water.
+            land_cx = (lx_min + lx_max) * 0.5
+            land_cy = (ly_min + ly_max) * 0.5
+            cx = (cx + land_cx) * 0.5
+            cy = (cy + land_cy) * 0.5
+            log.info(
+                f"Auto-frame: land bbox clamp "
+                f"{land_w/1.5/1000:.1f}x{land_h/1.5/1000:.1f}km "
+                f"-> viewport limited to 1.5× land"
+            )
+        except Exception as e:
+            log.warning(f"Land-bbox clamp skipped: {e}")
+
     # Fit to canvas aspect: take the larger of (width to contain x-span,
     # width to contain y-span at canvas aspect).
     w_for_x = needed_w
@@ -386,11 +419,15 @@ def render_map_image(
     if auto_compose:
         center_lat, center_lng, meters_wide = _auto_frame(
             streets_data, center_lat, center_lng, img_aspect, bbox_area,
+            land_polygon=land_polygon,
         )
     else:
         # Caller explicitly pinned the viewport — e.g. batch jobs that
         # want deterministic framing. Fall back to the area ladder.
-        meters_wide = _auto_frame(None, center_lat, center_lng, img_aspect, bbox_area)[2]
+        meters_wide = _auto_frame(
+            None, center_lat, center_lng, img_aspect, bbox_area,
+            land_polygon=land_polygon,
+        )[2]
 
     # Legacy per-call override: still honoured if a caller passes one.
     default_meters_wide = meters_wide
