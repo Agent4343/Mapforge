@@ -287,6 +287,18 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             expand_pct = 0.15  # Large city: 15% expansion
         expand_lat = lat_span * expand_pct
         expand_lon = lon_span * expand_pct
+        # Minimum fetch bbox: hamlets like Little Narrows NS have
+        # admin polygons <500m across, so even a 60% expansion still
+        # misses the Trans-Canada highway that runs right through them.
+        # Enforce ~8 km minimum so rural communities always capture
+        # at least one cross-country arterial for context.
+        MIN_SPAN_DEG = 0.08
+        final_lat_span = lat_span + 2 * expand_lat
+        final_lon_span = lon_span + 2 * expand_lon
+        if final_lat_span < MIN_SPAN_DEG:
+            expand_lat = (MIN_SPAN_DEG - lat_span) / 2
+        if final_lon_span < MIN_SPAN_DEG:
+            expand_lon = (MIN_SPAN_DEG - lon_span) / 2
         street_bbox = (
             bounds[1] - expand_lat,  # south
             bounds[0] - expand_lon,  # west
@@ -310,6 +322,16 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         water_expand_pct = 1.0 if lat_span * lon_span < 0.005 else 0.6
         water_expand_lat = lat_span * water_expand_pct
         water_expand_lon = lon_span * water_expand_pct
+        # Same minimum-span floor as the street bbox so hamlet water
+        # fetches cover the surrounding lakes / ocean / harbour that
+        # a percent-only expansion misses.
+        MIN_WATER_SPAN_DEG = 0.10
+        final_lat_span = lat_span + 2 * water_expand_lat
+        final_lon_span = lon_span + 2 * water_expand_lon
+        if final_lat_span < MIN_WATER_SPAN_DEG:
+            water_expand_lat = (MIN_WATER_SPAN_DEG - lat_span) / 2
+        if final_lon_span < MIN_WATER_SPAN_DEG:
+            water_expand_lon = (MIN_WATER_SPAN_DEG - lon_span) / 2
         water_bbox = (
             bounds[1] - water_expand_lat,
             bounds[0] - water_expand_lon,
