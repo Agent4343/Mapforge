@@ -84,14 +84,13 @@ export function buildMinimalStyle(maptilerKey) {
         filter: ["in", "class",
           "minor", "service", "track"],
         minzoom: 12,
+        layout: { "line-cap": "round", "line-join": "round" },
         paint: {
           "line-color": PALETTE.local,
           "line-width": [
             "interpolate", ["linear"], ["zoom"],
             12, 0.3, 14, 0.8, 16, 1.8, 18, 3.5,
           ],
-          "line-cap": "round",
-          "line-join": "round",
         },
       },
       // Tertiary
@@ -101,14 +100,13 @@ export function buildMinimalStyle(maptilerKey) {
         source: "openmaptiles",
         "source-layer": "transportation",
         filter: ["==", "class", "tertiary"],
+        layout: { "line-cap": "round", "line-join": "round" },
         paint: {
           "line-color": PALETTE.secondary,
           "line-width": [
             "interpolate", ["linear"], ["zoom"],
             8, 0.4, 12, 1.2, 14, 2.0, 18, 5,
           ],
-          "line-cap": "round",
-          "line-join": "round",
         },
       },
       // Secondary roads
@@ -118,14 +116,13 @@ export function buildMinimalStyle(maptilerKey) {
         source: "openmaptiles",
         "source-layer": "transportation",
         filter: ["==", "class", "secondary"],
+        layout: { "line-cap": "round", "line-join": "round" },
         paint: {
           "line-color": PALETTE.secondary,
           "line-width": [
             "interpolate", ["linear"], ["zoom"],
             6, 0.5, 10, 1.4, 14, 3, 18, 6,
           ],
-          "line-cap": "round",
-          "line-join": "round",
         },
       },
       // Primary roads (dark)
@@ -135,14 +132,13 @@ export function buildMinimalStyle(maptilerKey) {
         source: "openmaptiles",
         "source-layer": "transportation",
         filter: ["==", "class", "primary"],
+        layout: { "line-cap": "round", "line-join": "round" },
         paint: {
           "line-color": PALETTE.highway,
           "line-width": [
             "interpolate", ["linear"], ["zoom"],
             6, 0.8, 10, 1.8, 14, 4, 18, 8,
           ],
-          "line-cap": "round",
-          "line-join": "round",
         },
       },
       // Motorway / trunk (darkest, thickest)
@@ -152,14 +148,13 @@ export function buildMinimalStyle(maptilerKey) {
         source: "openmaptiles",
         "source-layer": "transportation",
         filter: ["in", "class", "motorway", "trunk"],
+        layout: { "line-cap": "round", "line-join": "round" },
         paint: {
           "line-color": PALETTE.highway,
           "line-width": [
             "interpolate", ["linear"], ["zoom"],
             4, 0.6, 8, 1.5, 12, 3, 16, 6, 18, 10,
           ],
-          "line-cap": "round",
-          "line-join": "round",
         },
       },
     ],
