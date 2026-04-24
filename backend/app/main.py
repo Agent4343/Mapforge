@@ -15,8 +15,7 @@ from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +23,7 @@ from app.config import settings
 from app.database import get_db, init_db
 from app.logging_config import log, reset_request_id, set_request_id
 from app.routers import admin, auth, etsy, generate, library, marketplace, orders, search, webhooks
+from app.services.ratelimit import limiter
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
@@ -62,9 +62,6 @@ async def lifespan(app: FastAPI):
     yield
     log.info("MapForge shutting down...")
 
-
-# Rate limiter
-limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(
     title="MapForge",

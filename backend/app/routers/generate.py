@@ -7,8 +7,6 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,6 +31,7 @@ from app.services.maptiler_fetcher import fetch_streets_maptiler
 from app.services.water_fetcher import fetch_water_features
 from app.services.contour_fetcher import fetch_contour_lines, generate_depth_bands
 from app.services.file_storage import store_file, retrieve_file
+from app.services.ratelimit import limiter
 from app.services.thumbnail_generator import (
     generate_thumbnail, generate_print_image, generate_etsy_listing_image,
     generate_watermarked_preview, generate_wall_mockup, calculate_print_pixels,
@@ -41,7 +40,6 @@ from app.services.thumbnail_generator import (
 )
 
 router = APIRouter(prefix="/api/v1", tags=["generate"])
-limiter = Limiter(key_func=get_remote_address)
 
 
 def _compute_street_viewport(streets_data: dict, transform: dict, bounds_mm: tuple,

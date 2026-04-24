@@ -3,8 +3,6 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,14 +20,15 @@ from app.services.payments import (
     create_customer, create_checkout_session, SUBSCRIPTION_PRICES,
     create_connected_account, create_account_onboarding_link, get_account_status,
 )
+from app.services.ratelimit import limiter
 from app.logging_config import log
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
-limiter = Limiter(key_func=get_remote_address)
 
 
 @router.post("/register", response_model=AuthResponse, status_code=201)
-async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("5/minute")
+async def register(request: Request, req: RegisterRequest, db: AsyncSession = Depends(get_db)):
     """Create a new user account."""
     # Check existing
     existing = await db.execute(
@@ -69,7 +68,8 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/login", response_model=AuthResponse)
-async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("10/minute")
+async def login(request: Request, req: LoginRequest, db: AsyncSession = Depends(get_db)):
     """Login and get access token."""
     result = await db.execute(select(User).where(User.email == req.email))
     user = result.scalar_one_or_none()
@@ -144,7 +144,9 @@ async def request_password_reset(
 
 
 @router.post("/reset-password")
+@limiter.limit("5/minute")
 async def reset_password(
+    request: Request,
     token: str,
     new_password: str,
     db: AsyncSession = Depends(get_db),
