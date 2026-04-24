@@ -302,6 +302,19 @@ def _auto_frame(
     if total_weight <= 0 or len(samples_x) < 20:
         return center_lat, center_lng, _fallback_width()
 
+    # HARD RULE for tiny communities: bbox_area < 0.01 deg² = a
+    # hamlet or village admin polygon. No matter how many roads get
+    # fetched (z14 in an 8 km window can easily hit 1000+), the
+    # USER-VISIBLE target is the village, not everything that
+    # happened to fit in the fetch window. Force a 3 km viewport
+    # centered on the geocoded pin. Predictable, no heuristics.
+    if bbox_area < 0.01:
+        log.info(
+            f"Auto-frame: community override "
+            f"(bbox_area={bbox_area:.4f} deg²) -> 3.0km @ pin"
+        )
+        return center_lat, center_lng, 3_000.0
+
     # Compute the land-polygon span upfront so we can compare it to
     # the road-network span for the "highway through a hamlet"
     # detector below.
