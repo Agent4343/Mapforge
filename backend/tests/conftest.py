@@ -74,3 +74,35 @@ async def auth_client(client, db_session):
     token = data["access_token"]
     client.headers["Authorization"] = f"Bearer {token}"
     yield client, data["user"]
+
+
+@pytest_asyncio.fixture
+async def admin_client(client, db_session):
+    """Authenticated test client whose user has tier=admin.
+
+    Promotion is done directly against the test DB rather than
+    through ADMIN_EMAILS — keeps the fixture independent of env
+    vars and avoids leaking an "admin email" into dev configs.
+    """
+    from sqlalchemy import update
+
+    from app.models.db_models import User
+
+    resp = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "admin@mapforge.dev",
+            "username": "adminuser",
+            "password": "AdminPass123!",
+        },
+    )
+    data = resp.json()
+    token = data["access_token"]
+    client.headers["Authorization"] = f"Bearer {token}"
+
+    await db_session.execute(
+        update(User).where(User.id == data["user"]["id"]).values(tier="admin")
+    )
+    await db_session.commit()
+
+    yield client, data["user"]

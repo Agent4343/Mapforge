@@ -1239,14 +1239,32 @@ async def batch_generate(
 
 
 @router.get("/preview/{file_id}")
-async def preview(file_id: str, db: AsyncSession = Depends(get_db)):
-    """Get a cached SVG preview."""
+async def preview(
+    file_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the raw SVG for a generated file.
+
+    Returns the UNWATERMARKED SVG — i.e. the actual product — so it
+    requires authentication and ownership. Watermarked previews
+    (safe to show to marketplace browsers) are served from
+    `/download/{file_id}/preview` and stay unauthenticated. Credit
+    holders download through `/api/v1/orders/download/{token}`,
+    which gates on the redeem token.
+    """
     result = await db.execute(
         select(GeneratedFile).where(GeneratedFile.id == file_id)
     )
     file_record = result.scalar_one_or_none()
     if not file_record:
         raise HTTPException(status_code=404, detail="File not found.")
+
+    # Owner OR admin only. Files with no owner (visitor-generated
+    # previews that were saved for some reason) also require admin.
+    is_owner = file_record.owner_id and file_record.owner_id == user.id
+    if not is_owner and user.tier != "admin":
+        raise HTTPException(status_code=403, detail="You don't own this file.")
 
     svg_bytes = await retrieve_file(file_record.svg_storage_key)
     if svg_bytes is None:
