@@ -355,7 +355,12 @@ body {
   border-radius: 8px;
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
   overflow: hidden;
-  max-width: 100%;
+  /* Preview sizing. Cap width so the poster doesn't balloon across
+     wide desktops. 80vh + 60vh keeps the portrait poster tied to
+     viewport height (poster is 3:4 portrait → width ≈ 0.75 × height).
+     On ultra-wide screens this stops the preview from dominating
+     the right panel and leaving controls feeling crammed. */
+  max-width: min(100%, 60vh);
   max-height: 80vh;
 }
 
