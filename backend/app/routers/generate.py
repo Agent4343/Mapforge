@@ -700,8 +700,13 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             except Exception as e:
                 log.warning(f"Road poster failed, falling back to SVG: {e}", exc_info=True)
 
-    # Generate SVG (used as fallback or for non-city_art maps)
-    result = generate_svg(
+    # Generate SVG (used as fallback or for non-city_art maps).
+    # `generate_svg` is pure-CPU Python (shapely + path building + string
+    # assembly) and takes 1–5s on a city-scale request. Running it on
+    # the event loop stalls every other in-flight request; to_thread
+    # keeps uvicorn responsive while this worker renders.
+    result = await asyncio.to_thread(
+        generate_svg,
         processed=processed,
         location_name=location_name,
         style=req.style,
@@ -746,7 +751,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
 
         # Generate CNC-optimized SVG (simplified: major roads only, fewer paths)
         try:
-            cnc_result = generate_svg(
+            cnc_result = await asyncio.to_thread(
+                generate_svg,
                 processed=processed,
                 location_name=location_name,
                 style=req.style,
@@ -773,7 +779,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
 
         # Generate DXF (CNC-ready vector) alongside SVG
         try:
-            dxf_bytes = generate_dxf(
+            dxf_bytes = await asyncio.to_thread(
+                generate_dxf,
                 processed=processed,
                 location_name=location_name,
                 show_coordinates=req.show_coordinates,
@@ -790,7 +797,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         # Generate STL 3D mesh when contours are available (bathymetric/topo)
         if contour_data:
             try:
-                stl_bytes = generate_stl(
+                stl_bytes = await asyncio.to_thread(
+                    generate_stl,
                     processed=processed,
                     contour_data=contour_data,
                 )
@@ -802,7 +810,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
 
         # Generate PNG thumbnail for Etsy product mockups
         try:
-            png_bytes = generate_thumbnail(
+            png_bytes = await asyncio.to_thread(
+                generate_thumbnail,
                 result["svg"],
                 background_color=None,  # Print SVG already has mat + background
             )
@@ -820,7 +829,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                 lon_span = bounds[2] - bounds[0] if bounds else 0
                 try:
                     from app.services.static_map_poster import generate_road_poster
-                    static_poster_bytes = generate_road_poster(
+                    static_poster_bytes = await asyncio.to_thread(
+                        generate_road_poster,
                         streets_data=streets_data,
                         water_data=water_data,
                         center_lat=center[0],
@@ -846,7 +856,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             log.info(f"Print PNG from road poster: {len(static_poster_bytes)} bytes")
         else:
             try:
-                print_bytes = generate_print_image(
+                print_bytes = await asyncio.to_thread(
+                    generate_print_image,
                     result["svg"],
                     color_theme=req.color_theme,
                     skip_remap=True,
@@ -861,7 +872,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
 
         # Generate Etsy listing image (4:3 ratio for Etsy grid)
         try:
-            etsy_bytes = generate_etsy_listing_image(result["svg"])
+            etsy_bytes = await asyncio.to_thread(generate_etsy_listing_image, result["svg"])
             etsy_key = svg_key.replace("svg/", "etsy/").replace(".svg", "_etsy.png")
             await store_file(etsy_key, etsy_bytes, content_type="image/png")
         except Exception as e:
@@ -1051,7 +1062,8 @@ async def generate_pin(
 
     # Generate print poster SVG (the primary and only output)
     location_name = req.label
-    result = generate_svg(
+    result = await asyncio.to_thread(
+        generate_svg,
         processed=processed,
         location_name=location_name,
         style=req.style,
@@ -1093,7 +1105,9 @@ async def generate_pin(
 
         # Generate thumbnail
         try:
-            png_bytes = generate_thumbnail(result["svg"], background_color=None)
+            png_bytes = await asyncio.to_thread(
+                generate_thumbnail, result["svg"], background_color=None
+            )
             thumbnail_key = svg_key.replace("svg/", "thumbnails/").replace(".svg", ".png")
             await store_file(thumbnail_key, png_bytes, content_type="image/png")
         except Exception as e:
@@ -1101,7 +1115,8 @@ async def generate_pin(
 
         # Generate high-res print PNG from the themed print SVG
         try:
-            print_bytes = generate_print_image(
+            print_bytes = await asyncio.to_thread(
+                generate_print_image,
                 result["svg"],
                 color_theme=req.color_theme,
                 skip_remap=True,
@@ -1116,7 +1131,7 @@ async def generate_pin(
 
         # Generate Etsy listing image for pin maps
         try:
-            etsy_bytes = generate_etsy_listing_image(result["svg"])
+            etsy_bytes = await asyncio.to_thread(generate_etsy_listing_image, result["svg"])
             etsy_key = svg_key.replace("svg/", "etsy/").replace(".svg", "_etsy.png")
             await store_file(etsy_key, etsy_bytes, content_type="image/png")
         except Exception as e:
@@ -1275,7 +1290,8 @@ async def download(
             if svg_bytes:
                 try:
                     from app.services.thumbnail_generator import generate_print_image
-                    content = generate_print_image(
+                    content = await asyncio.to_thread(
+                        generate_print_image,
                         svg_bytes.decode("utf-8"),
                         skip_remap=True,
                     )
@@ -1370,7 +1386,9 @@ async def download_preview(
         raise HTTPException(status_code=404, detail="SVG file not found in storage.")
 
     try:
-        preview_bytes = generate_watermarked_preview(svg_bytes.decode("utf-8"))
+        preview_bytes = await asyncio.to_thread(
+            generate_watermarked_preview, svg_bytes.decode("utf-8")
+        )
     except Exception as e:
         log.error(f"Watermarked preview generation failed: {e}")
         raise HTTPException(status_code=500, detail="Preview generation failed.")
@@ -1411,7 +1429,8 @@ async def download_wall_mockup(
         style = "light_wall"
 
     try:
-        mockup_bytes = generate_wall_mockup(
+        mockup_bytes = await asyncio.to_thread(
+            generate_wall_mockup,
             svg_bytes.decode("utf-8"),
             output_width=3000,
             output_height=2400,
@@ -1567,13 +1586,15 @@ async def generate_theme_variants(
                 themed_svg = remap_poster_theme(source_svg, source_theme, theme_key)
 
             # Generate Etsy listing image (2700x2025, 4:3 ratio)
-            etsy_bytes = generate_etsy_listing_image(themed_svg)
+            etsy_bytes = await asyncio.to_thread(generate_etsy_listing_image, themed_svg)
             base_key = file_record.svg_storage_key.replace("svg/", "").replace(".svg", "")
             etsy_key = f"etsy/{base_key}_{theme_key}.png"
             await store_file(etsy_key, etsy_bytes, content_type="image/png")
 
             # Generate thumbnail (2000px)
-            thumb_bytes = generate_thumbnail(themed_svg, background_color=None)
+            thumb_bytes = await asyncio.to_thread(
+                generate_thumbnail, themed_svg, background_color=None
+            )
             thumb_key = f"thumbnails/{base_key}_{theme_key}.png"
             await store_file(thumb_key, thumb_bytes, content_type="image/png")
 
