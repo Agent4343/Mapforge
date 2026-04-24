@@ -13,6 +13,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
@@ -94,6 +95,17 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
 )
+
+# GZip-compress responses over the wire. Most of the app's
+# response volume is SVG (10-500 KB per map), JSON (often 50+ KB
+# for library listings), and the static JS bundle served from
+# /assets (1.3 MB uncompressed). GZip gets the JS bundle to ~380
+# KB and SVG to roughly a third of its original size.
+#
+# `minimum_size=1024` skips compression for tiny responses like
+# `/health` and auth token payloads where the CPU cost of gzip
+# outweighs the wire savings.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
 @app.middleware("http")
