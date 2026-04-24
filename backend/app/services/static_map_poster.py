@@ -376,17 +376,27 @@ def _auto_frame(
                 return v
         return samples[-1][0]
 
-    # Median (50th) is the robust centroid. Tightened 20/80 window
-    # focuses on the urban core and aggressively drops outlier highway
-    # tails. 60% of count-weight is enough to capture real urban
-    # geometry; wider percentiles let highway tails pull the viewport
-    # outward.
+    # Scale-adaptive percentile window.
+    #   bbox < 0.05 deg²   → 20/80 (village / small town — tight
+    #                        focus on urban core, drop highway tails)
+    #   0.05-0.5 deg²      → 10/90 (city — moderate outlier trim)
+    #   > 0.5 deg²         → 2/98  (region / island / province — keep
+    #                        the whole extent; losing the outline
+    #                        destroys the identity of a Cape Breton
+    #                        or Vancouver Island poster)
+    if bbox_area < 0.05:
+        pct_lo, pct_hi = 0.20, 0.80
+    elif bbox_area < 0.5:
+        pct_lo, pct_hi = 0.10, 0.90
+    else:
+        pct_lo, pct_hi = 0.02, 0.98
+
     cx = _weighted_percentile(samples_x, 0.50)
     cy = _weighted_percentile(samples_y, 0.50)
-    x05 = _weighted_percentile(samples_x, 0.20)
-    x95 = _weighted_percentile(samples_x, 0.80)
-    y05 = _weighted_percentile(samples_y, 0.20)
-    y95 = _weighted_percentile(samples_y, 0.80)
+    x05 = _weighted_percentile(samples_x, pct_lo)
+    x95 = _weighted_percentile(samples_x, pct_hi)
+    y05 = _weighted_percentile(samples_y, pct_lo)
+    y95 = _weighted_percentile(samples_y, pct_hi)
 
     # Make the viewport symmetric around the centroid so the city
     # stays centered instead of drifting toward whichever side has
