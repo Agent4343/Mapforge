@@ -834,13 +834,10 @@ export default function App() {
           />
         </div>
         <div className="panel-right">
-          {mapPlan && maptilerKey && (
-            <MapLibrePoster
-              place={mapPlan}
-              subtitle={config.subtitle || ""}
-              maptilerKey={maptilerKey}
-            />
-          )}
+          {/* MapLibre browser preview disabled inline — the 3:4 aspect
+              constraint was blowing up the panel-right layout on
+              desktop. Component stays compiled in; we'll reintroduce
+              behind a toggle once the sizing is tested properly. */}
           <SVGPreview
             svgContent={svgContent}
             loading={generating}
