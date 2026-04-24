@@ -20,13 +20,15 @@ export function buildMinimalStyle(maptilerKey) {
   return {
     version: 8,
     name: "MapForge Minimal",
+    // Empty glyphs pattern silences MapLibre 5.x warnings even though
+    // we never render a text layer. No sprite = no icons (intentional).
+    glyphs: "https://api.maptiler.com/fonts/{fontstack}/{range}.pbf?key=" + encodeURIComponent(maptilerKey),
     sources: {
       openmaptiles: {
         type: "vector",
         url: tilesUrl,
       },
     },
-    // No sprite / glyphs — we don't render any text labels or icons.
     layers: [
       // Background (land colour)
       {

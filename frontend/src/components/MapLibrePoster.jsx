@@ -78,20 +78,27 @@ export default function MapLibrePoster({
   const mapRef = useRef(null);
   const markerRef = useRef(null);
   const [mapReady, setMapReady] = useState(false);
+  const [mapError, setMapError] = useState(null);
 
   useEffect(() => {
     if (!mapContainerRef.current || !maptilerKey || !place) return;
 
+    setMapError(null);
     const style = buildMinimalStyle(maptilerKey);
-    const map = new maplibregl.Map({
-      container: mapContainerRef.current,
-      style,
-      // Disable all UI controls — this is a poster, not an app.
-      attributionControl: false,
-      interactive: true,
-      preserveDrawingBuffer: true, // required for canvas export
-      fadeDuration: 0,
-    });
+    let map;
+    try {
+      map = new maplibregl.Map({
+        container: mapContainerRef.current,
+        style,
+        attributionControl: false,
+        interactive: true,
+        preserveDrawingBuffer: true, // required for canvas export
+        fadeDuration: 0,
+      });
+    } catch (e) {
+      setMapError(`MapLibre init failed: ${e?.message || e}`);
+      return;
+    }
 
     mapRef.current = map;
 
@@ -114,6 +121,18 @@ export default function MapLibrePoster({
           .addTo(map);
       }
       setMapReady(true);
+    });
+
+    // Surface any tile / style error instead of silently staying on
+    // the "LOADING MAP..." button forever. Most common cause: the
+    // MapTiler key doesn't have access to the tiles/v3 tileset (401)
+    // or its HTTP origin list doesn't include the current domain.
+    map.on("error", (e) => {
+      const msg =
+        e?.error?.message ||
+        e?.sourceId ||
+        "Tile load failed (check MapTiler key + origin restrictions).";
+      setMapError(msg);
     });
 
     return () => {
@@ -239,13 +258,38 @@ export default function MapLibrePoster({
         {subtitle && <p className="maplibre-poster__subtitle">{subtitle}</p>}
         <p className="maplibre-poster__coords">{coords}</p>
       </div>
+      {mapError && (
+        <div
+          className="maplibre-poster__error"
+          style={{
+            margin: "10px 14px 0",
+            padding: "10px 12px",
+            borderRadius: 6,
+            background: "#FDEEEE",
+            color: "#8A1E1E",
+            fontSize: 13,
+            lineHeight: 1.4,
+          }}
+        >
+          <strong>Map failed to load.</strong>{" "}
+          {mapError}
+          <br />
+          Check the MapTiler key is set in{" "}
+          <code>/admin</code> and that your MapTiler key's{" "}
+          <em>Allowed HTTP Origins</em> includes this domain.
+        </div>
+      )}
       <button
         type="button"
         className="btn btn-primary maplibre-poster__export"
         onClick={handleExport}
         disabled={!mapReady}
       >
-        {mapReady ? "Export 300 DPI PNG" : "Loading map…"}
+        {mapError
+          ? "Map error (see above)"
+          : mapReady
+            ? "Export 300 DPI PNG"
+            : "Loading map…"}
       </button>
     </div>
   );
