@@ -2,7 +2,9 @@
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+import os
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,8 +16,60 @@ from app.models.schemas import (
 )
 from app.config import settings
 from app.services.auth import (
-    create_access_token, get_current_user, hash_password, verify_password,
+    AUTH_COOKIE_NAME, create_access_token, get_current_user, hash_password,
+    verify_password,
 )
+
+
+# Non-sensitive companion cookie. Readable by JavaScript so the SPA
+# can tell on page load "the server-side session cookie probably
+# exists" without blocking on a /auth/me round-trip. Contains no
+# secret — losing it to XSS is harmless. The actual JWT stays in
+# the HttpOnly `mapforge_session` cookie.
+SESSION_HINT_COOKIE = "mapforge_session_hint"
+
+
+def _set_auth_cookie(response: Response, token: str) -> None:
+    """Attach the auth cookie + a JS-visible session-hint cookie.
+
+    `mapforge_session` (HttpOnly, Secure, SameSite=Strict):
+      * HttpOnly: JavaScript can't read it — XSS can't steal the token.
+      * Secure: browsers refuse to send over plain HTTP in production
+        (Railway always serves HTTPS; Secure is auto-dropped on
+        non-HTTPS origins by the browser spec, so local HTTP dev
+        still works).
+      * SameSite=Strict: the cookie isn't sent on cross-site requests,
+        which handles the CSRF case for free since our backend has no
+        legitimate cross-origin callers.
+      * Max-Age mirrors the JWT's expiry so the cookie and token
+        invalidate together.
+
+    `mapforge_session_hint` (NOT HttpOnly):
+      * Lets the SPA skip the landing-page flash for returning
+        authed users by reading `document.cookie`. Value is a
+        meaningless "1" — if `/auth/me` later 401s, the frontend
+        just clears it.
+    """
+    is_prod = bool(os.environ.get("RAILWAY_PUBLIC_DOMAIN"))
+    max_age = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    response.set_cookie(
+        key=AUTH_COOKIE_NAME,
+        value=token,
+        max_age=max_age,
+        httponly=True,
+        secure=is_prod,
+        samesite="strict",
+        path="/",
+    )
+    response.set_cookie(
+        key=SESSION_HINT_COOKIE,
+        value="1",
+        max_age=max_age,
+        httponly=False,
+        secure=is_prod,
+        samesite="strict",
+        path="/",
+    )
 from app.services.payments import (
     create_customer, create_checkout_session, SUBSCRIPTION_PRICES,
     create_connected_account, create_account_onboarding_link, get_account_status,
@@ -28,7 +82,12 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 @router.post("/register", response_model=AuthResponse, status_code=201)
 @limiter.limit("5/minute")
-async def register(request: Request, req: RegisterRequest, db: AsyncSession = Depends(get_db)):
+async def register(
+    request: Request,
+    response: Response,
+    req: RegisterRequest,
+    db: AsyncSession = Depends(get_db),
+):
     """Create a new user account."""
     # Check existing
     existing = await db.execute(
@@ -53,6 +112,7 @@ async def register(request: Request, req: RegisterRequest, db: AsyncSession = De
     await db.refresh(user)
 
     token = create_access_token(user.id)
+    _set_auth_cookie(response, token)
     log.info(f"User registered: {user.username} ({user.email})")
 
     return AuthResponse(
@@ -69,7 +129,12 @@ async def register(request: Request, req: RegisterRequest, db: AsyncSession = De
 
 @router.post("/login", response_model=AuthResponse)
 @limiter.limit("10/minute")
-async def login(request: Request, req: LoginRequest, db: AsyncSession = Depends(get_db)):
+async def login(
+    request: Request,
+    response: Response,
+    req: LoginRequest,
+    db: AsyncSession = Depends(get_db),
+):
     """Login and get access token."""
     result = await db.execute(select(User).where(User.email == req.email))
     user = result.scalar_one_or_none()
@@ -83,6 +148,7 @@ async def login(request: Request, req: LoginRequest, db: AsyncSession = Depends(
         await db.commit()
 
     token = create_access_token(user.id)
+    _set_auth_cookie(response, token)
     log.info(f"User logged in: {user.username}")
 
     return AuthResponse(
@@ -95,6 +161,15 @@ async def login(request: Request, req: LoginRequest, db: AsyncSession = Depends(
             generation_count_this_month=user.generation_count_this_month,
         ),
     )
+
+
+@router.post("/logout", status_code=204)
+async def logout():
+    """Clear the session + hint cookies. Safe to call when unauthenticated."""
+    response = Response(status_code=204)
+    response.delete_cookie(key=AUTH_COOKIE_NAME, path="/")
+    response.delete_cookie(key=SESSION_HINT_COOKIE, path="/")
+    return response
 
 
 @router.get("/me", response_model=UserProfile)

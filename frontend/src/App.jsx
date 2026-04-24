@@ -37,7 +37,7 @@ import {
   generateSVG, generatePin, downloadSVG, downloadDXF, downloadSTL,
   downloadThumbnail, downloadPrintPNG,
   downloadEtsyListing, downloadEtsyPackage, downloadPreview, downloadWallMockup,
-  getProfile, logout, getToken, subscribe,
+  getProfile, logout, hasSessionHint, subscribe,
   redeemCredit,
 } from "./services/api.js";
 
@@ -139,7 +139,12 @@ export default function App() {
   const [showAuth, setShowAuth] = useState(false);
   const [showBatch, setShowBatch] = useState(false);
   const [showPricing, setShowPricing] = useState(false);
-  const [showLanding, setShowLanding] = useState(!getToken());
+  // Skip the landing page when the `mapforge_session_hint` cookie
+  // says the server has an active session. The actual JWT cookie
+  // is HttpOnly so we can't read it; this non-sensitive hint
+  // cookie is the best signal available on initial render, and
+  // `getProfile()` below is the authoritative check.
+  const [showLanding, setShowLanding] = useState(!hasSessionHint());
   const [view, setView] = useState("main"); // main, library, marketplace, dashboard
   const [toasts, setToasts] = useState([]);
 
@@ -174,9 +179,11 @@ export default function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  // Load user profile if token exists; clear stale tokens on failure
+  // Load user profile if a session hint cookie is present.
+  // `/auth/me` is the authoritative check — if it returns null the
+  // session has expired (hint cookie is stale), so log out locally.
   useEffect(() => {
-    if (getToken()) {
+    if (hasSessionHint()) {
       getProfile()
         .then((p) => { if (p) setUser(p); else { logout(); } })
         .catch(() => { logout(); });
