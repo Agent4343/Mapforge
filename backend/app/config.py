@@ -117,8 +117,57 @@ class Settings:
     # Seller payouts
     STRIPE_PAYOUT_DELAY_DAYS: int = 7  # Days before payout to sellers
 
+    # Observability
+    SENTRY_DSN: str = os.getenv("SENTRY_DSN", "")
+    SENTRY_TRACES_SAMPLE_RATE: float = float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1"))
+    SENTRY_ENVIRONMENT: str = os.getenv("SENTRY_ENVIRONMENT", "production" if _is_production() else "development")
+    SENTRY_RELEASE: str = os.getenv("RAILWAY_GIT_COMMIT_SHA", "") or os.getenv("GIT_COMMIT", "")
+
 
 settings = Settings()
+
+
+def _init_sentry() -> None:
+    """Initialise Sentry when SENTRY_DSN is set.
+
+    Safe to call unconditionally — no-ops in dev without the DSN. The
+    FastAPI / SQLAlchemy integrations are loaded lazily; if
+    sentry-sdk isn't installed (e.g. slim dev env) we log a warning
+    and continue.
+    """
+    if not settings.SENTRY_DSN:
+        return
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.asyncio import AsyncioIntegration
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+        from sentry_sdk.integrations.starlette import StarletteIntegration
+
+        sentry_sdk.init(
+            dsn=settings.SENTRY_DSN,
+            environment=settings.SENTRY_ENVIRONMENT,
+            release=settings.SENTRY_RELEASE or None,
+            traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
+            # send_default_pii is False by default — keep it that way so
+            # we don't ship emails / IPs to Sentry. Add allow-listed
+            # data via `set_tag` at the call site instead.
+            send_default_pii=False,
+            integrations=[
+                FastApiIntegration(),
+                StarletteIntegration(),
+                SqlalchemyIntegration(),
+                AsyncioIntegration(),
+            ],
+        )
+    except ImportError:
+        sys.stderr.write(
+            "SENTRY_DSN is set but sentry-sdk is not installed. "
+            "Run `pip install -r requirements.txt` or unset SENTRY_DSN.\n"
+        )
+
+
+_init_sentry()
 
 # ── Production fail-fast checks ───────────────────────────────────────
 # In production (Railway, or APP_ENV=production) these secrets MUST be

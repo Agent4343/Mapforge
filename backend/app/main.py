@@ -7,6 +7,7 @@ cutters (VCarve Pro, Fusion 360, Carbide Create, LightBurn, Easel).
 """
 
 import os
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -21,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db, init_db
-from app.logging_config import log
+from app.logging_config import log, reset_request_id, set_request_id
 from app.routers import admin, auth, etsy, generate, library, marketplace, orders, search, webhooks
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
@@ -96,6 +97,27 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
 )
+
+
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    """Tag every request with a correlation id.
+
+    Honours an inbound `X-Request-ID` header (useful when Railway's
+    edge proxy or a load balancer already stamps one) and falls back
+    to a fresh UUID. The id is stashed on the logging contextvar so
+    `log.info("…")` lines inside handlers carry it, and echoed back
+    on the response so the client can quote it when reporting bugs.
+    """
+    req_id = request.headers.get("x-request-id") or uuid.uuid4().hex[:12]
+    token = set_request_id(req_id)
+    request.state.request_id = req_id
+    try:
+        response = await call_next(request)
+    finally:
+        reset_request_id(token)
+    response.headers["X-Request-ID"] = req_id
+    return response
 
 
 @app.middleware("http")
