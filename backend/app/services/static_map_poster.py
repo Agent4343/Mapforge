@@ -454,7 +454,18 @@ def _auto_frame(
     # 400m and entire provinces don't try to fit in 20km. 3km floor
     # (was 5km) so villages that survive into the percentile path
     # still frame their urban core tightly.
-    meters_wide = max(3_000.0, min(200_000.0, meters_wide))
+    # Sane floor (no poster smaller than 3 km) and a tier-aware cap
+    # so a region/island doesn't get clipped into 200 km when the
+    # island itself is 240 km long. Cape Breton (land_span 240 km,
+    # road_span 274 km) was being truncated to 200 km by a fixed
+    # cap, losing the Highlands tip and Isle Madame.
+    if bbox_area > 0.5:
+        hard_cap = 500_000.0  # region / island / small province
+    elif bbox_area > 0.05:
+        hard_cap = 200_000.0  # city
+    else:
+        hard_cap = 60_000.0   # village / hamlet — stays tight
+    meters_wide = max(3_000.0, min(hard_cap, meters_wide))
 
     # Inverse Mercator on the centroid gives us the new center.
     new_lng = cx / 20037508.34 * 180.0
