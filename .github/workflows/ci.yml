@@ -46,6 +46,7 @@ jobs:
         env:
           SECRET_KEY: ci-test-key-not-for-production-use-only
           DATABASE_URL: sqlite+aiosqlite:///:memory:
+          DISABLE_RATE_LIMIT: "1"
         run: pytest -q
 
   frontend:

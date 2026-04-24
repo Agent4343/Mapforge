@@ -218,6 +218,64 @@ async def health():
     return {"status": "ok"}
 
 
+@app.post("/api/v1/client-errors", status_code=204)
+async def client_errors(request: Request):
+    """Log a crash report posted by the frontend ErrorBoundary.
+
+    The browser ErrorBoundary POSTs a small JSON payload here via
+    `fetch(..., keepalive: true)` when React catches a render
+    exception. We log it with the request's correlation id so ops
+    can tie a user-reported "the site went blank" to a specific
+    trace, and — if Sentry is configured — forward it as a
+    dedicated exception so it shows up in the same dashboard as
+    server-side errors.
+
+    Always returns 204 so a failure in the reporting path never
+    itself turns into a user-visible error. Body is capped at
+    16 KB so a runaway component stack can't DoS the logger.
+    """
+    raw = await request.body()
+    if len(raw) > 16 * 1024:
+        log.warning("client-error report rejected: body too large (%d bytes)", len(raw))
+        return
+    try:
+        import json as _json
+
+        payload = _json.loads(raw) if raw else {}
+    except Exception:
+        log.warning("client-error report: invalid JSON payload")
+        return
+
+    def _clip(v, n=1000):
+        if v is None:
+            return None
+        s = str(v)
+        return s if len(s) <= n else s[:n] + "…"
+
+    msg = _clip(payload.get("message"), 500)
+    url = _clip(payload.get("url"), 500)
+    ua = _clip(payload.get("userAgent"), 300)
+    log.error(
+        "client-error: %s | url=%s | ua=%s",
+        msg, url, ua,
+    )
+    # Forward to Sentry if installed. Swallow any failure — the
+    # logger above already has the data.
+    try:
+        import sentry_sdk  # type: ignore
+        with sentry_sdk.push_scope() as scope:
+            scope.set_tag("source", "client")
+            scope.set_context("client_error", {
+                "url": url,
+                "userAgent": ua,
+                "stack": _clip(payload.get("stack"), 4000),
+                "componentStack": _clip(payload.get("componentStack"), 4000),
+            })
+            sentry_sdk.capture_message(msg or "client-side crash", level="error")
+    except Exception:
+        pass
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Catch unhandled exceptions and return JSON instead of HTML tracebacks."""

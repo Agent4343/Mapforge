@@ -2,15 +2,23 @@
 
 import asyncio
 import os
-from unittest.mock import AsyncMock, patch
 
-import pytest
-import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+# Disable slowapi rate limits for the whole test session. Fixtures
+# register fresh users on every test, which would trip the
+# production `5/minute` `/register` limit partway through a run.
+# Must be set BEFORE `app.main` is imported — `services.ratelimit`
+# snapshots the flag at module load.
+os.environ.setdefault("DISABLE_RATE_LIMIT", "1")
 
-from app.database import Base, get_db
-from app.main import app
+from unittest.mock import AsyncMock, patch  # noqa: E402
+
+import pytest  # noqa: E402
+import pytest_asyncio  # noqa: E402
+from httpx import ASGITransport, AsyncClient  # noqa: E402
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine  # noqa: E402
+
+from app.database import Base, get_db  # noqa: E402
+from app.main import app  # noqa: E402
 
 # Use in-memory SQLite for tests
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"

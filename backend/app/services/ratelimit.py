@@ -8,6 +8,8 @@ client IP from `X-Forwarded-For` (Railway strips any client-supplied
 XFF before adding the real one, so the first entry is trustworthy).
 """
 
+import os
+
 from fastapi import Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -32,4 +34,10 @@ def client_ip_key_func(request: Request) -> str:
 # Shared limiter. Routers/middleware import this rather than spinning
 # up their own `Limiter(key_func=get_remote_address)` — that would use
 # the proxy IP and break per-user enforcement.
-limiter = Limiter(key_func=client_ip_key_func)
+#
+# `DISABLE_RATE_LIMIT=1` in the environment turns enforcement off so
+# pytest fixtures can register / login / generate dozens of times per
+# second without tripping the real-world limits. The env var is
+# unrelated to any user-facing feature.
+_rate_limit_enabled = os.getenv("DISABLE_RATE_LIMIT", "").lower() not in ("1", "true", "yes")
+limiter = Limiter(key_func=client_ip_key_func, enabled=_rate_limit_enabled)
