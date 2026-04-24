@@ -912,21 +912,22 @@ def render_map_image(
             minor_mult, major_mult = 5, 10
             minor_min, major_min = 2, 4
             min_residential_px = 70
-        elif bbox_area > 0.008:
-            # Halifax-sized downtown.
+        elif bbox_area > 0.01:
+            # Halifax-sized downtown (threshold bumped from 0.008 so
+            # it aligns with the auto-frame community-override cutoff).
             minor_mult, major_mult = 6, 11
             minor_min, major_min = 3, 5
             min_residential_px = 60
-        elif bbox_area > 0.002:
-            # Very tight downtown viewport.
-            minor_mult, major_mult = 8, 13
-            minor_min, major_min = 3, 6
-            min_residential_px = 50
         else:
-            # Single neighbourhood — widen major:minor ratio so the
-            # structure still reads at a glance.
-            minor_mult, major_mult = 10, 17
-            minor_min, major_min = 4, 8
+            # Community / hamlet (bbox_area <= 0.01 deg²). Matches the
+            # auto-frame "community override" that forces a 3 km
+            # pin-centred viewport. At village scale a highway passing
+            # through would render with downtown-scale weight and
+            # dominate the map, drowning out the village grid. Capped
+            # weights so the highway is backbone context, not a black
+            # slab, and residentials read as real streets.
+            minor_mult, major_mult = 6, 8
+            minor_min, major_min = 3, 4
             min_residential_px = 40
 
         # Normalise the residential length threshold so it's a constant
