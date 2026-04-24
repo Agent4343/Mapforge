@@ -110,16 +110,25 @@ def _choose_zoom(bbox: tuple[float, float, float, float]) -> int:
     residential grid is only available at 14. We bias toward the
     higher tier so city-scale posters get the dense Mapiful-style
     lattice rather than just arterial backbones.
+
+    Island / large-county posters (Cape Breton ~2.6 deg², PEI,
+    Vancouver Island) previously fell into the `area > 1.0 → z11`
+    bucket, where OpenMapTiles emits only motorway/trunk/primary/
+    secondary/tertiary — no residentials or service roads. The
+    resulting poster was almost all whitespace. Dropping the top
+    threshold to 3.0 deg² keeps genuinely province-sized bboxes at
+    z11 while lifting island-sized ones to z12, which brings in the
+    minor road lattice that makes a Mapiful-style poster read.
     """
     south, west, north, east = bbox
     lat_span = north - south
     lon_span = east - west
     area = lat_span * lon_span
 
-    if area > 1.0:
-        return 11  # Province / country
-    elif area > 0.3:
-        return 12  # Regional metro (Toronto greater, GTA)
+    if area > 3.0:
+        return 11  # Province / country (New Brunswick, Nova Scotia)
+    elif area > 0.2:
+        return 12  # Large island / regional metro (Cape Breton, GTA)
     elif area > 0.05:
         return 13  # Large city (Calgary, Edmonton) — residentials appear
     elif area > 0.005:
@@ -361,11 +370,12 @@ async def fetch_streets_maptiler(
     log.info(f"MapTiler: fetching {total_tiles} tiles at zoom {zoom} "
              f"(x:{x_min}-{x_max}, y:{y_min}-{y_max})")
 
-    # Cap tile count to prevent excessive API usage. Raised from 100
-    # so city-scale bboxes can keep zoom 13 (which is where
-    # OpenMapTiles starts emitting residential streets). MapTiler
-    # comfortably serves 400 tiles in a few seconds.
-    MAX_TILES = 400
+    # Cap tile count to prevent excessive API usage. Raised from 400
+    # so island-scale bboxes (Cape Breton ~950 tiles at z12) can keep
+    # zoom 12 rather than falling back to z11 where OpenMapTiles omits
+    # all minor roads. MapTiler comfortably serves 1200 tiles in
+    # ~10–15s on a warm client connection.
+    MAX_TILES = 1200
     if total_tiles > MAX_TILES:
         # Reduce zoom to fit within tile limit
         while total_tiles > MAX_TILES and zoom > 8:
@@ -444,6 +454,17 @@ async def fetch_streets_maptiler(
                             # Map MapTiler class to our road class
                             mapped_class = _MAPTILER_ROAD_MAP.get(road_class)
                             if mapped_class is None:
+                                continue
+
+                            # Drop ferry routes. OpenMapTiles sometimes
+                            # leaves the `class` as service/track on a
+                            # feature that is actually a ferry crossing
+                            # and only marks it via the `brunnel`
+                            # property. Without this check, Cape Breton's
+                            # Englishtown / Little Narrows ferries render
+                            # as roads running straight across open water.
+                            brunnel = (props.get("brunnel") or "").lower()
+                            if brunnel == "ferry":
                                 continue
 
                             # Drop airport / rail-yard subclasses that
@@ -752,20 +773,31 @@ def _choose_water_zoom(bbox: tuple[float, float, float, float]) -> int:
     looks crisp at z12, oversimplified at z10). We bias toward
     higher zoom now that MAX_WATER_TILES is 100; the old table was
     calibrated when coastlines didn't matter as much for wall-art.
+
+    For coastal maps (islands, peninsulas), the water polygon IS the
+    land silhouette — so under-sampling leaves the coast blocky and
+    mis-aligned with the higher-zoom street layer. The Cape Breton
+    Island render at z9 showed Bras d'Or inlets rendered as smooth
+    curves that didn't match the detailed street coastline; bumping
+    the `area > 1.0` bucket from z9 → z10 and `area > 0.1` from z11
+    → z11 (unchanged) keeps coastlines crisp while the auto-downgrade
+    loop below handles genuinely huge bboxes.
     """
     south, west, north, east = bbox
     area = (north - south) * (east - west)
 
-    if area > 1.0:
-        return 9   # Very large (full province / island) — was z10
+    if area > 5.0:
+        return 9   # Whole country / small continent
+    elif area > 1.0:
+        return 10  # Full province / large island (Cape Breton, PEI)
     elif area > 0.1:
-        return 11  # Large county / metro — was z10
+        return 11  # Large county / metro
     elif area > 0.01:
-        return 12  # Medium city / Halifax — was z11
+        return 12  # Medium city / Halifax
     elif area > 0.001:
-        return 13  # Small city — was z12
+        return 13  # Small city
     else:
-        return 14  # Neighborhood — was z13
+        return 14  # Neighborhood
 
 
 async def fetch_water_maptiler(
