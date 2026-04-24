@@ -265,8 +265,15 @@ def _auto_frame(
     if not streets_data:
         return center_lat, center_lng, _fallback_width()
 
-    # Collect length-weighted midpoints in Mercator.
-    samples_x: list[tuple[float, float]] = []  # (mercator_x, weight)
+    # Collect road-segment midpoints in Mercator. We weight each
+    # sample by COUNT (not segment length), so a single long highway
+    # doesn't dominate the distribution the way a dense residential
+    # grid should. For Baddeck NS, this is the difference between
+    # "village streets outweigh Cabot Trail" and "Cabot Trail alone
+    # decides the viewport." Length-weighting was originally used to
+    # down-emphasise tile-buffer stubs, but the stitch + orphan
+    # filters now take care of that upstream.
+    samples_x: list[tuple[float, float]] = []  # (mercator_x, weight=1)
     samples_y: list[tuple[float, float]] = []
     total_weight = 0.0
 
@@ -288,19 +295,21 @@ def _auto_frame(
                     continue
                 mid_x = (mx1 + mx2) * 0.5
                 mid_y = (my1 + my2) * 0.5
-                samples_x.append((mid_x, seg_len))
-                samples_y.append((mid_y, seg_len))
-                total_weight += seg_len
+                samples_x.append((mid_x, 1.0))
+                samples_y.append((mid_y, 1.0))
+                total_weight += 1.0
 
     if total_weight <= 0 or len(samples_x) < 20:
         return center_lat, center_lng, _fallback_width()
 
-    # Sparse-village override: fewer than 150 road segments usually
+    # Sparse-village override: fewer than 400 road segments usually
     # means a hamlet where percentile-based framing is fragile (one
     # long through-highway dominates the distribution). Force a tight
     # pin-centered viewport instead so the village always fills the
-    # frame regardless of how far the highway stretches.
-    if len(samples_x) < 150:
+    # frame regardless of how far the highway stretches. Baddeck
+    # (~40 streets) has ~250-350 segments after stitching; bumping
+    # the threshold from 150 catches communities of this scale.
+    if len(samples_x) < 400:
         # Use land bbox for the pin-containing piece if we have one,
         # else fall back to a fixed 4 km window.
         meters_wide = 4_000.0
