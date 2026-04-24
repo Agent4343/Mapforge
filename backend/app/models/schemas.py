@@ -3,7 +3,7 @@
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ProductType(str, Enum):
@@ -85,14 +85,13 @@ class AuthResponse(BaseModel):
 
 
 class UserProfile(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     email: str
     username: str
     tier: str
     generation_count_this_month: int
-
-    class Config:
-        from_attributes = True
 
 
 # --- Search ---
@@ -339,6 +338,8 @@ class MultiSizeExportResponse(BaseModel):
 # --- Template Library ---
 
 class LibraryFileResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     location_name: str
     display_text: str
@@ -355,9 +356,6 @@ class LibraryFileResponse(BaseModel):
     has_dxf: bool = False
     is_listed: bool = False
     created_at: str
-
-    class Config:
-        from_attributes = True
 
 
 class LibraryResponse(BaseModel):
@@ -385,6 +383,8 @@ class UpdateListingRequest(BaseModel):
 
 
 class ListingResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     file_id: str
     seller_username: str
@@ -402,9 +402,6 @@ class ListingResponse(BaseModel):
     board_height_mm: float
     province: Optional[str]
     created_at: str
-
-    class Config:
-        from_attributes = True
 
 
 class MarketplaceResponse(BaseModel):
