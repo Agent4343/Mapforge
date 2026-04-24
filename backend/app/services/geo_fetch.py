@@ -22,6 +22,40 @@ OVERPASS_HEADERS = {"User-Agent": "MapForgeCNC/1.0 (https://mapforge-production.
 OSM_TYPE_MAP = {"node": "N", "way": "W", "relation": "R"}
 
 
+async def fetch_geocode_record(
+    osm_id: int,
+    osm_type: str = "relation",
+) -> dict | None:
+    """Fetch the raw Nominatim lookup record for an OSM feature.
+
+    Returns the first result dict (with class, type, extratags,
+    boundingbox, display_name, importance, lat, lon) or None. Used
+    by the MapController to classify place type and plan the render
+    without re-geocoding. This function deliberately does NOT parse
+    the geometry — `fetch_geometry` handles that.
+    """
+    type_prefix = OSM_TYPE_MAP.get(osm_type, "R")
+    params = {
+        "osm_ids": f"{type_prefix}{osm_id}",
+        "format": "json",
+        "polygon_geojson": 0,  # no polygon — we just want metadata
+        "extratags": 1,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                NOMINATIM_LOOKUP_URL, params=params, headers=NOMINATIM_HEADERS,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except (httpx.HTTPError, httpx.ProxyError) as e:
+        log.warning(f"Nominatim metadata request failed for {osm_type}/{osm_id}: {e}")
+        return None
+    if not data:
+        return None
+    return data[0]
+
+
 async def fetch_geometry(
     osm_id: int,
     osm_type: str = "relation",

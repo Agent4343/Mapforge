@@ -35,31 +35,26 @@ MAP_RENDER_H = 2400
 # ── Color themes ───────────────────────────────────────────────────────
 POSTER_THEMES = {
     "city_art": {
-        # Mapiful-style mat + light-gray land backdrop so the white
-        # negative space between streets reads as city blocks and the
-        # black road lattice pops off the page.
-        "bg": (250, 250, 250), "map_bg": (238, 238, 238),
+        # Palette locked to the MapController spec:
+        #   water  = #A7C7E7 (muted blue)
+        #   land   = #F8F8F6 (off-white)
+        #   parks  = #E8EFE7 (very light green)
+        # Mat stays one shade lighter than land so the poster sits
+        # on a visible but subtle backdrop.
+        "bg": (252, 252, 251), "map_bg": (248, 248, 246),
         "title": (25, 25, 25), "subtitle": (100, 100, 100),
         "border": (200, 200, 200), "line": (180, 180, 180),
-        # Four-tier road hierarchy — motorway/trunk reads as near-black,
-        # primary/secondary a shade lighter, tertiary mid-gray, and
-        # residentials as hairline dark-gray texture. Together they
-        # reproduce the layered look that makes Mapiful posters
-        # instantly recognizable as a city.
+        # Four-tier road hierarchy per the spec: highways dark
+        # charcoal medium thickness, secondary grey thin, local
+        # very light grey. Matches Mapiful's weighting so arterials
+        # read as backbone and residentials as texture.
         "road_major": (20, 20, 20),    # motorway, trunk
         "road_arterial": (70, 70, 70), # primary, secondary
         "road_collector": (125, 125, 125),# tertiary
-        "road_minor": (180, 180, 180), # residential, service — hairline texture
-        # Soft slate-blue water — saturated enough to read as the
-        # strongest non-road anchor after the title, not the sky-
-        # coloured tint of the earlier palette. Target closer to
-        # Mapiful/Grafomap's tonal weight.
-        "map_mode": "light", "water": (143, 180, 204),
-        "water_edge": (90, 125, 155),
-        # Mapiful-style posters: parks are a subtle slightly-warmer
-        # gray patch under the road network. Just dark enough to
-        # read as "green space here" without breaking the b&w look.
-        "park": (224, 230, 220),
+        "road_minor": (180, 180, 180), # residential, service
+        "map_mode": "light", "water": (167, 199, 231),   # #A7C7E7
+        "water_edge": (110, 150, 190),
+        "park": (232, 239, 231),                         # #E8EFE7
     },
     "classic": {
         "bg": (250, 248, 244), "map_bg": (252, 250, 246),
@@ -1426,10 +1421,15 @@ def generate_road_poster(
     color_theme: str = "city_art",
     parks_data: dict | None = None,
     land_polygon=None,
+    fit_bounds_bbox: tuple[float, float, float, float] | None = None,
 ) -> bytes | None:
     """Full pipeline: render roads → compose poster → PNG bytes.
 
     No tile fetching, no label removal — just clean road geometry.
+
+    `fit_bounds_bbox` (west, south, east, north) overrides the
+    auto-framer when provided — used by the MapController for
+    islands / provinces whose iconic outline IS the product.
     """
     theme = POSTER_THEMES.get(color_theme, POSTER_THEMES["city_art"])
     log.info(f"Road poster: area={bbox_area:.4f} theme={color_theme} roads={bool(streets_data)}")
@@ -1445,20 +1445,44 @@ def generate_road_poster(
 
     # True pin location is the geocoded coordinate. The renderer's
     # auto-framer derives the actual viewport center + width from the
-    # fetched road network, so we no longer need per-city overrides:
-    # every location self-frames to its urban core.
+    # fetched road network for cities; islands / provinces with a
+    # fit_bounds_bbox skip the auto-framer entirely and use the
+    # geocoder bbox verbatim (with 12% padding).
     pin_lat, pin_lng = center_lat, center_lng
+
+    fit_center_lat = center_lat
+    fit_center_lng = center_lng
+    viewport_meters: int | None = None
+    auto_compose = True
+    if fit_bounds_bbox is not None:
+        import math
+        west, south, east, north = fit_bounds_bbox
+        fit_center_lat = (south + north) * 0.5
+        fit_center_lng = (west + east) * 0.5
+        # Convert the bbox width in degrees into metres at the
+        # centroid latitude, add 12% padding so the coastline has
+        # breathing room from the poster frame.
+        lon_span_deg = abs(east - west)
+        meters_per_deg_lon = 111_320.0 * math.cos(math.radians(fit_center_lat))
+        viewport_meters = int(lon_span_deg * meters_per_deg_lon * 1.12)
+        auto_compose = False
+        log.info(
+            f"fit_bounds: bbox {west:.3f},{south:.3f},{east:.3f},{north:.3f} "
+            f"-> centre=({fit_center_lat:.4f},{fit_center_lng:.4f}) "
+            f"viewport={viewport_meters/1000:.1f}km"
+        )
 
     map_img, pin_image_px = render_map_image(
         streets_data=streets_data,
         water_data=water_data,
-        center_lat=center_lat,
-        center_lng=center_lng,
+        center_lat=fit_center_lat,
+        center_lng=fit_center_lng,
         bbox_area=bbox_area,
         theme=theme,
         pin_lat=pin_lat,
         pin_lng=pin_lng,
-        auto_compose=True,
+        viewport_meters=viewport_meters,
+        auto_compose=auto_compose,
         parks_data=parks_data,
         land_polygon=land_polygon,
         # Mapiful-style posters frame the full rectangle — admin

@@ -228,6 +228,37 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             "The location may not have polygon data in OpenStreetMap.",
         )
 
+    # ── Map rendering controller (spec: validate, classify, plan) ─────
+    #
+    # Ask the controller to classify the place type and produce a
+    # deterministic render plan. This drives downstream decisions:
+    #   * use_fit_bounds=True  → islands / provinces render the
+    #     geocoder-returned bbox verbatim (no percentile framing)
+    #   * use_fit_bounds=False → cities / towns center-zoom on the
+    #     geocode point (auto-framer keeps working)
+    # Plan status surfaces as a structured error rather than silent
+    # fallbacks.
+    from app.services.geo_fetch import fetch_geocode_record
+    from app.services.map_controller import plan_render
+    geocode_record = await fetch_geocode_record(req.osm_id, req.osm_type)
+    map_plan = plan_render(
+        user_input=req.text or str(req.osm_id),
+        geocode=geocode_record,
+    )
+    if map_plan.status == "INVALID_MAP_RENDER":
+        raise HTTPException(
+            status_code=422,
+            detail=f"Could not validate location '{req.text}'. "
+            "Please pick a different result from the search suggestions.",
+        )
+    if map_plan.status == "AMBIGUOUS_LOCATION":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Location '{req.text}' matched multiple places of "
+            "similar confidence. Please refine your search (add a province / state).",
+        )
+    log.info("MapController plan: %s", map_plan.to_dict())
+
     # Process geometry
     try:
         processed = process_geometry(
@@ -615,6 +646,9 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                     color_theme=req.color_theme,
                     parks_data=parks_data,
                     land_polygon=geom,
+                    fit_bounds_bbox=(
+                        map_plan.bbox if map_plan.use_fit_bounds else None
+                    ),
                 )
                 if poster_bytes:
                     b64 = base64.b64encode(poster_bytes).decode("ascii")
@@ -756,6 +790,9 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                         color_theme=req.color_theme,
                         parks_data=parks_data,
                         land_polygon=geom,
+                        fit_bounds_bbox=(
+                            map_plan.bbox if map_plan.use_fit_bounds else None
+                        ),
                     )
                 except Exception as e:
                     log.warning(f"Road poster for print failed (non-fatal): {e}")
