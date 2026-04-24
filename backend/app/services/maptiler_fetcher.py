@@ -43,12 +43,19 @@ _MAPTILER_ROAD_MAP = {
     "secondary": "secondary",
     "tertiary": "tertiary",
     "minor": "residential",
-    # service + track clutter the downtown core with driveways,
-    # parking aisles, and unpaved access lanes without adding
-    # structural character to the poster. Drop them like the
-    # rail / aerialway classes.
-    "service": None,
-    "track": None,
+    # Keep service roads. Many small rural villages (Baddeck NS,
+    # Little Narrows, Mabou, etc.) have their village streets
+    # tagged as "service" in OSM — e.g., private drives, alley-
+    # style lanes, and short connector roads. Dropping them
+    # entirely renders those villages as near-empty. The subclass
+    # filter below still drops airport taxiways, rail sidings, and
+    # parking aisles.
+    "service": "service",
+    # Track: unpaved rural lanes — often the only road in a
+    # homestead / cottage area. Keep them; they add village
+    # character and the subclass filter strips the worst offenders.
+    "track": "track",
+    # Paths / pedestrian-only routes stay dropped — too noisy.
     "path": None,
     "raceway": None,
     "ferry": None,
