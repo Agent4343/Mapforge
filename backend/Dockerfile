@@ -6,6 +6,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgeos-dev \
     libproj-dev \
     build-essential \
+    fonts-dejavu-core \
+    fonts-liberation \
+    fonts-freefont-ttf \
+    fonts-urw-base35 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
@@ -15,4 +19,4 @@ COPY . .
 
 EXPOSE 8000
 
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
+CMD ["python", "start.py"]

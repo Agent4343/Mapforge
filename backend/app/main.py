@@ -10,16 +10,17 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database import init_db
+from app.database import get_db, init_db
 from app.logging_config import log
 from app.routers import admin, auth, etsy, generate, library, marketplace, orders, search, webhooks
 
@@ -123,11 +124,23 @@ app.include_router(webhooks.router)
 
 
 @app.get("/api/v1/config")
-async def get_public_config():
-    """Public config for the frontend (no auth required)."""
+async def get_public_config(db: AsyncSession = Depends(get_db)):
+    """Public config for the frontend (no auth required).
+
+    Exposes the MapTiler API key to the browser because MapLibre GL
+    JS needs it to fetch vector tiles directly. Lock the key's
+    referer / origin list at MapTiler so it only works from your
+    production domain. Never reuse this key server-side.
+    """
     from app.config import settings
+    from app.services.app_settings import get_maptiler_key
+    try:
+        maptiler_key = await get_maptiler_key(db)
+    except Exception:
+        maptiler_key = ""
     return {
         "etsy_shop_url": settings.ETSY_SHOP_URL or None,
+        "maptiler_key": maptiler_key or None,
     }
 
 

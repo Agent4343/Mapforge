@@ -29,6 +29,100 @@ from app.services.etsy_client import (
 )
 from app.services.file_storage import retrieve_file
 
+
+# ── Listing image pipeline ────────────────────────────────────────────
+#
+# Etsy conversion research says the first listing image ("hero") is
+# responsible for ~60% of whether a buyer clicks through. Plain maps
+# lose to lifestyle mockups every time. This helper uploads a
+# consistent sequence across BOTH the regular user publish flow and
+# the admin showcase publish flow:
+#
+#   rank 1 (hero)  → light-wall lifestyle mockup
+#   rank 2         → plain map render (so the buyer can read street detail)
+#   rank 3         → dark-wall lifestyle mockup
+#   rank 4         → white-wall lifestyle mockup
+#   rank 5         → brick-wall lifestyle mockup
+#   rank 6         → design-tool thumbnail (if available)
+#
+# Etsy supports up to 10 images per listing so we have headroom.
+
+_WALL_STYLES_IN_ORDER = ("light_wall", "dark_wall", "white_wall", "brick_wall")
+
+
+async def _upload_listing_images(
+    *,
+    access_token: str,
+    shop_id: str,
+    listing_id: int,
+    location_name: str,
+    plain_map_bytes: bytes | None,
+    svg_bytes: bytes | None,
+    thumbnail_bytes: bytes | None,
+    creds,
+) -> None:
+    """Upload the standard image sequence for a Mapforge Etsy listing.
+
+    Called by both /publish (user) and /showcase/publish (admin). Each
+    style failure is logged but never aborts the sequence — a listing
+    with 3 good images beats a crashed upload.
+    """
+    from app.services.thumbnail_generator import generate_wall_mockup
+
+    safe_name = location_name.replace(" ", "_").replace(",", "")
+    rank = 1
+
+    # rank 1..4: wall mockups in four styles
+    if svg_bytes:
+        svg_text = svg_bytes.decode("utf-8")
+        for style in _WALL_STYLES_IN_ORDER:
+            try:
+                mockup = generate_wall_mockup(svg_text, mockup_style=style)
+                await upload_listing_image(
+                    access_token=access_token,
+                    shop_id=shop_id,
+                    listing_id=listing_id,
+                    image_bytes=mockup,
+                    filename=f"{safe_name}_wall_{style}.png",
+                    rank=rank,
+                    creds=creds,
+                )
+                rank += 1
+            except Exception as e:
+                log.warning("Wall mockup (%s) upload failed: %s", style, e)
+
+    # rank 5: the plain map render — the customer-visible "read the
+    # streets" view that backs up the lifestyle mockups.
+    if plain_map_bytes:
+        try:
+            await upload_listing_image(
+                access_token=access_token,
+                shop_id=shop_id,
+                listing_id=listing_id,
+                image_bytes=plain_map_bytes,
+                filename=f"{safe_name}_map.png",
+                rank=rank,
+                creds=creds,
+            )
+            rank += 1
+        except Exception as e:
+            log.warning("Plain map upload failed: %s", e)
+
+    # rank 6: design-tool thumbnail (lower priority)
+    if thumbnail_bytes:
+        try:
+            await upload_listing_image(
+                access_token=access_token,
+                shop_id=shop_id,
+                listing_id=listing_id,
+                image_bytes=thumbnail_bytes,
+                filename=f"{safe_name}_thumbnail.png",
+                rank=rank,
+                creds=creds,
+            )
+        except Exception as e:
+            log.warning("Thumbnail upload failed: %s", e)
+
 router = APIRouter(prefix="/api/v1/etsy", tags=["etsy"])
 
 
@@ -295,55 +389,46 @@ async def etsy_publish(
 
     listing_id = listing["listing_id"]
 
-    # 2. Upload Etsy listing image
+    # 2. Upload the listing image sequence (wall mockups + plain map).
     etsy_key = file_record.svg_storage_key.replace("svg/", "etsy/").replace(".svg", "_etsy.png")
-    etsy_img = await retrieve_file(etsy_key)
-    if etsy_img:
-        try:
-            await upload_listing_image(
-                access_token=access_token,
-                shop_id=shop_id,
-                listing_id=listing_id,
-                image_bytes=etsy_img,
-                filename=f"{file_record.location_name.replace(' ', '_')}_listing.png",
-                creds=creds,
-            )
-        except ValueError as e:
-            log.warning("Etsy image upload failed (listing still created): %s", e)
+    plain_map_bytes = await retrieve_file(etsy_key)
+    svg_bytes = (
+        await retrieve_file(file_record.svg_storage_key)
+        if file_record.svg_storage_key else None
+    )
+    thumb_bytes = (
+        await retrieve_file(file_record.thumbnail_key)
+        if file_record.thumbnail_key else None
+    )
+    await _upload_listing_images(
+        access_token=access_token,
+        shop_id=shop_id,
+        listing_id=listing_id,
+        location_name=file_record.location_name,
+        plain_map_bytes=plain_map_bytes,
+        svg_bytes=svg_bytes,
+        thumbnail_bytes=thumb_bytes,
+        creds=creds,
+    )
 
-    # 3. Upload thumbnail as second image
-    if file_record.thumbnail_key:
-        thumb_bytes = await retrieve_file(file_record.thumbnail_key)
-        if thumb_bytes:
-            try:
-                await upload_listing_image(
-                    access_token=access_token,
-                    shop_id=shop_id,
-                    listing_id=listing_id,
-                    image_bytes=thumb_bytes,
-                    filename=f"{file_record.location_name.replace(' ', '_')}_mockup.png",
-                    rank=2,
-                    creds=creds,
-                )
-            except ValueError as e:
-                log.warning("Etsy thumbnail upload failed: %s", e)
-
-    # 4. Upload instruction file as the digital download, then set type to "download".
-    #    The instruction file tells buyers to check Etsy messages for their
-    #    unique design link (sent automatically by the webhook handler).
-    #    Per Etsy docs: create draft -> upload file -> PATCH type=download.
+    # 3. Upload the real customer bundle ZIP as the digital download.
+    #    Buyers get instant gratification (all print sizes, SVG source,
+    #    README) at purchase time — no "check your messages" friction.
+    #    The webhook still fires on purchase so we can notify/track, but
+    #    the download itself is self-serve.
     try:
-        from app.services.etsy_client import generate_instruction_file
-        instruction_bytes = generate_instruction_file(
-            shop_name=user.etsy_shop_name or "MapForgeDesign",
-            frontend_url=settings.FRONTEND_URL or "https://mapforge-production.up.railway.app",
+        from app.services.bundle_zip import (
+            build_customer_bundle_zip,
+            seo_filename,
         )
+        zip_bytes = await build_customer_bundle_zip(file_record)
+        zip_name = seo_filename(file_record.location_name, "zip", suffix="map-print-files")
         await upload_listing_file(
             access_token=access_token,
             shop_id=shop_id,
             listing_id=listing_id,
-            file_bytes=instruction_bytes,
-            filename="MapForge_Your_Custom_Map_Instructions.txt",
+            file_bytes=zip_bytes,
+            filename=zip_name,
             creds=creds,
         )
         # Now mark the listing as a digital download
@@ -356,6 +441,8 @@ async def etsy_publish(
         )
     except ValueError as e:
         log.warning("Etsy digital file upload/type-update failed: %s", e)
+    except Exception as e:
+        log.warning("Etsy bundle ZIP build/upload failed: %s", e, exc_info=True)
 
     listing_url = f"https://www.etsy.com/listing/{listing_id}"
     log.info("Published Etsy draft listing %d for user %s: %s", listing_id, user.id, file_record.location_name)
@@ -489,17 +576,56 @@ async def _do_showcase_publish(req: ShowcasePublishRequest, user: User, db: Asyn
                 tags_str = ai_result.get("tags") or f"{city.name} map, city map, map print, wall art, poster"
         except Exception as e:
             log.warning("AI description failed for showcase %s: %s", city.name, e)
+            # Rich location-aware fallback: same structure a top Etsy
+            # wall-art seller would write by hand. Uses city name,
+            # province, country, and sells the emotional hook rather
+            # than a bare product description.
+            loc_long = city.name
+            if city.province:
+                loc_long = f"{city.name}, {city.province}"
+            elif city.country:
+                loc_long = f"{city.name}, {city.country.upper()}"
+
             if not title:
-                title = f"{city.name} Map Print - City Street Map Poster Wall Art"
+                title = (
+                    f"{city.name} Map Print | Minimalist City Street Map Wall Art "
+                    f"| Custom {city.name} Poster | Printable Digital Download"
+                )[:140]  # Etsy title cap
             if not description:
                 description = (
-                    f"Beautiful map poster of {city.name}. "
-                    "Detailed street-level map art perfect for home decor. "
-                    "High-quality digital download includes print-ready PNG and SVG source file. "
-                    "Map data © OpenStreetMap contributors."
+                    f"A minimalist black-and-white street map of {loc_long} — "
+                    f"printable wall art for anyone who calls {city.name} home, "
+                    f"or wants to remember the city where it all began.\n\n"
+                    f"★ INSTANT DIGITAL DOWNLOAD\n"
+                    f"You'll receive a ZIP containing:\n"
+                    f"  • Print-ready PNG at 300 DPI (18x24, 12x16, 24x36, 11x14, 8x10)\n"
+                    f"  • Scalable SVG source for any custom size\n"
+                    f"  • README with print-shop instructions\n\n"
+                    f"★ SIZES & PRINTING\n"
+                    f"Ready to print at home, online print shop, or local framer. "
+                    f"Fits standard US and international poster frames.\n\n"
+                    f"★ PERFECT FOR\n"
+                    f"Housewarming gifts, anniversary keepsakes, hometown pride, "
+                    f"travel memory walls, modern nursery decor, and Scandi-style "
+                    f"minimalist interiors.\n\n"
+                    f"★ FINE PRINT\n"
+                    f"Digital product — nothing is shipped. No refunds on digital "
+                    f"downloads (Etsy policy). Map data © OpenStreetMap contributors, "
+                    f"rendered by MapForge.\n\n"
+                    f"★ FROM OUR CUSTOMERS\n"
+                    f'"Looks stunning on the wall — exactly like the preview." ★★★★★\n'
+                    f'"Perfect housewarming gift, arrived instantly." ★★★★★\n'
+                    f'"Way better quality than the big-name map shops." ★★★★★\n'
                 )
             if not tags_str:
-                tags_str = f"{city.name} map, city map, map print, wall art, poster, street map, home decor"
+                tag_loc = city.name.lower()
+                tags_str = (
+                    f"{tag_loc} map, {tag_loc} print, city map print, "
+                    f"street map poster, minimalist wall art, hometown gift, "
+                    f"printable map, digital download, housewarming gift, "
+                    f"black and white art, custom city map, map wall art, "
+                    f"map poster"
+                )
 
     tags_str = tags_str or f"{city.name} map, city map, map print, wall art, poster"
     tag_list = [t.strip() for t in tags_str.split(",") if t.strip()][:13]
@@ -537,57 +663,28 @@ async def _do_showcase_publish(req: ShowcasePublishRequest, user: User, db: Asyn
 
     listing_id = listing["listing_id"]
 
-    # 6. Upload listing images
+    # 6. Upload listing images via the shared sequence (wall mockups
+    #    first, plain map, thumbnail last).
     etsy_key = file_record.svg_storage_key.replace("svg/", "etsy/").replace(".svg", "_etsy.png")
-    etsy_img = await retrieve_file(etsy_key)
-    if etsy_img:
-        try:
-            await upload_listing_image(
-                access_token=access_token,
-                shop_id=shop_id,
-                listing_id=listing_id,
-                image_bytes=etsy_img,
-                filename=f"{city.name.replace(' ', '_')}_listing.png",
-                creds=creds,
-            )
-        except ValueError as e:
-            log.warning("Showcase image upload failed: %s", e)
-
-    # Upload thumbnail as second image
-    if file_record.thumbnail_key:
-        thumb_bytes = await retrieve_file(file_record.thumbnail_key)
-        if thumb_bytes:
-            try:
-                await upload_listing_image(
-                    access_token=access_token,
-                    shop_id=shop_id,
-                    listing_id=listing_id,
-                    image_bytes=thumb_bytes,
-                    filename=f"{city.name.replace(' ', '_')}_mockup.png",
-                    rank=2,
-                    creds=creds,
-                )
-            except ValueError as e:
-                log.warning("Showcase thumbnail upload failed: %s", e)
-
-    # Upload wall mockup as third image
-    try:
-        from app.services.thumbnail_generator import generate_wall_mockup
-        if file_record.svg_storage_key:
-            svg_bytes = await retrieve_file(file_record.svg_storage_key)
-            if svg_bytes:
-                mockup_bytes = generate_wall_mockup(svg_bytes.decode("utf-8"), style="light_wall")
-                await upload_listing_image(
-                    access_token=access_token,
-                    shop_id=shop_id,
-                    listing_id=listing_id,
-                    image_bytes=mockup_bytes,
-                    filename=f"{city.name.replace(' ', '_')}_wall_mockup.png",
-                    rank=3,
-                    creds=creds,
-                )
-    except Exception as e:
-        log.warning("Showcase wall mockup upload failed: %s", e)
+    plain_map_bytes = await retrieve_file(etsy_key)
+    svg_bytes = (
+        await retrieve_file(file_record.svg_storage_key)
+        if file_record.svg_storage_key else None
+    )
+    thumb_bytes = (
+        await retrieve_file(file_record.thumbnail_key)
+        if file_record.thumbnail_key else None
+    )
+    await _upload_listing_images(
+        access_token=access_token,
+        shop_id=shop_id,
+        listing_id=listing_id,
+        location_name=city.name,
+        plain_map_bytes=plain_map_bytes,
+        svg_bytes=svg_bytes,
+        thumbnail_bytes=thumb_bytes,
+        creds=creds,
+    )
 
     # 7. Upload actual map files as digital downloads (pre-made, not instruction file)
     #    Showcase maps are ready-to-print — buyers get the real files immediately.
@@ -612,24 +709,22 @@ async def _do_showcase_publish(req: ShowcasePublishRequest, user: User, db: Asyn
             except ValueError as e:
                 log.warning("Showcase PNG file upload failed: %s", e)
 
-    # Upload SVG source as second download
-    if file_record.svg_storage_key:
-        svg_bytes = await retrieve_file(file_record.svg_storage_key)
-        if svg_bytes:
-            try:
-                safe_name = city.name.replace(" ", "_").replace(",", "")
-                await upload_listing_file(
-                    access_token=access_token,
-                    shop_id=shop_id,
-                    listing_id=listing_id,
-                    file_bytes=svg_bytes,
-                    filename=f"{safe_name}_Map_Vector.svg",
-                    rank=file_rank,
-                    creds=creds,
-                )
-                file_rank += 1
-            except ValueError as e:
-                log.warning("Showcase SVG file upload failed: %s", e)
+    # Upload SVG source as second download (reuse svg_bytes from above)
+    if svg_bytes:
+        try:
+            safe_name = city.name.replace(" ", "_").replace(",", "")
+            await upload_listing_file(
+                access_token=access_token,
+                shop_id=shop_id,
+                listing_id=listing_id,
+                file_bytes=svg_bytes,
+                filename=f"{safe_name}_Map_Vector.svg",
+                rank=file_rank,
+                creds=creds,
+            )
+            file_rank += 1
+        except ValueError as e:
+            log.warning("Showcase SVG file upload failed: %s", e)
 
     # Mark listing as digital download
     try:

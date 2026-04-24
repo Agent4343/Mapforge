@@ -16,8 +16,8 @@ from app.logging_config import log
 
 # Poster layout
 MAT_PCT = 0.03        # Outer mat border
-MAP_AREA_PCT = 0.72   # Map takes 72% of poster height
-TEXT_AREA_PCT = 0.28   # Text/title takes 28%
+MAP_AREA_PCT = 0.80   # Map takes 80% of poster height (Mapiful-style)
+TEXT_AREA_PCT = 0.20  # Text/title takes 20%
 
 # Poster sizes at 300 DPI
 POSTER_SIZES = {
@@ -35,20 +35,26 @@ MAP_RENDER_H = 2400
 # ── Color themes ───────────────────────────────────────────────────────
 POSTER_THEMES = {
     "city_art": {
-        "bg": (245, 245, 245), "map_bg": (255, 255, 255),
+        # Palette locked to the MapController spec:
+        #   water  = #A7C7E7 (muted blue)
+        #   land   = #F8F8F6 (off-white)
+        #   parks  = #E8EFE7 (very light green)
+        # Mat stays one shade lighter than land so the poster sits
+        # on a visible but subtle backdrop.
+        "bg": (252, 252, 251), "map_bg": (248, 248, 246),
         "title": (25, 25, 25), "subtitle": (100, 100, 100),
         "border": (200, 200, 200), "line": (180, 180, 180),
-        # Premium wall-art hierarchy: near-black major, light-grey
-        # minor. The 15/190 gap is intentional — roads should read as
-        # two clear tiers, not a single medium-grey mesh.
-        "road_major": (15, 15, 15), "road_minor": (190, 190, 190),
-        # Water reads as the main non-road feature against white.
-        # Slightly darker edge keeps rivers and coastlines crisp.
-        "map_mode": "light", "water": (188, 208, 226),
-        "water_edge": (110, 140, 170),
-        # Parks are intentionally not rendered (see render_map_image).
-        # Keeping the key here for other themes to reference.
-        "park": None,
+        # Four-tier road hierarchy per the spec: highways dark
+        # charcoal medium thickness, secondary grey thin, local
+        # very light grey. Matches Mapiful's weighting so arterials
+        # read as backbone and residentials as texture.
+        "road_major": (20, 20, 20),    # motorway, trunk
+        "road_arterial": (70, 70, 70), # primary, secondary
+        "road_collector": (125, 125, 125),# tertiary
+        "road_minor": (180, 180, 180), # residential, service
+        "map_mode": "light", "water": (167, 199, 231),   # #A7C7E7
+        "water_edge": (110, 150, 190),
+        "park": (232, 239, 231),                         # #E8EFE7
     },
     "classic": {
         "bg": (250, 248, 244), "map_bg": (252, 250, 246),
@@ -209,35 +215,63 @@ def _ring_signed_area(coords: list[tuple[float, float]]) -> float:
     return a * 0.5
 
 
-def _auto_compose_center(
-    center_lat: float, center_lng: float,
+def _auto_frame(
     streets_data: dict | None,
-    meters_wide: float, meters_high: float,
-) -> tuple[float, float]:
-    """Universal visual centering: shift the viewport toward the road
-    network centroid when the geographic center sits over empty space
-    (ocean, lake, undeveloped land).
+    center_lat: float,
+    center_lng: float,
+    img_aspect: float,
+    bbox_area: float,
+    land_polygon=None,
+) -> tuple[float, float, float]:
+    """Derive viewport center + width from the fetched road network.
 
-    The pin still draws at its true location — only the viewport moves.
-    Replaces the hand-curated _CENTER_OVERRIDES table with a method
-    that works for any coastal/island/peninsular city automatically.
+    Replaces the bbox-area ladder + per-city viewport overrides with
+    geometry: whatever urban area a buyer typed in, frame *that area*.
+    Works identically for a dense inland metro, a peninsular downtown,
+    or an island city — no hand-tuning required.
+
+    Strategy:
+      1. Length-weighted road-segment midpoints give us a dense
+         distribution of "where the city actually is." Highways get
+         down-weighted by per-segment length, residential grids up-
+         weight naturally because they have many short segments.
+      2. Length-weighted median → robust urban centroid. Unlike mean,
+         the median ignores long outliers (the Trans-Canada extending
+         40 km past the city, a lone rural highway, etc).
+      3. Length-weighted 5th/95th percentile on each axis → urban
+         bounding box that ignores ~10% outliers. This is the frame.
+      4. Pad by 12%, enforce sane floors and caps, and match the
+         canvas aspect ratio so the city doesn't get squished.
+
+    Returns (center_lat, center_lng, meters_wide). When no road data
+    is available we fall back to a bbox-area heuristic so province /
+    country shapes still render, and the admin center stays put.
     """
+    # Area-based fallback for empty / province-scale fetches.
+    def _fallback_width() -> float:
+        if bbox_area > 2.0:      return 180_000.0
+        if bbox_area > 0.5:      return 80_000.0
+        if bbox_area > 0.1:      return 40_000.0
+        if bbox_area > 0.03:     return 25_000.0
+        if bbox_area > 0.005:    return 15_000.0
+        if bbox_area > 0.001:    return 8_000.0
+        return 12_000.0
+
     if not streets_data:
-        return center_lat, center_lng
+        return center_lat, center_lng, _fallback_width()
 
-    # Compute road-network centroid in Mercator space, weighted by
-    # segment length so a few long highways don't dominate over a
-    # dense urban grid.
-    cx0, cy0 = _to_mercator(center_lat, center_lng)
-    half_w = meters_wide / 2
-    half_h = meters_high / 2
-    sum_x, sum_y, sum_w = 0.0, 0.0, 0.0
+    # Collect road-segment midpoints in Mercator. We weight each
+    # sample by COUNT (not segment length), so a single long highway
+    # doesn't dominate the distribution the way a dense residential
+    # grid should. For Baddeck NS, this is the difference between
+    # "village streets outweigh Cabot Trail" and "Cabot Trail alone
+    # decides the viewport." Length-weighting was originally used to
+    # down-emphasise tile-buffer stubs, but the stitch + orphan
+    # filters now take care of that upstream.
+    samples_x: list[tuple[float, float]] = []  # (mercator_x, weight=1)
+    samples_y: list[tuple[float, float]] = []
+    total_weight = 0.0
 
-    # Only consider roads inside the candidate viewport itself (not 1.5×).
-    # Including segments that fan out beyond the viewport biases the
-    # centroid toward whatever lies past the frame — for Sydney's CBRM
-    # admin polygon that's the highway 125 ring across all of east
-    # Cape Breton, which would drag the center off downtown.
     for road_list in (
         streets_data.get("major_roads", []),
         streets_data.get("minor_roads", []),
@@ -251,141 +285,195 @@ def _auto_compose_center(
                 lon2, lat2 = coords[i]
                 mx1, my1 = _to_mercator(lat1, lon1)
                 mx2, my2 = _to_mercator(lat2, lon2)
-                if (abs(mx1 - cx0) > half_w or
-                        abs(my1 - cy0) > half_h):
-                    continue
                 seg_len = math.hypot(mx2 - mx1, my2 - my1)
                 if seg_len <= 0:
                     continue
                 mid_x = (mx1 + mx2) * 0.5
                 mid_y = (my1 + my2) * 0.5
-                sum_x += mid_x * seg_len
-                sum_y += mid_y * seg_len
-                sum_w += seg_len
+                samples_x.append((mid_x, 1.0))
+                samples_y.append((mid_y, 1.0))
+                total_weight += 1.0
 
-    if sum_w <= 0:
-        return center_lat, center_lng
+    if total_weight <= 0 or len(samples_x) < 20:
+        return center_lat, center_lng, _fallback_width()
 
-    centroid_x = sum_x / sum_w
-    centroid_y = sum_y / sum_w
+    # HARD RULE for tiny communities: bbox_area < 0.01 deg² = a
+    # hamlet or village admin polygon. No matter how many roads get
+    # fetched (z14 in an 8 km window can easily hit 1000+), the
+    # USER-VISIBLE target is the village, not everything that
+    # happened to fit in the fetch window. Force a 3 km viewport
+    # centered on the geocoded pin. Predictable, no heuristics.
+    if bbox_area < 0.01:
+        log.info(
+            f"Auto-frame: community override "
+            f"(bbox_area={bbox_area:.4f} deg²) -> 3.0km @ pin"
+        )
+        return center_lat, center_lng, 3_000.0
 
-    # Distance from geographic center to road centroid, normalised by
-    # viewport half-extent. Below 15% = already well centered; above,
-    # nudge gently toward the road centroid.
-    dx_norm = (centroid_x - cx0) / half_w
-    dy_norm = (centroid_y - cy0) / half_h
-    drift = math.hypot(dx_norm, dy_norm)
-    if drift < 0.15:
-        return center_lat, center_lng
+    # Compute the land-polygon span upfront so we can compare it to
+    # the road-network span for the "highway through a hamlet"
+    # detector below.
+    land_w = land_h = 0.0
+    if land_polygon is not None:
+        try:
+            lb = land_polygon.bounds
+            lx_min, ly_min = _to_mercator(lb[1], lb[0])
+            lx_max, ly_max = _to_mercator(lb[3], lb[2])
+            land_w = lx_max - lx_min
+            land_h = ly_max - ly_min
+        except Exception:
+            pass
 
-    # Subtle shift only — 35% of the way (was 60%), capped at 15% of
-    # viewport (was 35%). The auto-compose is a polish, not a relocation.
-    shift = 0.35
-    cap = 0.15
-    shift_x = max(-cap, min(cap, dx_norm * shift))
-    shift_y = max(-cap, min(cap, dy_norm * shift))
+    # Rough road-network span (cheap, no sort needed).
+    xs = [s[0] for s in samples_x]
+    ys = [s[0] for s in samples_y]
+    road_w = max(xs) - min(xs)
+    road_h = max(ys) - min(ys)
 
-    new_cx = cx0 + shift_x * half_w
-    new_cy = cy0 + shift_y * half_h
+    land_span = max(land_w, land_h)
+    road_span = max(road_w, road_h)
 
-    # Inverse Mercator
-    new_lng = new_cx / 20037508.34 * 180.0
-    new_lat = math.atan(math.sinh(new_cy * math.pi / 20037508.34))
-    new_lat = math.degrees(new_lat)
+    # Sparse-village override: triggered when EITHER
+    #   (a) fewer than 400 road segments were fetched, OR
+    #   (b) the road bbox is more than 3× the land bbox — the
+    #       "highway-through-hamlet" pattern where OSM's admin polygon
+    #       for the village is tiny but a through-highway extends km
+    #       past it. Baddeck's 300m polygon with Cabot Trail running
+    #       east-west across 8km is the canonical case.
+    highway_through_hamlet = (
+        land_span > 0 and road_span > land_span * 3.0
+    )
+    if len(samples_x) < 400 or highway_through_hamlet:
+        # Viewport for the village: land bbox × 1.4 padding, clamped
+        # to 3-8 km so we never render a frame so tight that a single
+        # street dominates, nor so wide that the village gets lost.
+        meters_wide = 4_000.0
+        if land_span > 0:
+            meters_wide = min(8_000.0, land_span * 1.4)
+            meters_wide = max(3_000.0, meters_wide)
+        reason = (
+            f"{len(samples_x)} segments"
+            + (", highway-through-hamlet" if highway_through_hamlet else "")
+        )
+        log.info(
+            f"Auto-frame: sparse-village override "
+            f"({reason}) -> {meters_wide/1000:.1f}km"
+        )
+        return center_lat, center_lng, meters_wide
+
+    def _weighted_percentile(samples: list[tuple[float, float]], pct: float) -> float:
+        samples.sort(key=lambda s: s[0])
+        target = total_weight * pct
+        running = 0.0
+        for v, w in samples:
+            running += w
+            if running >= target:
+                return v
+        return samples[-1][0]
+
+    # Scale-adaptive percentile window.
+    #   bbox < 0.05 deg²   → 20/80 (village / small town — tight
+    #                        focus on urban core, drop highway tails)
+    #   0.05-0.5 deg²      → 10/90 (city — moderate outlier trim)
+    #   > 0.5 deg²         → 0/100 (region / island / province — no
+    #                        trimming; the whole island outline is
+    #                        the product, cropping any of it destroys
+    #                        the poster's identity)
+    if bbox_area < 0.05:
+        pct_lo, pct_hi = 0.20, 0.80
+        pad = 1.12
+    elif bbox_area < 0.5:
+        pct_lo, pct_hi = 0.10, 0.90
+        pad = 1.12
+    else:
+        pct_lo, pct_hi = 0.00, 1.00
+        pad = 1.25  # extra headroom so coastline doesn't touch frame
+
+    cx = _weighted_percentile(samples_x, 0.50)
+    cy = _weighted_percentile(samples_y, 0.50)
+    x05 = _weighted_percentile(samples_x, pct_lo) if pct_lo > 0 else min(s[0] for s in samples_x)
+    x95 = _weighted_percentile(samples_x, pct_hi) if pct_hi < 1.0 else max(s[0] for s in samples_x)
+    y05 = _weighted_percentile(samples_y, pct_lo) if pct_lo > 0 else min(s[0] for s in samples_y)
+    y95 = _weighted_percentile(samples_y, pct_hi) if pct_hi < 1.0 else max(s[0] for s in samples_y)
+
+    # Make the viewport symmetric around the centroid so the city
+    # stays centered instead of drifting toward whichever side has
+    # more road. Use the larger half-extent on each axis.
+    half_span_x = max(cx - x05, x95 - cx)
+    half_span_y = max(cy - y05, y95 - cy)
+
+    # Padding was set per-tier above (1.12 for city/village, 1.25
+    # for region/island). Applied here to the symmetric half-extents.
+    needed_w = 2 * half_span_x * pad
+    needed_h = 2 * half_span_y * pad
+
+    # Coastal-village clamp: cap the viewport at 1.5× the land bbox.
+    # Without this, a coastal hamlet whose Trans-Canada highway runs
+    # over long bridges produces a road bbox far wider than the actual
+    # land mass — the auto-framer then renders mostly water with the
+    # village as a tiny island (Baddeck NS, Iona, Whycocomagh). The
+    # 1.5× factor still allows water context around the land but
+    # prevents the village from being lost in the frame.
+    if land_polygon is not None:
+        try:
+            land_bounds = land_polygon.bounds  # (minx, miny, maxx, maxy)
+            lx_min, ly_min = _to_mercator(land_bounds[1], land_bounds[0])
+            lx_max, ly_max = _to_mercator(land_bounds[3], land_bounds[2])
+            land_w = (lx_max - lx_min) * 1.5
+            land_h = (ly_max - ly_min) * 1.5
+            if land_w > 0 and needed_w > land_w:
+                needed_w = land_w
+            if land_h > 0 and needed_h > land_h:
+                needed_h = land_h
+            # Recenter on land centroid since the road bbox might have
+            # pulled the centroid out over water.
+            land_cx = (lx_min + lx_max) * 0.5
+            land_cy = (ly_min + ly_max) * 0.5
+            cx = (cx + land_cx) * 0.5
+            cy = (cy + land_cy) * 0.5
+            log.info(
+                f"Auto-frame: land bbox clamp "
+                f"{land_w/1.5/1000:.1f}x{land_h/1.5/1000:.1f}km "
+                f"-> viewport limited to 1.5× land"
+            )
+        except Exception as e:
+            log.warning(f"Land-bbox clamp skipped: {e}")
+
+    # Fit to canvas aspect: take the larger of (width to contain x-span,
+    # width to contain y-span at canvas aspect).
+    w_for_x = needed_w
+    w_for_y = needed_h / img_aspect if img_aspect > 0 else needed_w
+    meters_wide = max(w_for_x, w_for_y)
+
+    # Sane floors and caps so tiny neighbourhoods don't render at
+    # 400m and entire provinces don't try to fit in 20km. 3km floor
+    # (was 5km) so villages that survive into the percentile path
+    # still frame their urban core tightly.
+    # Sane floor (no poster smaller than 3 km) and a tier-aware cap
+    # so a region/island doesn't get clipped into 200 km when the
+    # island itself is 240 km long. Cape Breton (land_span 240 km,
+    # road_span 274 km) was being truncated to 200 km by a fixed
+    # cap, losing the Highlands tip and Isle Madame.
+    if bbox_area > 0.5:
+        hard_cap = 500_000.0  # region / island / small province
+    elif bbox_area > 0.05:
+        hard_cap = 200_000.0  # city
+    else:
+        hard_cap = 60_000.0   # village / hamlet — stays tight
+    meters_wide = max(3_000.0, min(hard_cap, meters_wide))
+
+    # Inverse Mercator on the centroid gives us the new center.
+    new_lng = cx / 20037508.34 * 180.0
+    new_lat = math.degrees(math.atan(math.sinh(cy * math.pi / 20037508.34)))
 
     log.info(
-        f"Auto-compose: road centroid drift {drift:.2f} viewports, "
-        f"shifted by ({shift_x:+.2f},{shift_y:+.2f})"
+        f"Auto-frame: samples={len(samples_x)} "
+        f"road_span={road_span/1000:.1f}km land_span={land_span/1000:.1f}km "
+        f"centroid=({new_lat:.4f},{new_lng:.4f}) "
+        f"urban_span={needed_w/1000:.1f}x{needed_h/1000:.1f}km "
+        f"-> viewport={meters_wide/1000:.1f}km"
     )
-    return new_lat, new_lng
-
-
-# ── Composition centering ────────────────────────────────────────────
-#
-# The geocoded point is geographically correct but not always the
-# best *visual* center for wall art. For coastal cities the true
-# point can sit too far over the harbour, leaving the opposite shore
-# dominating the frame. These overrides shift the map center toward
-# the city's main land mass — the pin still draws at the true location.
-#
-# lat/lng offsets are in degrees.
-_CENTER_OVERRIDES: dict[str, tuple[float, float]] = {
-    # name-key  : (lat_offset, lng_offset)
-    # Direction = where to MOVE the viewport center, away from the pin,
-    # so the dominant water feature fills the frame opposite the city.
-    "halifax":   (0.000, -0.008),   # downtown on east shore -> shift west
-    "vancouver": (0.000, -0.012),
-    "stjohns":   (0.003, -0.010),
-    "victoria":  (0.000, -0.010),
-    "sydney":    (0.018, +0.018),   # downtown on SW shore of Sydney Harbour
-                                    # -> shift NE so harbour fills NE half
-    "saintjohn": (0.000, -0.010),
-    "charlottetown": (0.000, -0.008),
-}
-
-# Per-city viewport width override (meters). Lets us frame "city portrait"
-# cuts that focus on the main peninsula / downtown rather than the wider
-# municipality. None / missing = use the bbox_area heuristic.
-_VIEWPORT_OVERRIDES: dict[str, int] = {
-    "halifax": 12_000,    # Halifax peninsula portrait
-    "sydney":  22_000,    # Sydney NS: downtown + harbour, Sydney proper only
-}
-
-
-def _name_key(s: str) -> str:
-    return "".join(c for c in s.lower() if c.isalpha())
-
-
-def _adjust_center_for_composition(
-    city_name: str, lat: float, lng: float,
-) -> tuple[float, float]:
-    """Return a slightly shifted (lat, lng) for better visual framing.
-
-    The pin is still drawn at the true (lat, lng); only the map viewport
-    moves. Falls back to the original coordinates when no override exists.
-    """
-    if not city_name:
-        return lat, lng
-
-    # Try every word and every cumulative prefix of the first comma chunk:
-    # "Halifax Regional Municipality, NS" → ["halifax", "halifaxregional",
-    # "halifaxregionalmunicipality", "regional", ...]
-    first_chunk = city_name.split(",")[0].strip()
-    words = first_chunk.split()
-    candidates: list[str] = []
-    for i in range(len(words)):
-        # individual word
-        candidates.append(_name_key(words[i]))
-        # cumulative prefix of words[0..i+1]
-        candidates.append(_name_key("".join(words[: i + 1])))
-
-    for k in candidates:
-        if k and k in _CENTER_OVERRIDES:
-            d_lat, d_lng = _CENTER_OVERRIDES[k]
-            log.info(
-                f"Composition override matched '{k}' for '{city_name}': "
-                f"lat{d_lat:+.4f}, lng{d_lng:+.4f}"
-            )
-            return lat + d_lat, lng + d_lng
-
-    log.info(f"Composition: no override for '{city_name}' (tried {candidates[:4]})")
-    return lat, lng
-
-
-def _viewport_override_for(city_name: str) -> int | None:
-    """Return a per-city viewport width in meters, or None for default."""
-    if not city_name:
-        return None
-    first_chunk = city_name.split(",")[0].strip()
-    words = first_chunk.split()
-    candidates: list[str] = []
-    for i in range(len(words)):
-        candidates.append(_name_key(words[i]))
-        candidates.append(_name_key("".join(words[: i + 1])))
-    for k in candidates:
-        if k and k in _VIEWPORT_OVERRIDES:
-            return _VIEWPORT_OVERRIDES[k]
-    return None
+    return new_lat, new_lng, meters_wide
 
 
 # ── Road rendering ───────────────────────────────────────────────────
@@ -404,6 +492,7 @@ def render_map_image(
     auto_compose: bool = True,
     parks_data: dict | None = None,
     land_polygon=None,
+    clip_to_admin: bool = True,
 ) -> tuple[Image.Image, tuple[float, float]]:
     """Render road geometry directly onto a PIL Image.
 
@@ -417,44 +506,104 @@ def render_map_image(
     img = Image.new("RGB", (img_w, img_h), bg_color)
     draw = ImageDraw.Draw(img)
 
-    # Calculate viewport: how many meters of geography to show
-    # Bigger bbox_area → show more area → smaller scale
-    if bbox_area > 2.0:
-        meters_wide = 250_000
-    elif bbox_area > 0.5:
-        meters_wide = 150_000
-    elif bbox_area > 0.1:
-        meters_wide = 80_000
-    elif bbox_area > 0.03:
-        meters_wide = 40_000
-    elif bbox_area > 0.005:
-        meters_wide = 20_000
-    elif bbox_area > 0.001:
-        meters_wide = 10_000
+    # Derive viewport + center directly from the fetched road network.
+    # Replaces the bbox-area ladder and per-city viewport overrides with
+    # a self-tuning framer that works for any city: dense inland metro,
+    # coastal peninsula, or island town. When we have no street data
+    # (province shapes, empty fetches) _auto_frame falls back to the
+    # bbox-area heuristic and keeps the original admin center.
+    # Carve water out of the admin polygon once, upfront, so both
+    # the auto-framer AND the render mask see the natural land shape.
+    # For communities that span multiple disconnected land pieces
+    # (a village peninsula + the surrounding rural parish), also pick
+    # the sub-polygon that contains the geocoded pin — that's the
+    # piece the buyer actually cares about, not the rural hinterland.
+    natural_land = land_polygon
+    framing_land = land_polygon
+    if land_polygon is not None and water_data and water_data.get("water_polygons"):
+        try:
+            from shapely.geometry import Polygon as _ShPoly, Point as _ShPoint
+            from shapely.ops import unary_union
+            from shapely.validation import make_valid
+
+            water_shapes = []
+            for coords, _wt, _wn in water_data["water_polygons"]:
+                if len(coords) < 3:
+                    continue
+                try:
+                    sp = _ShPoly(coords)
+                    if not sp.is_valid:
+                        sp = make_valid(sp)
+                    if not sp.is_empty:
+                        water_shapes.append(sp)
+                except Exception:
+                    continue
+            if water_shapes:
+                water_union = unary_union(water_shapes)
+                admin_valid = land_polygon if land_polygon.is_valid else make_valid(land_polygon)
+                carved = admin_valid.difference(water_union)
+                if not carved.is_empty:
+                    natural_land = carved
+                    log.info("Natural land mask: carved water polygons from admin boundary")
+        except Exception as e:
+            log.warning(f"Natural-land carve skipped: {e}")
+
+    # Pick the pin-containing piece for framing. The render mask still
+    # uses the full natural_land so multi-island villages keep all
+    # their pieces drawn.
+    if natural_land is not None and pin_lat is not None and pin_lng is not None:
+        try:
+            from shapely.geometry import Point as _ShPoint
+            pin_pt = _ShPoint(pin_lng, pin_lat)
+            pieces = (
+                list(natural_land.geoms)
+                if hasattr(natural_land, "geoms")
+                else [natural_land]
+            )
+            # Find the piece containing the pin; fall back to nearest
+            # piece within ~200m if the pin sits a hair offshore.
+            best = None
+            best_dist = float("inf")
+            for piece in pieces:
+                if not hasattr(piece, "contains"):
+                    continue
+                if piece.contains(pin_pt):
+                    best = piece
+                    break
+                d = piece.distance(pin_pt)
+                if d < best_dist:
+                    best_dist = d
+                    best = piece
+            if best is not None and best_dist < 0.002:  # ≈200 m
+                framing_land = best
+                log.info(
+                    "Framing land: selected pin-containing sub-polygon "
+                    f"(dist {best_dist*111000:.0f}m)"
+                )
+        except Exception as e:
+            log.warning(f"Pin-polygon selection skipped: {e}")
+
+    img_aspect = img_h / img_w if img_w else 1.0
+    if auto_compose:
+        center_lat, center_lng, meters_wide = _auto_frame(
+            streets_data, center_lat, center_lng, img_aspect, bbox_area,
+            land_polygon=framing_land,
+        )
     else:
-        meters_wide = 15_000
+        # Caller explicitly pinned the viewport — e.g. batch jobs that
+        # want deterministic framing. Fall back to the area ladder.
+        meters_wide = _auto_frame(
+            None, center_lat, center_lng, img_aspect, bbox_area,
+            land_polygon=framing_land,
+        )[2]
 
-    # Remember the default so the residential length filter (which is
-    # calibrated in pixels against the default viewport for each tier)
-    # can be scaled when a per-city override widens or narrows the view.
+    # Legacy per-call override: still honoured if a caller passes one.
     default_meters_wide = meters_wide
-
-    # Per-city viewport override (e.g. Halifax peninsula portrait)
     if viewport_meters and viewport_meters > 0:
-        log.info(f"Viewport override: {meters_wide}m -> {viewport_meters}m")
+        log.info(f"Viewport override (explicit): {meters_wide}m -> {viewport_meters}m")
         meters_wide = viewport_meters
 
     meters_high = meters_wide * img_h / img_w
-
-    # Universal auto-composition: shift the viewport center toward the
-    # road network if the geographic center sits over empty space (sea,
-    # lake, undeveloped land). Disabled when the caller already applied
-    # a hand-curated override (Sydney, Halifax, Vancouver, etc.) — the
-    # two shifts would compound and slide the city out of frame.
-    if auto_compose:
-        center_lat, center_lng = _auto_compose_center(
-            center_lat, center_lng, streets_data, meters_wide, meters_high,
-        )
 
     # Center in Mercator
     cx, cy = _to_mercator(center_lat, center_lng)
@@ -486,16 +635,21 @@ def render_map_image(
     # Only applies when the land covers less than ~75% of the canvas.
     # For tight urban views (Edmonton fills ~90% of the frame) we skip
     # this so we don't paint a thin blue border around the city.
+    # natural_land was computed upfront (water carved out of admin).
+    # Project each piece into canvas pixel coords for the ocean-mask
+    # and inland-clip passes further down.
     land_rings_px: list[list[tuple[float, float]]] = []
-    if land_polygon is not None:
+    if natural_land is not None:
         try:
-            if hasattr(land_polygon, "geoms"):
-                polys = list(land_polygon.geoms)
-            elif hasattr(land_polygon, "exterior"):
-                polys = [land_polygon]
+            if hasattr(natural_land, "geoms"):
+                polys = list(natural_land.geoms)
+            elif hasattr(natural_land, "exterior"):
+                polys = [natural_land]
             else:
                 polys = []
             for poly in polys:
+                if not hasattr(poly, "exterior") or poly.exterior is None:
+                    continue
                 exterior = list(poly.exterior.coords)
                 px_coords = [to_px(lon, lat) for lon, lat in exterior]
                 if len(px_coords) >= 3:
@@ -563,6 +717,14 @@ def render_map_image(
     if water_data:
         water_color = theme.get("water", (232, 232, 232))
         edge_color = theme.get("water_edge")
+        # Skip the coastline edge stroke at region / island / province
+        # scale. MapTiler water polygons are tile-aligned, so stroking
+        # every polygon boundary draws the tile grid (visible as a
+        # faint checker on the ocean in earlier Cape Breton renders).
+        # At city scale the stroke anchors the coastline; at region
+        # scale the fill alone is enough and the grid disappears.
+        if bbox_area > 0.5:
+            edge_color = None
         # Coastline edge bumped from 1.8‰ -> 2.5‰ of canvas so the
         # dominant water shape reads as the strongest visual anchor.
         edge_w = max(3, int(min(img_w, img_h) * 0.0025))
@@ -659,17 +821,83 @@ def render_map_image(
                     pass
             log.info(f"Waterway render: {kept_rivers}/{len(waterways)} rivers drawn")
 
-    # Parks are intentionally NOT rendered. The premium wall-art look
-    # is land (white) + water (blue) + roads (black/grey) — nothing
-    # else. The `parks_data` argument is accepted for API compatibility
-    # but dropped on the floor. If a future theme wants parks back,
-    # re-introduce a theme-gated draw block here.
-    _ = parks_data  # explicitly unused
+    # ── Draw park polygons ──
+    # Parks render as a subtle filled patch under the road network so
+    # green space reads without breaking the b&w discipline. Two gates:
+    #  * Theme opt-in (theme["park"] non-None)
+    #  * Scale gate: skip entirely at region / province / island scale
+    #    (bbox_area > 0.5 deg²). At that scale parks stop being an
+    #    accent and start covering most of the visible land — Cape
+    #    Breton Highlands + regional parks fill ~80% of the island
+    #    polygon and the poster turns pale green. Cities and sub-
+    #    regional areas still render parks.
+    park_color = theme.get("park")
+    if park_color and parks_data and bbox_area <= 0.5:
+        kept_parks = 0
+        canvas_area = img_w * img_h
+        # Drop sub-pixel slivers — at print scale anything under 0.05%
+        # of the canvas adds noise rather than character.
+        min_park_area = canvas_area * 0.0005
+        for entry in parks_data.get("parks", []):
+            coords = entry[0] if isinstance(entry, tuple) else entry.get("coords", [])
+            if len(coords) < 3:
+                continue
+            px_coords = [to_px(lon, lat) for lon, lat in coords]
+            if abs(_ring_signed_area(px_coords)) < min_park_area:
+                continue
+            try:
+                draw.polygon(px_coords, fill=park_color)
+                kept_parks += 1
+            except Exception:
+                pass
+        log.info(f"Park render: {kept_parks}/{len(parks_data.get('parks', []))} polygons")
+    elif park_color and parks_data:
+        log.info(
+            f"Park render skipped: bbox_area {bbox_area:.2f} deg² "
+            f"(>0.5 region scale — parks overwhelm the land)"
+        )
 
     # ── Draw roads ──
     if streets_data:
-        minor_color = theme.get("road_minor", (90, 90, 90))
-        major_color = theme.get("road_major", (30, 30, 30))
+        # Four-tier colour hierarchy (Mapiful-style). Themes without
+        # the mid tiers fall back to a gradient between major/minor
+        # so legacy themes keep working.
+        minor_color = theme.get("road_minor", (150, 150, 150))
+        major_color = theme.get("road_major", (20, 20, 20))
+        arterial_color = theme.get(
+            "road_arterial",
+            tuple((a + b) // 2 for a, b in zip(major_color, minor_color)),
+        )
+        collector_color = theme.get(
+            "road_collector",
+            tuple((a + 2 * b) // 3 for a, b in zip(major_color, minor_color)),
+        )
+
+        def _road_color(rclass: str) -> tuple[int, int, int]:
+            rc = (rclass or "").lower()
+            if rc in ("motorway", "motorway_link", "trunk", "trunk_link"):
+                return major_color
+            if rc in ("primary", "primary_link", "secondary", "secondary_link"):
+                return arterial_color
+            if rc in ("tertiary", "tertiary_link"):
+                return collector_color
+            return minor_color
+
+        def _road_width_scale(rclass: str) -> float:
+            rc = (rclass or "").lower()
+            if rc in ("motorway", "trunk"):
+                return 1.0
+            if rc in ("motorway_link", "trunk_link"):
+                return 0.70
+            if rc == "primary":
+                return 0.78
+            if rc in ("primary_link", "secondary"):
+                return 0.62
+            if rc in ("secondary_link", "tertiary"):
+                return 0.48
+            if rc == "tertiary_link":
+                return 0.38
+            return 0.32  # residential, service, unclassified, living_street
 
         # Scale line widths + minor-road length threshold to viewport.
         # Larger viewport = drop more residentials so the map breathes.
@@ -680,66 +908,67 @@ def render_map_image(
         # only the iconic motorway/trunk/primary backbone survives.
         # At downtown scale we keep the minor grid because the
         # walkable core is the character of the place.
+        # Mapiful-style posters keep the residential grid visible at
+        # every city scale — the dense hairline mesh between arterials
+        # is the whole point of the look. We now only drop residentials
+        # at province/country scale, and keep secondary avenues at
+        # every city scale so the hierarchy reads as four clear tiers
+        # instead of a single backbone.
         drop_all_residentials = False
-        # When True, filter major_roads to only the top three
-        # classes (motorway, trunk, primary). Secondary avenues
-        # and every *_link ramp get dropped. This is what turns
-        # Calgary from "dense grid" to "iconic arterial skeleton".
         drop_secondary_majors = False
         if bbox_area > 2.0:
-            minor_mult, major_mult = 3, 9
-            minor_min, major_min = 2, 6
+            # Province / island: residential grid is noise at this
+            # scale so it's dropped; the major/arterial hierarchy
+            # carries the whole poster. Weights bumped 6/4 -> 10/6
+            # so the Trans-Canada / highway 125 / Cabot Trail read
+            # as a clear backbone at 300 DPI instead of hairlines
+            # on an otherwise empty island.
+            minor_mult, major_mult = 5, 10
+            minor_min, major_min = 3, 6
             min_residential_px = 440
             drop_all_residentials = True
-            drop_secondary_majors = True
         elif bbox_area > 0.5:
-            minor_mult, major_mult = 5, 12
-            minor_min, major_min = 2, 7
-            min_residential_px = 320
-            drop_all_residentials = True
-            drop_secondary_majors = True
+            # Regional metro (Toronto/Montreal greater area).
+            # Nudged 7 -> 9 for the same reason.
+            minor_mult, major_mult = 5, 9
+            minor_min, major_min = 3, 5
+            min_residential_px = 150
         elif bbox_area > 0.1:
-            minor_mult, major_mult = 6, 14
-            minor_min, major_min = 3, 8
-            min_residential_px = 230
-            drop_all_residentials = True
-            drop_secondary_majors = True
+            # Large city (Calgary, Edmonton): hairline residentials,
+            # secondary avenues visible as a mid-weight tier.
+            # Major weight trimmed 9 -> 8 so primaries don't over-
+            # dominate the village grid on a gallery poster.
+            minor_mult, major_mult = 4, 8
+            minor_min, major_min = 2, 3
+            min_residential_px = 90
         elif bbox_area > 0.03:
-            # Calgary-sized metro: drop the entire minor layer and
-            # drop secondary majors so only motorway/trunk/primary
-            # survives. The result is the iconic Deerfoot/Crowchild/
-            # Macleod/Memorial/Stoney/16th backbone.
-            minor_mult, major_mult = 8, 18
-            minor_min, major_min = 3, 10
-            min_residential_px = 160
-            drop_all_residentials = True
-            drop_secondary_majors = True
-        elif bbox_area > 0.008:
-            # Medium city (Calgary tight-crop, Edmonton downtown,
-            # Winnipeg). Metro-scale — drop minors and secondaries.
-            minor_mult, major_mult = 8, 20
-            minor_min, major_min = 3, 11
-            min_residential_px = 180
-            drop_all_residentials = True
-            drop_secondary_majors = True
-        elif bbox_area > 0.002:
-            # Sydney NS / Halifax downtown: keep the minor grid and
-            # all major classes. These cities are too small to
-            # afford any further trimming.
-            minor_mult, major_mult = 8, 18
-            minor_min, major_min = 3, 10
-            min_residential_px = 170
-        else:
-            # Truly tiny viewport (single neighbourhood) — keep more
-            # streets but widen the major:minor ratio so the structure
-            # still reads at a glance.
-            minor_mult, major_mult = 10, 24
-            minor_min, major_min = 4, 13
+            # Medium city / tight metro crop.
+            minor_mult, major_mult = 5, 9
+            minor_min, major_min = 2, 4
+            min_residential_px = 70
+        elif bbox_area > 0.01:
+            # Halifax-sized downtown. Primary weight trimmed
+            # 11 -> 9 per reviewer feedback: on a peninsular city
+            # the harbour-bridge approaches were reading as
+            # industrial slabs rather than arterial context.
+            minor_mult, major_mult = 6, 9
+            minor_min, major_min = 3, 4
             min_residential_px = 60
+        else:
+            # Community / hamlet (bbox_area <= 0.01 deg²). Matches the
+            # auto-frame "community override" that forces a 3 km
+            # pin-centred viewport. At village scale a highway passing
+            # through would render with downtown-scale weight and
+            # dominate the map, drowning out the village grid. Capped
+            # weights so the highway is backbone context, not a black
+            # slab, and residentials read as real streets.
+            minor_mult, major_mult = 6, 8
+            minor_min, major_min = 3, 4
+            min_residential_px = 40
 
         # Normalise the residential length threshold so it's a constant
         # in meters, independent of the chosen viewport. Without this,
-        # widening the viewport via _VIEWPORT_OVERRIDES (e.g. Sydney's
+        # widening the viewport via the auto-framer (or caller override)
         # 20km -> 30km) makes every road cover fewer pixels and the
         # fixed px threshold silently over-filters the residential grid.
         if meters_wide > 0 and default_meters_wide > 0:
@@ -771,11 +1000,14 @@ def render_map_image(
             if rclass in _DROP_HIGHWAYS:
                 dropped_minor += 1
                 continue
-            # Metro-scale: drop the ENTIRE minor layer (tertiary,
-            # residential, unclassified, living_street). At city scale
-            # only the arterial skeleton (motorway/trunk/primary/
-            # secondary in the major_roads list) is wanted.
-            if drop_all_residentials:
+            # Metro-scale: drop residential / service / track / path
+            # but KEEP tertiary so the region network isn't reduced
+            # to motorway + trunk + primary only. Tertiary roads are
+            # the secondary highways (Highway 4, 19, 223 on Cape
+            # Breton, small-town connectors) that give a region
+            # poster its character. At 360km viewport they render
+            # as fine context strokes, not clutter.
+            if drop_all_residentials and rclass not in ("tertiary", "tertiary_link"):
                 dropped_minor += 1
                 continue
             px_coords = [to_px(lon, lat) for lon, lat in coords]
@@ -813,39 +1045,93 @@ def render_map_image(
                 dropped_orphan += 1
                 dropped_minor += 1
 
-        for i, (_coords, px_coords, _rc, width_mm) in enumerate(candidates):
+        # Assemble every road to be drawn into a single list with its
+        # tier (0=residential/service, 1=tertiary, 2=primary/secondary,
+        # 3=motorway/trunk). We then draw in tier order so heavier,
+        # darker classes always stack on top of lighter ones — the
+        # hallmark of a premium wall-art map.
+        _TIER = {
+            "motorway": 3, "motorway_link": 3, "trunk": 3, "trunk_link": 3,
+            "primary": 2, "primary_link": 2,
+            "secondary": 2, "secondary_link": 2,
+            "tertiary": 1, "tertiary_link": 1,
+        }
+
+        def _tier_for(rclass: str) -> int:
+            return _TIER.get((rclass or "").lower(), 0)
+
+        draw_list: list[tuple[int, list[tuple[float, float]], str, float]] = []
+        for i, (_coords, px_coords, rclass, width_mm) in enumerate(candidates):
             if not alive[i]:
                 continue
-            line_w = max(minor_min, int(width_mm * minor_mult))
-            try:
-                draw.line(px_coords, fill=minor_color, width=line_w, joint="curve")
-                r = line_w // 2
-                for px, py in (px_coords[0], px_coords[-1]):
-                    draw.ellipse([px - r, py - r, px + r, py + r], fill=minor_color)
-                kept_minor += 1
-            except Exception:
-                pass
+            draw_list.append((_tier_for(rclass), px_coords, rclass, width_mm))
 
-        # Major roads on top (thicker, darker). At metro scale we
-        # drop every class except the iconic backbone (motorway,
-        # trunk, primary) so secondary avenues and *_link ramps
-        # stop cluttering the poster.
         kept_major = 0
         dropped_major = 0
-        for coords, rclass, width_mm, name in streets_data.get("major_roads", []):
+        for coords, rclass, width_mm, _name in streets_data.get("major_roads", []):
             if len(coords) < 2:
                 continue
             if drop_secondary_majors and rclass not in _BACKBONE_MAJOR:
                 dropped_major += 1
                 continue
             px_coords = [to_px(lon, lat) for lon, lat in coords]
-            line_w = max(major_min, int(width_mm * major_mult))
+            draw_list.append((_tier_for(rclass), px_coords, rclass, width_mm))
+            kept_major += 1
+
+        # Road-casing technique (cartographic convention used by
+        # Mapiful et al.): each arterial/motorway is drawn twice —
+        # first a wider stroke in a casing colour, then the coloured
+        # stroke on top. The casing masks out tier-below strokes
+        # crossing the arterial, producing clean intersections.
+        #
+        # We use a casing colour slightly darker than map_bg instead
+        # of exactly map_bg. A pure-bg casing is invisible on
+        # crowded areas but creates a visible "halo" around isolated
+        # motorway segments that pass over open terrain. A subtly
+        # darker tone anchors the casing to the road instead of the
+        # background.
+        #
+        # Draw order (every tier twice: casing then fill):
+        #   tier 0 (residential/service)     → single pass, no casing
+        #   tier 1 (tertiary)                → single pass, no casing
+        #   tier 2 (primary/secondary)       → casing + fill
+        #   tier 3 (motorway/trunk)          → casing + fill
+        # Each higher tier's casing wipes the lower tier's stroke
+        # inside its own footprint.
+        _map_bg = theme.get("map_bg", (238, 238, 238))
+        casing_color = tuple(max(0, c - 14) for c in _map_bg)
+        _CASING_SCALE = 1.35  # casing width = 1.35 × line width
+
+        def _sort_key(entry):
+            # (tier, pass) where pass 0 = casing, pass 1 = fill.
+            # Casings draw before fills of the same tier, and both
+            # draw after the full previous-tier fills.
+            return (entry[0], entry[1])
+
+        render_list: list[tuple[int, int, list, str, float]] = []
+        for tier, px_coords, rclass, width_mm in draw_list:
+            if tier >= 2:
+                render_list.append((tier, 0, px_coords, rclass, width_mm))
+                render_list.append((tier, 1, px_coords, rclass, width_mm))
+            else:
+                render_list.append((tier, 1, px_coords, rclass, width_mm))
+
+        render_list.sort(key=_sort_key)
+        for tier, pass_idx, px_coords, rclass, width_mm in render_list:
+            mult = minor_mult if tier <= 1 else major_mult
+            floor_px = minor_min if tier <= 1 else major_min
+            line_w = max(floor_px, int(width_mm * mult * _road_width_scale(rclass)))
+            if pass_idx == 0:
+                casing_w = max(line_w + 2, int(line_w * _CASING_SCALE))
+                colour = casing_color
+                w = casing_w
+            else:
+                colour = _road_color(rclass)
+                w = line_w
             try:
-                draw.line(px_coords, fill=major_color, width=line_w, joint="curve")
-                r = line_w // 2
-                for px, py in (px_coords[0], px_coords[-1]):
-                    draw.ellipse([px - r, py - r, px + r, py + r], fill=major_color)
-                kept_major += 1
+                draw.line(px_coords, fill=colour, width=w, joint="curve")
+                if pass_idx == 1 and tier <= 1:
+                    kept_minor += 1
             except Exception:
                 pass
 
@@ -854,7 +1140,7 @@ def render_map_image(
             f"{kept_minor} minor "
             f"({dropped_minor} dropped, {dropped_orphan} orphan stubs), "
             f"minor_thresh={min_residential_px}px "
-            f"backbone_only={drop_secondary_majors}"
+            f"tiers={sorted({t for t, *_ in draw_list})}"
         )
 
     # ── Ocean mask composite (island / peninsula clip) ──
@@ -892,7 +1178,7 @@ def render_map_image(
     #
     # Skipped when the ocean mask already ran (coastal cities) so we
     # don't double-clip.
-    if land_rings_px and not apply_ocean_mask:
+    if land_rings_px and not apply_ocean_mask and clip_to_admin:
         try:
             bg_color = theme.get("map_bg", (255, 255, 255))
             SS = 2
@@ -938,8 +1224,17 @@ def _format_dms(degrees: float, pos: str, neg: str) -> str:
 
 
 def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
-    """Load best available font with fallback chain."""
+    """Load best available font with fallback chain.
+
+    URW Gothic (fonts-urw-base35) is first in the chain — it's a
+    Debian-bundled Avant-Garde-Gothic / Futura-style geometric sans,
+    which matches the premium wall-art look sellers like Mapiful and
+    Grafomap use for their titles. Falls back through Liberation /
+    DejaVu / FreeFont if the URW pack isn't installed.
+    """
     paths = [
+        "/usr/share/fonts/opentype/urw-base35/URWGothic-Demi.otf" if bold
+        else "/usr/share/fonts/opentype/urw-base35/URWGothic-Book.otf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf" if bold
         else "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold
@@ -1072,10 +1367,14 @@ def compose_poster(
     text_cx = poster_w // 2
     title_y = map_area_h + int(text_area_h * 0.14)
 
-    title_size = int(poster_h * 0.052)
+    # Typography tuned toward Mapiful-style gallery posters: a
+    # slightly smaller, tighter-tracked title makes room for a
+    # relatively larger subtitle, so the title and subtitle feel
+    # like a single composed block instead of a shouting headline.
+    title_size = int(poster_h * 0.046)
     title_font = _load_font(title_size, bold=True)
     title_text = city_name.upper()
-    title_spacing = int(title_size * 0.45)
+    title_spacing = int(title_size * 0.38)
 
     # Auto-shrink to fit
     test_w = _draw_spaced_text(
@@ -1094,9 +1393,9 @@ def compose_poster(
 
     # ── Subtitle ──
     if subtitle:
-        sub_size = int(title_size * 0.40)
+        sub_size = int(title_size * 0.48)
         sub_font = _load_font(sub_size, bold=False)
-        sub_spacing = int(sub_size * 0.30)
+        sub_spacing = int(sub_size * 0.32)
         _draw_spaced_text(draw, text_cx, next_y, subtitle, sub_font, theme["subtitle"], sub_spacing)
         next_y += int(sub_size * 2.5)
 
@@ -1135,10 +1434,15 @@ def generate_road_poster(
     color_theme: str = "city_art",
     parks_data: dict | None = None,
     land_polygon=None,
+    fit_bounds_bbox: tuple[float, float, float, float] | None = None,
 ) -> bytes | None:
     """Full pipeline: render roads → compose poster → PNG bytes.
 
     No tile fetching, no label removal — just clean road geometry.
+
+    `fit_bounds_bbox` (west, south, east, north) overrides the
+    auto-framer when provided — used by the MapController for
+    islands / provinces whose iconic outline IS the product.
     """
     theme = POSTER_THEMES.get(color_theme, POSTER_THEMES["city_art"])
     log.info(f"Road poster: area={bbox_area:.4f} theme={color_theme} roads={bool(streets_data)}")
@@ -1152,37 +1456,65 @@ def generate_road_poster(
         log.warning("Zero roads in streets data")
         return None
 
-    # True pin location is the geocoded coordinate. Map viewport may be
-    # shifted slightly for visual balance (coastal cities, etc).
+    # True pin location is the geocoded coordinate. The renderer's
+    # auto-framer derives the actual viewport center + width from the
+    # fetched road network for cities; islands / provinces with a
+    # fit_bounds_bbox skip the auto-framer entirely and use the
+    # geocoder bbox verbatim (with 12% padding).
     pin_lat, pin_lng = center_lat, center_lng
-    adj_lat, adj_lng = _adjust_center_for_composition(
-        city_name, center_lat, center_lng,
-    )
-    has_named_override = (adj_lat, adj_lng) != (pin_lat, pin_lng)
-    if has_named_override:
+
+    fit_center_lat = center_lat
+    fit_center_lng = center_lng
+    viewport_meters: int | None = None
+    auto_compose = True
+    if fit_bounds_bbox is not None:
+        import math
+        west, south, east, north = fit_bounds_bbox
+        fit_center_lat = (south + north) * 0.5
+        fit_center_lng = (west + east) * 0.5
+        # Visual-balance engine (spec Step 3B): target 75-85% land
+        # coverage. Start at 8% padding, then pick whichever of the
+        # width/height fit produces the tighter frame so the island
+        # dominates regardless of whether the bbox is wide or tall.
+        lon_span_deg = abs(east - west)
+        lat_span_deg = abs(north - south)
+        meters_per_deg_lon = 111_320.0 * math.cos(math.radians(fit_center_lat))
+        meters_per_deg_lat = 110_540.0
+        bbox_width_m = lon_span_deg * meters_per_deg_lon
+        bbox_height_m = lat_span_deg * meters_per_deg_lat
+        pad = 1.08  # 8% default per updated spec (was 12%)
+        # Canvas is square (2400×2400) at render time. Take the
+        # larger of width-fit / height-fit so neither axis clips.
+        viewport_meters = int(max(bbox_width_m, bbox_height_m) * pad)
+        auto_compose = False
+        land_fill = (
+            (bbox_width_m * bbox_height_m)
+            / (viewport_meters * viewport_meters)
+        ) if viewport_meters > 0 else 0
         log.info(
-            f"Composition shift for '{city_name}': "
-            f"({pin_lat:.4f},{pin_lng:.4f}) -> ({adj_lat:.4f},{adj_lng:.4f})"
+            f"fit_bounds: bbox {west:.3f},{south:.3f},{east:.3f},{north:.3f} "
+            f"-> centre=({fit_center_lat:.4f},{fit_center_lng:.4f}) "
+            f"viewport={viewport_meters/1000:.1f}km "
+            f"land_fill={land_fill*100:.1f}%"
         )
 
-    # Per-city viewport override (e.g. Halifax peninsula portrait)
-    viewport_meters = _viewport_override_for(city_name)
-
-    # Render roads directly to image. Skip auto-compose when a named
-    # override already shifted the center — the two would compound.
     map_img, pin_image_px = render_map_image(
         streets_data=streets_data,
         water_data=water_data,
-        center_lat=adj_lat,
-        center_lng=adj_lng,
+        center_lat=fit_center_lat,
+        center_lng=fit_center_lng,
         bbox_area=bbox_area,
         theme=theme,
         pin_lat=pin_lat,
         pin_lng=pin_lng,
         viewport_meters=viewport_meters,
-        auto_compose=not has_named_override,
+        auto_compose=auto_compose,
         parks_data=parks_data,
         land_polygon=land_polygon,
+        # Mapiful-style posters frame the full rectangle — admin
+        # boundaries are not part of the look. Keep the ocean mask
+        # (coastal cities need it) but skip the inland-city crop.
+        clip_to_admin=(color_theme != "city_art"),
     )
 
     # Compose into poster — pin draws at true location, not center

@@ -30,7 +30,6 @@ from app.services.geometry_processor import process_geometry, transform_wgs84_to
 from app.services.svg_generator import generate_svg
 from app.services.street_fetcher import fetch_streets
 from app.services.maptiler_fetcher import fetch_streets_maptiler
-from app.services.maptiler_poster import generate_maptiler_poster_svg
 from app.services.water_fetcher import fetch_water_features
 from app.services.contour_fetcher import fetch_contour_lines, generate_depth_bands
 from app.services.file_storage import store_file, retrieve_file
@@ -228,6 +227,48 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             "The location may not have polygon data in OpenStreetMap.",
         )
 
+    # ── Map rendering controller (spec: validate, classify, plan) ─────
+    #
+    # Ask the controller to classify the place type and produce a
+    # deterministic render plan. This drives downstream decisions:
+    #   * use_fit_bounds=True  → islands / provinces render the
+    #     geocoder-returned bbox verbatim (no percentile framing)
+    #   * use_fit_bounds=False → cities / towns center-zoom on the
+    #     geocode point (auto-framer keeps working)
+    # Plan status surfaces as a structured error rather than silent
+    # fallbacks.
+    from app.services.geo_fetch import fetch_geocode_record
+    from app.services.map_controller import plan_render
+    geocode_record = await fetch_geocode_record(req.osm_id, req.osm_type)
+    if geocode_record is None:
+        # Distinct error: upstream Nominatim call failed (timeout /
+        # DNS / rate limit). Without this branch the null propagates
+        # into plan_render → INVALID_MAP_RENDER, and the user sees
+        # "pick a different result" when the actual cause was an
+        # upstream outage. 503 lets the client auto-retry.
+        log.warning("Geocode lookup returned None for %s/%s", req.osm_type, req.osm_id)
+        raise HTTPException(
+            status_code=503,
+            detail="Location service temporarily unavailable. Please try again in a moment.",
+        )
+    map_plan = plan_render(
+        user_input=req.text or str(req.osm_id),
+        geocode=geocode_record,
+    )
+    if map_plan.status == "INVALID_MAP_RENDER":
+        raise HTTPException(
+            status_code=422,
+            detail=f"Could not validate location '{req.text}'. "
+            "Please pick a different result from the search suggestions.",
+        )
+    if map_plan.status == "AMBIGUOUS_LOCATION":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Location '{req.text}' matched multiple places of "
+            "similar confidence. Please refine your search (add a province / state).",
+        )
+    log.info("MapController plan: %s", map_plan.to_dict())
+
     # Process geometry
     try:
         processed = process_geometry(
@@ -287,6 +328,18 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             expand_pct = 0.15  # Large city: 15% expansion
         expand_lat = lat_span * expand_pct
         expand_lon = lon_span * expand_pct
+        # Minimum fetch bbox: hamlets like Little Narrows NS have
+        # admin polygons <500m across, so even a 60% expansion still
+        # misses the Trans-Canada highway that runs right through them.
+        # Enforce ~8 km minimum so rural communities always capture
+        # at least one cross-country arterial for context.
+        MIN_SPAN_DEG = 0.08
+        final_lat_span = lat_span + 2 * expand_lat
+        final_lon_span = lon_span + 2 * expand_lon
+        if final_lat_span < MIN_SPAN_DEG:
+            expand_lat = (MIN_SPAN_DEG - lat_span) / 2
+        if final_lon_span < MIN_SPAN_DEG:
+            expand_lon = (MIN_SPAN_DEG - lon_span) / 2
         street_bbox = (
             bounds[1] - expand_lat,  # south
             bounds[0] - expand_lon,  # west
@@ -310,6 +363,16 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         water_expand_pct = 1.0 if lat_span * lon_span < 0.005 else 0.6
         water_expand_lat = lat_span * water_expand_pct
         water_expand_lon = lon_span * water_expand_pct
+        # Same minimum-span floor as the street bbox so hamlet water
+        # fetches cover the surrounding lakes / ocean / harbour that
+        # a percent-only expansion misses.
+        MIN_WATER_SPAN_DEG = 0.10
+        final_lat_span = lat_span + 2 * water_expand_lat
+        final_lon_span = lon_span + 2 * water_expand_lon
+        if final_lat_span < MIN_WATER_SPAN_DEG:
+            water_expand_lat = (MIN_WATER_SPAN_DEG - lat_span) / 2
+        if final_lon_span < MIN_WATER_SPAN_DEG:
+            water_expand_lon = (MIN_WATER_SPAN_DEG - lon_span) / 2
         water_bbox = (
             bounds[1] - water_expand_lat,
             bounds[0] - water_expand_lon,
@@ -593,6 +656,9 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                     color_theme=req.color_theme,
                     parks_data=parks_data,
                     land_polygon=geom,
+                    fit_bounds_bbox=(
+                        map_plan.bbox if map_plan.use_fit_bounds else None
+                    ),
                 )
                 if poster_bytes:
                     b64 = base64.b64encode(poster_bytes).decode("ascii")
@@ -734,6 +800,9 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                         color_theme=req.color_theme,
                         parks_data=parks_data,
                         land_polygon=geom,
+                        fit_bounds_bbox=(
+                            map_plan.bbox if map_plan.use_fit_bounds else None
+                        ),
                     )
                 except Exception as e:
                     log.warning(f"Road poster for print failed (non-fatal): {e}")
@@ -1399,7 +1468,16 @@ async def generate_theme_variants(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Generate Etsy listing images in multiple color themes (admin only)."""
+    """Generate Etsy listing images in multiple color themes (admin only).
+
+    Note: this endpoint never reclassifies or reframes the map. It
+    loads an already-generated SVG by file_id, runs colour remapping
+    to produce alternate Etsy listing images, and writes them back.
+    MapController is intentionally NOT invoked here — place_type /
+    framing / bbox decisions were locked in at the original
+    /api/v1/generate call and would be wrong to re-derive from the
+    request params alone.
+    """
     if user.tier != "admin":
         raise HTTPException(status_code=403, detail="Admin only.")
     result = await db.execute(

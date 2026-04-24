@@ -25,6 +25,17 @@ MAPTILER_TILE_URL = "https://api.maptiler.com/tiles/v3/{z}/{x}/{y}.pbf"
 # OpenMapTiles road class → our ROAD_CLASSES mapping
 # MapTiler uses OpenMapTiles schema where roads are in the "transportation" layer
 # with a "class" property
+# Subclasses to drop even when the parent class passes the road map.
+# OpenMapTiles sometimes folds these into generic transportation lines;
+# they're never interesting as wall-art map features.
+_DROP_SUBCLASSES = frozenset({
+    "runway", "taxiway", "apron",          # airports
+    "siding", "yard", "spur", "rail_yard", # rail yards
+    "parking_aisle", "driveway", "alley",  # private / drivable surfaces
+    "emergency_access",
+})
+
+
 _MAPTILER_ROAD_MAP = {
     "motorway": "motorway",
     "trunk": "trunk",
@@ -32,9 +43,20 @@ _MAPTILER_ROAD_MAP = {
     "secondary": "secondary",
     "tertiary": "tertiary",
     "minor": "residential",
+    # Keep service roads. Many small rural villages (Baddeck NS,
+    # Little Narrows, Mabou, etc.) have their village streets
+    # tagged as "service" in OSM — e.g., private drives, alley-
+    # style lanes, and short connector roads. Dropping them
+    # entirely renders those villages as near-empty. The subclass
+    # filter below still drops airport taxiways, rail sidings, and
+    # parking aisles.
     "service": "service",
+    # Track: unpaved rural lanes — often the only road in a
+    # homestead / cottage area. Keep them; they add village
+    # character and the subclass filter strips the worst offenders.
     "track": "track",
-    "path": "path",
+    # Paths / pedestrian-only routes stay dropped — too noisy.
+    "path": None,
     "raceway": None,
     "ferry": None,
     "rail": None,
@@ -83,8 +105,11 @@ def _tile_to_lng_lat(tx: int, ty: int, zoom: int) -> tuple[float, float]:
 def _choose_zoom(bbox: tuple[float, float, float, float]) -> int:
     """Choose appropriate zoom level based on bbox size.
 
-    Higher zoom = more detail but more tiles to fetch.
-    For city maps we want zoom 12-14 for good street detail.
+    Higher zoom = more detail but more tiles to fetch. OpenMapTiles
+    only starts emitting residential roads at zoom 13, and the full
+    residential grid is only available at 14. We bias toward the
+    higher tier so city-scale posters get the dense Mapiful-style
+    lattice rather than just arterial backbones.
     """
     south, west, north, east = bbox
     lat_span = north - south
@@ -92,15 +117,15 @@ def _choose_zoom(bbox: tuple[float, float, float, float]) -> int:
     area = lat_span * lon_span
 
     if area > 1.0:
-        return 10  # Very large area
-    elif area > 0.1:
-        return 12  # Large city (Toronto)
-    elif area > 0.01:
-        return 13  # Medium city
-    elif area > 0.001:
-        return 14  # Small city / community
+        return 11  # Province / country
+    elif area > 0.3:
+        return 12  # Regional metro (Toronto greater, GTA)
+    elif area > 0.05:
+        return 13  # Large city (Calgary, Edmonton) — residentials appear
+    elif area > 0.005:
+        return 14  # Medium / downtown city — full residential grid
     else:
-        return 14  # Very small area
+        return 15  # Neighbourhood portrait
 
 
 def _decode_varint(data: bytes, pos: int) -> tuple[int, int]:
@@ -336,8 +361,11 @@ async def fetch_streets_maptiler(
     log.info(f"MapTiler: fetching {total_tiles} tiles at zoom {zoom} "
              f"(x:{x_min}-{x_max}, y:{y_min}-{y_max})")
 
-    # Cap tile count to prevent excessive API usage
-    MAX_TILES = 100
+    # Cap tile count to prevent excessive API usage. Raised from 100
+    # so city-scale bboxes can keep zoom 13 (which is where
+    # OpenMapTiles starts emitting residential streets). MapTiler
+    # comfortably serves 400 tiles in a few seconds.
+    MAX_TILES = 400
     if total_tiles > MAX_TILES:
         # Reduce zoom to fit within tile limit
         while total_tiles > MAX_TILES and zoom > 8:
@@ -418,6 +446,18 @@ async def fetch_streets_maptiler(
                             if mapped_class is None:
                                 continue
 
+                            # Drop airport / rail-yard subclasses that
+                            # sometimes ride in the transportation layer
+                            # (OpenMapTiles occasionally includes runway
+                            # stubs, apron edges, rail sidings, and yard
+                            # tracks as plain "service"-ish lines). These
+                            # render as stray horizontal parallels near
+                            # the city's transport infrastructure and
+                            # destroy the wall-art look.
+                            subclass = (props.get("subclass") or "").lower()
+                            if subclass in _DROP_SUBCLASSES:
+                                continue
+
                             # Handle link roads
                             is_ramp = props.get("ramp", 0) == 1
                             if is_ramp and mapped_class in ("motorway", "trunk", "primary", "secondary"):
@@ -453,12 +493,18 @@ async def fetch_streets_maptiler(
                                     for px, py in pixel_coords
                                 ]
 
-                                # Filter coords to bbox
-                                in_bbox = any(
-                                    south <= lat <= north and west <= lng <= east
-                                    for lng, lat in coords
+                                # Filter coords to bbox. Require at
+                                # least two points inside so we drop
+                                # the MVT tile-corner shards that only
+                                # dip a single vertex past the frame
+                                # edge — those are the "L" artifacts
+                                # that floated in empty space on the
+                                # previous Calgary render.
+                                inside = sum(
+                                    1 for lng, lat in coords
+                                    if south <= lat <= north and west <= lng <= east
                                 )
-                                if not in_bbox:
+                                if inside < 2:
                                     continue
 
                                 # Tile-seam deduplication: roads in
@@ -496,7 +542,195 @@ async def fetch_streets_maptiler(
         f"({dedup_skipped} tile-seam duplicates removed) in {elapsed:.1f}s"
     )
 
+    # ── Tile-edge cleanup ───────────────────────────────────────────
+    # MVT clips each feature to the tile boundary, so a residential
+    # street that spans 3 tiles arrives as 3 separate segments. When
+    # rendered directly this produces the "broken stroke" look (visible
+    # dashes lined up on the tile grid). It also leaves short
+    # corner-shaped fragments in the buffer zone at tile corners.
+    #
+    # Strategy:
+    #   1. Drop isolated stubs BEFORE stitching, while each segment
+    #      is still its own MVT-sized piece. Running this step AFTER
+    #      stitching is a bug: unnamed residentials all share name=""
+    #      and chain into one mega-polyline per neighbourhood; that
+    #      mega-chain has only two endpoints (at cul-de-sac dead-ends)
+    #      so the filter drops the entire neighbourhood at once.
+    #   2. Drop ultra-short fragments (<15m) — tile-buffer artifacts.
+    #   3. Stitch adjacent segments whose endpoints coincide (within
+    #      ~2m) and that share the same road class + name, so MVT
+    #      tile-split ways reassemble into continuous polylines.
+    before_major, before_minor = len(major_roads), len(minor_roads)
+    major_roads, minor_roads = _drop_isolated_stubs(major_roads, minor_roads)
+    major_roads = _stitch_road_segments(major_roads)
+    minor_roads = _stitch_road_segments(minor_roads)
+    log.info(
+        f"MapTiler stitch: major {before_major}->{len(major_roads)}, "
+        f"minor {before_minor}->{len(minor_roads)}"
+    )
+
     return {"major_roads": major_roads, "minor_roads": minor_roads}
+
+
+def _drop_isolated_stubs(
+    major_roads: list[tuple],
+    minor_roads: list[tuple],
+    snap_m: float = 5.0,
+) -> tuple[list[tuple], list[tuple]]:
+    """Drop chains whose endpoints don't connect to any other road.
+
+    Rural township roads outside the urban core often show up as
+    single straight lines with no intersecting network, producing
+    stray horizontal / vertical stripes on the poster. A chain is
+    kept only when at least one of its two endpoints coincides with
+    another chain's endpoint or interior vertex (within `snap_m`).
+    """
+    tol = snap_m * 1.1e-5 * 1.5
+
+    def _key(pt):
+        return (round(pt[0] / tol), round(pt[1] / tol))
+
+    # Build a vertex-occupancy index across every chain in both lists.
+    # We record how many chains touch each node; >1 means the vertex
+    # is a real junction rather than a dead-end.
+    from collections import defaultdict
+    vertex_hits: dict[tuple, int] = defaultdict(int)
+    for chain_list in (major_roads, minor_roads):
+        for coords, *_ in chain_list:
+            seen_in_chain = set()
+            for pt in coords:
+                k = _key(pt)
+                if k not in seen_in_chain:
+                    vertex_hits[k] += 1
+                    seen_in_chain.add(k)
+
+    def _keep(chain_list: list[tuple]) -> list[tuple]:
+        kept: list[tuple] = []
+        for seg in chain_list:
+            coords = seg[0]
+            if len(coords) < 2:
+                continue
+            start_hits = vertex_hits.get(_key(coords[0]), 0)
+            end_hits = vertex_hits.get(_key(coords[-1]), 0)
+            # Drop chains where both endpoints are fully dangling
+            # (hit count 1 = only this chain touches that node). A
+            # tighter rule (require ≥3 hits = a real junction) also
+            # killed every legitimate T-intersection, so we stay
+            # with the lenient rule. The bridge-stub outliers that
+            # survive this filter are a small price compared to
+            # losing the urban grid.
+            if start_hits <= 1 and end_hits <= 1:
+                continue
+            kept.append(seg)
+        return kept
+
+    return _keep(major_roads), _keep(minor_roads)
+
+
+def _segment_length_m(coords: list[tuple[float, float]]) -> float:
+    """Rough polyline length in meters (equirectangular)."""
+    if len(coords) < 2:
+        return 0.0
+    import math
+    total = 0.0
+    for i in range(1, len(coords)):
+        lng1, lat1 = coords[i - 1]
+        lng2, lat2 = coords[i]
+        mlat = math.radians((lat1 + lat2) * 0.5)
+        dx = (lng2 - lng1) * 111_320 * math.cos(mlat)
+        dy = (lat2 - lat1) * 110_540
+        total += math.hypot(dx, dy)
+    return total
+
+
+def _stitch_road_segments(
+    segments: list[tuple],
+    min_length_m: float = 15.0,
+    snap_m: float = 2.0,
+) -> list[tuple]:
+    """Drop tiny fragments and merge segments whose endpoints meet.
+
+    Each segment is (coords, rclass, width, name). Segments are only
+    merged when class + name match and the join is head-to-tail within
+    `snap_m` metres — so we never splice together unrelated ways.
+    Snap tolerance converts to ~1.8e-5 degrees at 45°N which covers
+    MapTiler's 1e-5 rounding slack plus tile-corner jitter.
+    """
+    # 1 metre ~= 1.1e-5 degrees of longitude at the equator; at 45°N
+    # the longitude factor shrinks to ~1/sqrt(2). A flat 2e-5 degree
+    # threshold is close enough for stitching and cheaper than a
+    # per-pair haversine.
+    tol = snap_m * 1.1e-5 * 1.5
+
+    def _key(pt):
+        return (round(pt[0] / tol), round(pt[1] / tol))
+
+    # First pass: drop sub-threshold fragments.
+    kept = [s for s in segments if _segment_length_m(s[0]) >= min_length_m]
+
+    # Bucket segments by (class, name) so we only stitch within a group.
+    from collections import defaultdict
+    buckets: dict[tuple, list] = defaultdict(list)
+    for seg in kept:
+        coords, rclass, width, name = seg
+        buckets[(rclass, name)].append([list(coords), width])
+
+    out: list[tuple] = []
+    for (rclass, name), group in buckets.items():
+        # Index each segment's endpoints for O(1) match lookup.
+        endpoints: dict[tuple, list[tuple[int, str]]] = defaultdict(list)
+        for i, (coords, _w) in enumerate(group):
+            endpoints[_key(coords[0])].append((i, "start"))
+            endpoints[_key(coords[-1])].append((i, "end"))
+
+        consumed = [False] * len(group)
+        for i in range(len(group)):
+            if consumed[i]:
+                continue
+            chain_coords = list(group[i][0])
+            width = group[i][1]
+            consumed[i] = True
+
+            # Extend chain forward (match chain tail to another segment's head/tail).
+            while True:
+                tail_key = _key(chain_coords[-1])
+                match = None
+                for j, end in endpoints.get(tail_key, []):
+                    if j == i or consumed[j]:
+                        continue
+                    match = (j, end)
+                    break
+                if not match:
+                    break
+                j, end = match
+                other = group[j][0]
+                if end == "start":
+                    chain_coords.extend(other[1:])
+                else:
+                    chain_coords.extend(reversed(other[:-1]))
+                consumed[j] = True
+
+            # Extend chain backward (match chain head to another segment's head/tail).
+            while True:
+                head_key = _key(chain_coords[0])
+                match = None
+                for j, end in endpoints.get(head_key, []):
+                    if j == i or consumed[j]:
+                        continue
+                    match = (j, end)
+                    break
+                if not match:
+                    break
+                j, end = match
+                other = group[j][0]
+                if end == "end":
+                    chain_coords = list(other[:-1]) + chain_coords
+                else:
+                    chain_coords = list(reversed(other[1:])) + chain_coords
+                consumed[j] = True
+
+            out.append((chain_coords, rclass, width, name))
+    return out
 
 
 # ── Water fetching via MapTiler vector tiles ──────────────────────────
@@ -514,24 +748,24 @@ async def fetch_streets_maptiler(
 def _choose_water_zoom(bbox: tuple[float, float, float, float]) -> int:
     """Choose zoom level for water fetch.
 
-    Water features are large and don't need as much detail as streets.
-    Using a lower zoom than streets means fewer tiles for the same bbox,
-    which matters for large coastal counties where the street fetch is
-    already at max-tiles-capped zoom.
+    Higher zoom = more detailed coastline polygons (Halifax Harbour
+    looks crisp at z12, oversimplified at z10). We bias toward
+    higher zoom now that MAX_WATER_TILES is 100; the old table was
+    calibrated when coastlines didn't matter as much for wall-art.
     """
     south, west, north, east = bbox
     area = (north - south) * (east - west)
 
     if area > 1.0:
-        return 8   # Very large (full province)
+        return 9   # Very large (full province / island) — was z10
     elif area > 0.1:
-        return 10  # Large county / metro
+        return 11  # Large county / metro — was z10
     elif area > 0.01:
-        return 11  # Medium city
+        return 12  # Medium city / Halifax — was z11
     elif area > 0.001:
-        return 12  # Small city
+        return 13  # Small city — was z12
     else:
-        return 13  # Neighborhood
+        return 14  # Neighborhood — was z13
 
 
 async def fetch_water_maptiler(
@@ -564,7 +798,10 @@ async def fetch_water_maptiler(
     log.info(f"MapTiler water: fetching {total_tiles} tiles at zoom {zoom}")
 
     # Cap tile count — water fetches at the whole-county level can balloon.
-    MAX_WATER_TILES = 64
+    # Cap tile count. Raised from 64 -> 100 so the new water-zoom
+    # ladder survives without auto-downgrading on mid-sized coastal
+    # areas (Halifax, Sydney NS, Baddeck's Bras d'Or arm).
+    MAX_WATER_TILES = 100
     while total_tiles > MAX_WATER_TILES and zoom > 6:
         zoom -= 1
         x_min, y_min = _lng_lat_to_tile(west, north, zoom)

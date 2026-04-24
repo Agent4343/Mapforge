@@ -1,0 +1,72 @@
+/* MapLibre poster layout — white frame, map band, divider, text band.
+   Matches the backend PIL poster composition so the on-screen preview
+   reads the same as the exported PNG. */
+
+.maplibre-poster {
+  display: flex;
+  flex-direction: column;
+  background: #FFFFFF;
+  border: 1px solid #E0E0E0;
+  padding: clamp(12px, 2.5vw, 24px);
+  max-width: 640px;
+  margin: 0 auto;
+  font-family: "URW Gothic L", "Futura PT", "Montserrat", "Helvetica Neue", sans-serif;
+}
+
+.maplibre-poster__map {
+  border: 1px solid #EAEAEA;
+  overflow: hidden;
+  position: relative;
+}
+
+.maplibre-poster__map .maplibregl-ctrl-attrib,
+.maplibre-poster__map .maplibregl-ctrl-logo {
+  display: none !important;
+}
+
+.maplibre-poster__divider {
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent 0%,
+    #D0D0D0 30%,
+    #D0D0D0 70%,
+    transparent 100%
+  );
+  margin: 18px clamp(10px, 6vw, 40px) 14px;
+}
+
+.maplibre-poster__text {
+  text-align: center;
+  padding: 4px 0 12px;
+}
+
+.maplibre-poster__title {
+  font-size: clamp(22px, 4vw, 34px);
+  font-weight: 700;
+  letter-spacing: 0.32em;
+  color: #1C1C1C;
+  margin: 0 0 8px;
+  line-height: 1.05;
+}
+
+.maplibre-poster__subtitle {
+  font-size: clamp(12px, 1.8vw, 16px);
+  font-weight: 400;
+  letter-spacing: 0.24em;
+  color: #6A6A6A;
+  margin: 0 0 10px;
+}
+
+.maplibre-poster__coords {
+  font-size: clamp(10px, 1.4vw, 13px);
+  letter-spacing: 0.18em;
+  color: #6A6A6A;
+  margin: 0;
+}
+
+.maplibre-poster__export {
+  align-self: center;
+  margin-top: 12px;
+  min-width: 220px;
+}

@@ -8,6 +8,8 @@ import SellerDashboard from "./components/SellerDashboard.jsx";
 import AdminDashboard from "./components/AdminDashboard.jsx";
 import BatchPanel from "./components/BatchPanel.jsx";
 import MapPreview from "./components/MapPreview.jsx";
+import MapLibrePoster from "./components/MapLibrePoster.jsx";
+import "./styles/maplibre-poster.css";
 import MarkersPanel from "./components/MarkersPanel.jsx";
 import LandingPage from "./components/LandingPage.jsx";
 import PricingModal from "./components/PricingModal.jsx";
@@ -85,16 +87,21 @@ const COUNTRIES = [
   { code: "", label: "Global" },
 ];
 
-// Toast notification system
+// Toast notification system. Success / info auto-dismiss in 4 s so
+// the UI stays uncluttered; errors stay up for 8 s and require a
+// click to dismiss, giving the user time to read actionable failure
+// messages they might otherwise miss.
 function Toast({ message, type, onDismiss }) {
   useEffect(() => {
-    const timer = setTimeout(onDismiss, 4000);
+    const ttl = type === "error" ? 8000 : 4000;
+    const timer = setTimeout(onDismiss, ttl);
     return () => clearTimeout(timer);
-  }, [onDismiss]);
+  }, [onDismiss, type]);
 
   return (
     <div className={`toast toast-${type}`} onClick={onDismiss}>
       {message}
+      {type === "error" && <span className="toast-dismiss"> ×</span>}
     </div>
   );
 }
@@ -160,14 +167,39 @@ export default function App() {
     }
   }, []);
 
-  // Fetch public config (Etsy shop URL, etc.)
+  // Fetch public config (Etsy shop URL, MapTiler key for MapLibre).
   const [etsyShopUrl, setEtsyShopUrl] = useState(null);
+  const [maptilerKey, setMaptilerKey] = useState("");
   useEffect(() => {
     fetch(`${import.meta.env.VITE_API_URL || ""}/api/v1/config`)
       .then((r) => r.json())
-      .then((c) => { if (c.etsy_shop_url) setEtsyShopUrl(c.etsy_shop_url); })
+      .then((c) => {
+        if (c.etsy_shop_url) setEtsyShopUrl(c.etsy_shop_url);
+        if (c.maptiler_key) setMaptilerKey(c.maptiler_key);
+      })
       .catch(() => {});
   }, []);
+
+  // MapLibre MapPlan for the currently selected search result.
+  // Fetched from /api/v1/search/plan so the browser renders with the
+  // same framing rules the backend PIL pipeline would use.
+  const [mapPlan, setMapPlan] = useState(null);
+  useEffect(() => {
+    if (!selectedResult) {
+      setMapPlan(null);
+      return;
+    }
+    const base = import.meta.env.VITE_API_URL || "";
+    const params = new URLSearchParams({
+      osm_id: String(selectedResult.osm_id),
+      osm_type: selectedResult.osm_type || "relation",
+      query: selectedResult.display_name || "",
+    });
+    fetch(`${base}/api/v1/search/plan?${params.toString()}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((plan) => setMapPlan(plan && plan.status === "OK" ? plan : null))
+      .catch(() => setMapPlan(null));
+  }, [selectedResult]);
 
   // Handle URL params: Etsy design credits (?credit=TOKEN) and referrals (?ref=etsy)
   useEffect(() => {
@@ -802,6 +834,10 @@ export default function App() {
           />
         </div>
         <div className="panel-right">
+          {/* MapLibre browser preview disabled inline — the 3:4 aspect
+              constraint was blowing up the panel-right layout on
+              desktop. Component stays compiled in; we'll reintroduce
+              behind a toggle once the sizing is tested properly. */}
           <SVGPreview
             svgContent={svgContent}
             loading={generating}
