@@ -1,22 +1,38 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { lazy, Suspense, useState, useCallback, useEffect, useRef } from "react";
 import SearchPanel from "./components/SearchPanel.jsx";
 import CustomizePanel from "./components/CustomizePanel.jsx";
 import SVGPreview from "./components/SVGPreview.jsx";
 import ExportPanel from "./components/ExportPanel.jsx";
-import AuthModal from "./components/AuthModal.jsx";
-import SellerDashboard from "./components/SellerDashboard.jsx";
-import AdminDashboard from "./components/AdminDashboard.jsx";
-import BatchPanel from "./components/BatchPanel.jsx";
 import MapPreview from "./components/MapPreview.jsx";
 import MapLibrePoster from "./components/MapLibrePoster.jsx";
 import "./styles/maplibre-poster.css";
 import MarkersPanel from "./components/MarkersPanel.jsx";
 import LandingPage from "./components/LandingPage.jsx";
-import PricingModal from "./components/PricingModal.jsx";
-import PurchasesView from "./components/PurchasesView.jsx";
 import PriceDisplay from "./components/PriceDisplay.jsx";
 import GenerateModal from "./components/CheckoutModal.jsx";
-import OrderStatus from "./components/OrderStatus.jsx";
+
+// Lazy-loaded panels. None of these are on the main design flow —
+// they're either admin-only, behind a modal trigger, or visited
+// via a sub-route. Splitting them out drops the initial JS bundle
+// by ~120 KB gzipped, which is material for mobile Etsy traffic.
+const AuthModal = lazy(() => import("./components/AuthModal.jsx"));
+const SellerDashboard = lazy(() => import("./components/SellerDashboard.jsx"));
+const AdminDashboard = lazy(() => import("./components/AdminDashboard.jsx"));
+const BatchPanel = lazy(() => import("./components/BatchPanel.jsx"));
+const PricingModal = lazy(() => import("./components/PricingModal.jsx"));
+const PurchasesView = lazy(() => import("./components/PurchasesView.jsx"));
+const OrderStatus = lazy(() => import("./components/OrderStatus.jsx"));
+
+// Minimal fallback for the lazy chunks. Intentionally spartan —
+// the chunks load in a few hundred ms on a warm connection, so an
+// elaborate skeleton screen would just flash and disappear.
+function _LazyFallback() {
+  return (
+    <div style={{ padding: "24px", color: "#888", fontSize: "14px" }}>
+      Loading…
+    </div>
+  );
+}
 import {
   generateSVG, generatePin, downloadSVG, downloadDXF, downloadSTL,
   downloadThumbnail, downloadPrintPNG,
@@ -602,10 +618,12 @@ export default function App() {
           </div>
         </header>
         <div className="order-status-page">
-          <OrderStatus
-            creditToken={creditToken}
-            onBack={() => { setCreditView(null); }}
-          />
+          <Suspense fallback={<_LazyFallback />}>
+            <OrderStatus
+              creditToken={creditToken}
+              onBack={() => { setCreditView(null); }}
+            />
+          </Suspense>
         </div>
       </div>
     );
@@ -619,15 +637,37 @@ export default function App() {
           onGetStarted={() => setShowLanding(false)}
           onSignIn={() => { setShowAuth(true); }}
         />
-        {showAuth && <AuthModal onAuth={handleAuth} onClose={() => setShowAuth(false)} />}
+        {showAuth && (
+          <Suspense fallback={<_LazyFallback />}>
+            <AuthModal onAuth={handleAuth} onClose={() => setShowAuth(false)} />
+          </Suspense>
+        )}
       </>
     );
   }
 
-  // Sub-views
-  if (view === "dashboard") return <SellerDashboard onBack={() => setView("main")} />;
-  if (view === "purchases") return <PurchasesView onBack={() => setView("main")} />;
-  if (view === "admin") return <AdminDashboard onBack={() => setView("main")} />;
+  // Sub-views — each is a lazy chunk, so wrap the render in Suspense.
+  if (view === "dashboard") {
+    return (
+      <Suspense fallback={<_LazyFallback />}>
+        <SellerDashboard onBack={() => setView("main")} />
+      </Suspense>
+    );
+  }
+  if (view === "purchases") {
+    return (
+      <Suspense fallback={<_LazyFallback />}>
+        <PurchasesView onBack={() => setView("main")} />
+      </Suspense>
+    );
+  }
+  if (view === "admin") {
+    return (
+      <Suspense fallback={<_LazyFallback />}>
+        <AdminDashboard onBack={() => setView("main")} />
+      </Suspense>
+    );
+  }
 
   const canUndo = historyIndex > 0;
   const canRedo = historyIndex < configHistory.length - 1;
@@ -868,9 +908,13 @@ export default function App() {
         </div>
       </div>
 
-      {showAuth && <AuthModal onAuth={handleAuth} onClose={() => setShowAuth(false)} />}
-      {showBatch && <BatchPanel config={config} onClose={() => setShowBatch(false)} />}
-      {showPricing && <PricingModal user={user} onClose={() => setShowPricing(false)} onSubscribe={handleSubscribe} />}
+      {(showAuth || showBatch || showPricing) && (
+        <Suspense fallback={<_LazyFallback />}>
+          {showAuth && <AuthModal onAuth={handleAuth} onClose={() => setShowAuth(false)} />}
+          {showBatch && <BatchPanel config={config} onClose={() => setShowBatch(false)} />}
+          {showPricing && <PricingModal user={user} onClose={() => setShowPricing(false)} onSubscribe={handleSubscribe} />}
+        </Suspense>
+      )}
       {showGenerateModal && creditToken && (
         <GenerateModal
           config={config}
