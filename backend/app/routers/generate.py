@@ -30,7 +30,6 @@ from app.services.geometry_processor import process_geometry, transform_wgs84_to
 from app.services.svg_generator import generate_svg
 from app.services.street_fetcher import fetch_streets
 from app.services.maptiler_fetcher import fetch_streets_maptiler
-from app.services.maptiler_poster import generate_maptiler_poster_svg
 from app.services.water_fetcher import fetch_water_features
 from app.services.contour_fetcher import fetch_contour_lines, generate_depth_bands
 from app.services.file_storage import store_file, retrieve_file
@@ -241,6 +240,17 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     from app.services.geo_fetch import fetch_geocode_record
     from app.services.map_controller import plan_render
     geocode_record = await fetch_geocode_record(req.osm_id, req.osm_type)
+    if geocode_record is None:
+        # Distinct error: upstream Nominatim call failed (timeout /
+        # DNS / rate limit). Without this branch the null propagates
+        # into plan_render → INVALID_MAP_RENDER, and the user sees
+        # "pick a different result" when the actual cause was an
+        # upstream outage. 503 lets the client auto-retry.
+        log.warning("Geocode lookup returned None for %s/%s", req.osm_type, req.osm_id)
+        raise HTTPException(
+            status_code=503,
+            detail="Location service temporarily unavailable. Please try again in a moment.",
+        )
     map_plan = plan_render(
         user_input=req.text or str(req.osm_id),
         geocode=geocode_record,
@@ -1458,7 +1468,16 @@ async def generate_theme_variants(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Generate Etsy listing images in multiple color themes (admin only)."""
+    """Generate Etsy listing images in multiple color themes (admin only).
+
+    Note: this endpoint never reclassifies or reframes the map. It
+    loads an already-generated SVG by file_id, runs colour remapping
+    to produce alternate Etsy listing images, and writes them back.
+    MapController is intentionally NOT invoked here — place_type /
+    framing / bbox decisions were locked in at the original
+    /api/v1/generate call and would be wrong to re-derive from the
+    request params alone.
+    """
     if user.tier != "admin":
         raise HTTPException(status_code=403, detail="Admin only.")
     result = await db.execute(

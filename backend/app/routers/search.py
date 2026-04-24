@@ -43,9 +43,13 @@ async def search_plan(
     """
     record = await fetch_geocode_record(osm_id, osm_type)
     if record is None:
+        # 503 (not 404): the OSM feature likely exists — Nominatim
+        # is the one that failed (timeout, rate limit, or DNS). 404
+        # would tell the client "location doesn't exist" which is
+        # misleading for a transient upstream error.
         raise HTTPException(
-            status_code=404,
-            detail=f"No Nominatim record for {osm_type}/{osm_id}.",
+            status_code=503,
+            detail="Location lookup service temporarily unavailable.",
         )
     plan = plan_render(user_input=query or str(osm_id), geocode=record)
     return plan.to_dict()

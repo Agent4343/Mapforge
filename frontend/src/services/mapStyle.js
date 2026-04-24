@@ -4,6 +4,19 @@
 // / coastlines render.
 //
 // The MapTiler API key is spliced in at call time.
+//
+// ⚠ THEME SCOPE
+// This style only renders the `city_art` theme palette. The backend
+// PIL renderer supports 14 themes (classic / midnight / navy_gold /
+// rose_gold / sage / ocean / blush / terracotta / lavender / arctic
+// / minimal / modern_dark / charcoal / city_art) — the MapLibre
+// preview is intentionally `city_art`-only because that's the
+// Mapiful-style palette the product ships to Etsy. If a buyer
+// picks another theme the downloadable PNG still renders with the
+// right colours (PIL path); the browser preview just shows city_art.
+//
+// Future work: extend buildMinimalStyle() to accept a theme key and
+// swap the PALETTE object per theme so preview and download match.
 
 export const PALETTE = {
   water: "#A7C7E7",

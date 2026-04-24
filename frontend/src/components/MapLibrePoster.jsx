@@ -21,7 +21,12 @@ export function getAdjustedBounds(place) {
 }
 
 export function shouldUseFitBounds(place) {
-  return ["island", "province", "state"].includes(place.place_type);
+  // Keep in sync with backend map_controller._PLACE_TYPE_MAP.
+  // Backend never emits "state" — province is the only admin-level
+  // tier that uses fit-bounds. "state" was a spec artefact that
+  // slipped in; left unguarded it silently falls through to
+  // center+zoom on US states, producing wrong framing.
+  return ["island", "province"].includes(place.place_type);
 }
 
 export function shouldShowMarker(place) {
@@ -251,10 +256,30 @@ export default function MapLibrePoster({
         ref={mapContainerRef}
         style={{
           width: "100%",
+          position: "relative",
           aspectRatio: "3 / 4",
           background: PALETTE.land,
         }}
-      />
+      >
+        {!mapReady && !mapError && (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "#999",
+              fontSize: 13,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              pointerEvents: "none",
+            }}
+          >
+            Loading map…
+          </div>
+        )}
+      </div>
       <div className="maplibre-poster__divider" />
       <div className="maplibre-poster__text">
         <h2 className="maplibre-poster__title">{title}</h2>
