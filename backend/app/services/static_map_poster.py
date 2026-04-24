@@ -1472,17 +1472,30 @@ def generate_road_poster(
         west, south, east, north = fit_bounds_bbox
         fit_center_lat = (south + north) * 0.5
         fit_center_lng = (west + east) * 0.5
-        # Convert the bbox width in degrees into metres at the
-        # centroid latitude, add 12% padding so the coastline has
-        # breathing room from the poster frame.
+        # Visual-balance engine (spec Step 3B): target 75-85% land
+        # coverage. Start at 8% padding, then pick whichever of the
+        # width/height fit produces the tighter frame so the island
+        # dominates regardless of whether the bbox is wide or tall.
         lon_span_deg = abs(east - west)
+        lat_span_deg = abs(north - south)
         meters_per_deg_lon = 111_320.0 * math.cos(math.radians(fit_center_lat))
-        viewport_meters = int(lon_span_deg * meters_per_deg_lon * 1.12)
+        meters_per_deg_lat = 110_540.0
+        bbox_width_m = lon_span_deg * meters_per_deg_lon
+        bbox_height_m = lat_span_deg * meters_per_deg_lat
+        pad = 1.08  # 8% default per updated spec (was 12%)
+        # Canvas is square (2400×2400) at render time. Take the
+        # larger of width-fit / height-fit so neither axis clips.
+        viewport_meters = int(max(bbox_width_m, bbox_height_m) * pad)
         auto_compose = False
+        land_fill = (
+            (bbox_width_m * bbox_height_m)
+            / (viewport_meters * viewport_meters)
+        ) if viewport_meters > 0 else 0
         log.info(
             f"fit_bounds: bbox {west:.3f},{south:.3f},{east:.3f},{north:.3f} "
             f"-> centre=({fit_center_lat:.4f},{fit_center_lng:.4f}) "
-            f"viewport={viewport_meters/1000:.1f}km"
+            f"viewport={viewport_meters/1000:.1f}km "
+            f"land_fill={land_fill*100:.1f}%"
         )
 
     map_img, pin_image_px = render_map_image(

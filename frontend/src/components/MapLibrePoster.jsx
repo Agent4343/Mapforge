@@ -11,7 +11,10 @@ export function getAdjustedBounds(place) {
   if (place.place_type === "island") {
     const w = east - west;
     const h = north - south;
-    const p = 0.12;
+    // 8% padding per updated spec (Step 3A). Visual balance engine
+    // targets 75-85% land coverage; the tighter default pushes us
+    // toward that range without a runtime measure-and-retry loop.
+    const p = 0.08;
     return [west - w * p, south - h * p, east + w * p, north + h * p];
   }
   return place.bbox;
