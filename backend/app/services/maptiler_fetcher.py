@@ -757,7 +757,7 @@ def _choose_water_zoom(bbox: tuple[float, float, float, float]) -> int:
     area = (north - south) * (east - west)
 
     if area > 1.0:
-        return 10  # Very large (full province / island) — was z8
+        return 9   # Very large (full province / island) — was z10
     elif area > 0.1:
         return 11  # Large county / metro — was z10
     elif area > 0.01:

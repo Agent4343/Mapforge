@@ -717,6 +717,14 @@ def render_map_image(
     if water_data:
         water_color = theme.get("water", (232, 232, 232))
         edge_color = theme.get("water_edge")
+        # Skip the coastline edge stroke at region / island / province
+        # scale. MapTiler water polygons are tile-aligned, so stroking
+        # every polygon boundary draws the tile grid (visible as a
+        # faint checker on the ocean in earlier Cape Breton renders).
+        # At city scale the stroke anchors the coastline; at region
+        # scale the fill alone is enough and the grid disappears.
+        if bbox_area > 0.5:
+            edge_color = None
         # Coastline edge bumped from 1.8‰ -> 2.5‰ of canvas so the
         # dominant water shape reads as the strongest visual anchor.
         edge_w = max(3, int(min(img_w, img_h) * 0.0025))
