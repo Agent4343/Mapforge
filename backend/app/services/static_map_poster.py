@@ -302,34 +302,54 @@ def _auto_frame(
     if total_weight <= 0 or len(samples_x) < 20:
         return center_lat, center_lng, _fallback_width()
 
-    # Sparse-village override: fewer than 400 road segments usually
-    # means a hamlet where percentile-based framing is fragile (one
-    # long through-highway dominates the distribution). Force a tight
-    # pin-centered viewport instead so the village always fills the
-    # frame regardless of how far the highway stretches. Baddeck
-    # (~40 streets) has ~250-350 segments after stitching; bumping
-    # the threshold from 150 catches communities of this scale.
-    if len(samples_x) < 400:
-        # Use land bbox for the pin-containing piece if we have one,
-        # else fall back to a fixed 4 km window.
+    # Compute the land-polygon span upfront so we can compare it to
+    # the road-network span for the "highway through a hamlet"
+    # detector below.
+    land_w = land_h = 0.0
+    if land_polygon is not None:
+        try:
+            lb = land_polygon.bounds
+            lx_min, ly_min = _to_mercator(lb[1], lb[0])
+            lx_max, ly_max = _to_mercator(lb[3], lb[2])
+            land_w = lx_max - lx_min
+            land_h = ly_max - ly_min
+        except Exception:
+            pass
+
+    # Rough road-network span (cheap, no sort needed).
+    xs = [s[0] for s in samples_x]
+    ys = [s[0] for s in samples_y]
+    road_w = max(xs) - min(xs)
+    road_h = max(ys) - min(ys)
+
+    land_span = max(land_w, land_h)
+    road_span = max(road_w, road_h)
+
+    # Sparse-village override: triggered when EITHER
+    #   (a) fewer than 400 road segments were fetched, OR
+    #   (b) the road bbox is more than 3× the land bbox — the
+    #       "highway-through-hamlet" pattern where OSM's admin polygon
+    #       for the village is tiny but a through-highway extends km
+    #       past it. Baddeck's 300m polygon with Cabot Trail running
+    #       east-west across 8km is the canonical case.
+    highway_through_hamlet = (
+        land_span > 0 and road_span > land_span * 3.0
+    )
+    if len(samples_x) < 400 or highway_through_hamlet:
+        # Viewport for the village: land bbox × 1.4 padding, clamped
+        # to 3-8 km so we never render a frame so tight that a single
+        # street dominates, nor so wide that the village gets lost.
         meters_wide = 4_000.0
-        if land_polygon is not None:
-            try:
-                lb = land_polygon.bounds
-                lx_min, ly_min = _to_mercator(lb[1], lb[0])
-                lx_max, ly_max = _to_mercator(lb[3], lb[2])
-                land_w = (lx_max - lx_min)
-                land_h = (ly_max - ly_min)
-                # Land bbox with 40% padding, capped at 8 km so we
-                # don't zoom out just because the polygon has a long
-                # tail going somewhere sparse.
-                meters_wide = min(8_000.0, max(land_w, land_h) * 1.4)
-                meters_wide = max(3_000.0, meters_wide)
-            except Exception:
-                pass
+        if land_span > 0:
+            meters_wide = min(8_000.0, land_span * 1.4)
+            meters_wide = max(3_000.0, meters_wide)
+        reason = (
+            f"{len(samples_x)} segments"
+            + (", highway-through-hamlet" if highway_through_hamlet else "")
+        )
         log.info(
             f"Auto-frame: sparse-village override "
-            f"({len(samples_x)} segments) -> {meters_wide/1000:.1f}km"
+            f"({reason}) -> {meters_wide/1000:.1f}km"
         )
         return center_lat, center_lng, meters_wide
 
