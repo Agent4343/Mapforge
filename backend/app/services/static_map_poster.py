@@ -928,19 +928,23 @@ def render_map_image(
         elif bbox_area > 0.1:
             # Large city (Calgary, Edmonton): hairline residentials,
             # secondary avenues visible as a mid-weight tier.
-            minor_mult, major_mult = 4, 9
+            # Major weight trimmed 9 -> 8 so primaries don't over-
+            # dominate the village grid on a gallery poster.
+            minor_mult, major_mult = 4, 8
             minor_min, major_min = 2, 3
             min_residential_px = 90
         elif bbox_area > 0.03:
             # Medium city / tight metro crop.
-            minor_mult, major_mult = 5, 10
+            minor_mult, major_mult = 5, 9
             minor_min, major_min = 2, 4
             min_residential_px = 70
         elif bbox_area > 0.01:
-            # Halifax-sized downtown (threshold bumped from 0.008 so
-            # it aligns with the auto-frame community-override cutoff).
-            minor_mult, major_mult = 6, 11
-            minor_min, major_min = 3, 5
+            # Halifax-sized downtown. Primary weight trimmed
+            # 11 -> 9 per reviewer feedback: on a peninsular city
+            # the harbour-bridge approaches were reading as
+            # industrial slabs rather than arterial context.
+            minor_mult, major_mult = 6, 9
+            minor_min, major_min = 3, 4
             min_residential_px = 60
         else:
             # Community / hamlet (bbox_area <= 0.01 deg²). Matches the
@@ -988,11 +992,14 @@ def render_map_image(
             if rclass in _DROP_HIGHWAYS:
                 dropped_minor += 1
                 continue
-            # Metro-scale: drop the ENTIRE minor layer (tertiary,
-            # residential, unclassified, living_street). At city scale
-            # only the arterial skeleton (motorway/trunk/primary/
-            # secondary in the major_roads list) is wanted.
-            if drop_all_residentials:
+            # Metro-scale: drop residential / service / track / path
+            # but KEEP tertiary so the region network isn't reduced
+            # to motorway + trunk + primary only. Tertiary roads are
+            # the secondary highways (Highway 4, 19, 223 on Cape
+            # Breton, small-town connectors) that give a region
+            # poster its character. At 360km viewport they render
+            # as fine context strokes, not clutter.
+            if drop_all_residentials and rclass not in ("tertiary", "tertiary_link"):
                 dropped_minor += 1
                 continue
             px_coords = [to_px(lon, lat) for lon, lat in coords]

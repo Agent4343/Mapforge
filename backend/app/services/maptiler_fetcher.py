@@ -748,24 +748,24 @@ def _stitch_road_segments(
 def _choose_water_zoom(bbox: tuple[float, float, float, float]) -> int:
     """Choose zoom level for water fetch.
 
-    Water features are large and don't need as much detail as streets.
-    Using a lower zoom than streets means fewer tiles for the same bbox,
-    which matters for large coastal counties where the street fetch is
-    already at max-tiles-capped zoom.
+    Higher zoom = more detailed coastline polygons (Halifax Harbour
+    looks crisp at z12, oversimplified at z10). We bias toward
+    higher zoom now that MAX_WATER_TILES is 100; the old table was
+    calibrated when coastlines didn't matter as much for wall-art.
     """
     south, west, north, east = bbox
     area = (north - south) * (east - west)
 
     if area > 1.0:
-        return 8   # Very large (full province)
+        return 10  # Very large (full province / island) — was z8
     elif area > 0.1:
-        return 10  # Large county / metro
+        return 11  # Large county / metro — was z10
     elif area > 0.01:
-        return 11  # Medium city
+        return 12  # Medium city / Halifax — was z11
     elif area > 0.001:
-        return 12  # Small city
+        return 13  # Small city — was z12
     else:
-        return 13  # Neighborhood
+        return 14  # Neighborhood — was z13
 
 
 async def fetch_water_maptiler(
@@ -798,7 +798,10 @@ async def fetch_water_maptiler(
     log.info(f"MapTiler water: fetching {total_tiles} tiles at zoom {zoom}")
 
     # Cap tile count — water fetches at the whole-county level can balloon.
-    MAX_WATER_TILES = 64
+    # Cap tile count. Raised from 64 -> 100 so the new water-zoom
+    # ladder survives without auto-downgrading on mid-sized coastal
+    # areas (Halifax, Sydney NS, Baddeck's Bras d'Or arm).
+    MAX_WATER_TILES = 100
     while total_tiles > MAX_WATER_TILES and zoom > 6:
         zoom -= 1
         x_min, y_min = _lng_lat_to_tile(west, north, zoom)
