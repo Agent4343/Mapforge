@@ -117,6 +117,55 @@ async def request_id_middleware(request: Request, call_next):
     return response
 
 
+# Content Security Policy.
+#
+# Applied only in production (Railway) because Vite's dev server
+# inlines HMR code that would trip `script-src 'self'`.
+#
+# Sources we actually need:
+#   * script-src     'self'   — app bundle only (no inline scripts
+#                               anywhere in index.html).
+#   * style-src      'self' 'unsafe-inline' https://fonts.googleapis.com
+#                             — React inline `style={}` props land as
+#                             HTML style attrs, so we need
+#                             'unsafe-inline'. Google Fonts ships a
+#                             stylesheet at runtime.
+#   * font-src       'self' https://fonts.gstatic.com data:
+#                             — Google font file hosts; data: covers
+#                             MapLibre's embedded glyphs.
+#   * img-src        'self' data: blob: https://api.maptiler.com
+#                             — data: for the inline SVG favicon,
+#                             blob: for MapLibre canvas exports,
+#                             MapTiler for raster tile fallback.
+#   * connect-src    'self' https://api.maptiler.com https://fonts.googleapis.com
+#                             — XHR/fetch targets. We talk to our own
+#                             API and to MapTiler; fonts.googleapis is
+#                             pulled via <link rel="stylesheet"> but
+#                             some font loaders reach it via fetch.
+#   * worker-src     'self' blob:
+#                             — MapLibre GL JS spawns Web Workers from
+#                             blob URLs for tile decoding.
+#   * frame-ancestors 'none'
+#   * base-uri       'self'
+#   * form-action    'self'
+#   * upgrade-insecure-requests
+#                             — forces any stray http:// fetch to
+#                             https:// before it leaves the browser.
+_CSP = (
+    "default-src 'self'; "
+    "script-src 'self'; "
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+    "font-src 'self' https://fonts.gstatic.com data:; "
+    "img-src 'self' data: blob: https://api.maptiler.com; "
+    "connect-src 'self' https://api.maptiler.com https://fonts.googleapis.com; "
+    "worker-src 'self' blob:; "
+    "frame-ancestors 'none'; "
+    "base-uri 'self'; "
+    "form-action 'self'; "
+    "upgrade-insecure-requests"
+)
+
+
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
     """Add security headers to all responses."""
@@ -128,6 +177,7 @@ async def add_security_headers(request: Request, call_next):
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     if os.environ.get("RAILWAY_PUBLIC_DOMAIN"):
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["Content-Security-Policy"] = _CSP
     return response
 
 # API Routers
