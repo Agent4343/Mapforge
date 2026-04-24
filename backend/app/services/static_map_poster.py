@@ -295,6 +295,35 @@ def _auto_frame(
     if total_weight <= 0 or len(samples_x) < 20:
         return center_lat, center_lng, _fallback_width()
 
+    # Sparse-village override: fewer than 150 road segments usually
+    # means a hamlet where percentile-based framing is fragile (one
+    # long through-highway dominates the distribution). Force a tight
+    # pin-centered viewport instead so the village always fills the
+    # frame regardless of how far the highway stretches.
+    if len(samples_x) < 150:
+        # Use land bbox for the pin-containing piece if we have one,
+        # else fall back to a fixed 4 km window.
+        meters_wide = 4_000.0
+        if land_polygon is not None:
+            try:
+                lb = land_polygon.bounds
+                lx_min, ly_min = _to_mercator(lb[1], lb[0])
+                lx_max, ly_max = _to_mercator(lb[3], lb[2])
+                land_w = (lx_max - lx_min)
+                land_h = (ly_max - ly_min)
+                # Land bbox with 40% padding, capped at 8 km so we
+                # don't zoom out just because the polygon has a long
+                # tail going somewhere sparse.
+                meters_wide = min(8_000.0, max(land_w, land_h) * 1.4)
+                meters_wide = max(3_000.0, meters_wide)
+            except Exception:
+                pass
+        log.info(
+            f"Auto-frame: sparse-village override "
+            f"({len(samples_x)} segments) -> {meters_wide/1000:.1f}km"
+        )
+        return center_lat, center_lng, meters_wide
+
     def _weighted_percentile(samples: list[tuple[float, float]], pct: float) -> float:
         samples.sort(key=lambda s: s[0])
         target = total_weight * pct
@@ -305,14 +334,20 @@ def _auto_frame(
                 return v
         return samples[-1][0]
 
-    # Median (50th) is the robust centroid. 5/95 bracket the urban
-    # core and drop the top/bottom 5% of length as outliers.
+    # Median (50th) is the robust centroid. Percentile window frames
+    # the urban core and drops outlier highway tails. 15/85 works
+    # much better than the original 5/95 for small villages where a
+    # single through-highway extends 10+ km past the settled area
+    # (Baddeck NS + the Cabot Trail, Iona + Highway 223, any hamlet
+    # on a provincial route). 70% of length-weight already contains
+    # the real urban geometry; wider percentiles just let outlier
+    # tails pull the viewport into empty forest.
     cx = _weighted_percentile(samples_x, 0.50)
     cy = _weighted_percentile(samples_y, 0.50)
-    x05 = _weighted_percentile(samples_x, 0.05)
-    x95 = _weighted_percentile(samples_x, 0.95)
-    y05 = _weighted_percentile(samples_y, 0.05)
-    y95 = _weighted_percentile(samples_y, 0.95)
+    x05 = _weighted_percentile(samples_x, 0.15)
+    x95 = _weighted_percentile(samples_x, 0.85)
+    y05 = _weighted_percentile(samples_y, 0.15)
+    y95 = _weighted_percentile(samples_y, 0.85)
 
     # Make the viewport symmetric around the centroid so the city
     # stays centered instead of drifting toward whichever side has
