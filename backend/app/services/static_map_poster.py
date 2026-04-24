@@ -415,18 +415,89 @@ def render_map_image(
     # coastal peninsula, or island town. When we have no street data
     # (province shapes, empty fetches) _auto_frame falls back to the
     # bbox-area heuristic and keeps the original admin center.
+    # Carve water out of the admin polygon once, upfront, so both
+    # the auto-framer AND the render mask see the natural land shape.
+    # For communities that span multiple disconnected land pieces
+    # (a village peninsula + the surrounding rural parish), also pick
+    # the sub-polygon that contains the geocoded pin — that's the
+    # piece the buyer actually cares about, not the rural hinterland.
+    natural_land = land_polygon
+    framing_land = land_polygon
+    if land_polygon is not None and water_data and water_data.get("water_polygons"):
+        try:
+            from shapely.geometry import Polygon as _ShPoly, Point as _ShPoint
+            from shapely.ops import unary_union
+            from shapely.validation import make_valid
+
+            water_shapes = []
+            for coords, _wt, _wn in water_data["water_polygons"]:
+                if len(coords) < 3:
+                    continue
+                try:
+                    sp = _ShPoly(coords)
+                    if not sp.is_valid:
+                        sp = make_valid(sp)
+                    if not sp.is_empty:
+                        water_shapes.append(sp)
+                except Exception:
+                    continue
+            if water_shapes:
+                water_union = unary_union(water_shapes)
+                admin_valid = land_polygon if land_polygon.is_valid else make_valid(land_polygon)
+                carved = admin_valid.difference(water_union)
+                if not carved.is_empty:
+                    natural_land = carved
+                    log.info("Natural land mask: carved water polygons from admin boundary")
+        except Exception as e:
+            log.warning(f"Natural-land carve skipped: {e}")
+
+    # Pick the pin-containing piece for framing. The render mask still
+    # uses the full natural_land so multi-island villages keep all
+    # their pieces drawn.
+    if natural_land is not None and pin_lat is not None and pin_lng is not None:
+        try:
+            from shapely.geometry import Point as _ShPoint
+            pin_pt = _ShPoint(pin_lng, pin_lat)
+            pieces = (
+                list(natural_land.geoms)
+                if hasattr(natural_land, "geoms")
+                else [natural_land]
+            )
+            # Find the piece containing the pin; fall back to nearest
+            # piece within ~200m if the pin sits a hair offshore.
+            best = None
+            best_dist = float("inf")
+            for piece in pieces:
+                if not hasattr(piece, "contains"):
+                    continue
+                if piece.contains(pin_pt):
+                    best = piece
+                    break
+                d = piece.distance(pin_pt)
+                if d < best_dist:
+                    best_dist = d
+                    best = piece
+            if best is not None and best_dist < 0.002:  # ≈200 m
+                framing_land = best
+                log.info(
+                    "Framing land: selected pin-containing sub-polygon "
+                    f"(dist {best_dist*111000:.0f}m)"
+                )
+        except Exception as e:
+            log.warning(f"Pin-polygon selection skipped: {e}")
+
     img_aspect = img_h / img_w if img_w else 1.0
     if auto_compose:
         center_lat, center_lng, meters_wide = _auto_frame(
             streets_data, center_lat, center_lng, img_aspect, bbox_area,
-            land_polygon=land_polygon,
+            land_polygon=framing_land,
         )
     else:
         # Caller explicitly pinned the viewport — e.g. batch jobs that
         # want deterministic framing. Fall back to the area ladder.
         meters_wide = _auto_frame(
             None, center_lat, center_lng, img_aspect, bbox_area,
-            land_polygon=land_polygon,
+            land_polygon=framing_land,
         )[2]
 
     # Legacy per-call override: still honoured if a caller passes one.
@@ -467,48 +538,12 @@ def render_map_image(
     # Only applies when the land covers less than ~75% of the canvas.
     # For tight urban views (Edmonton fills ~90% of the frame) we skip
     # this so we don't paint a thin blue border around the city.
+    # natural_land was computed upfront (water carved out of admin).
+    # Project each piece into canvas pixel coords for the ocean-mask
+    # and inland-clip passes further down.
     land_rings_px: list[list[tuple[float, float]]] = []
-    if land_polygon is not None:
+    if natural_land is not None:
         try:
-            # Subtract MapTiler's water polygons from the admin land
-            # polygon so the resulting outline follows the natural
-            # coastline, not the township-line staircase that admin
-            # boundaries leave on coastal cities like Sydney NS, Cape
-            # Breton, or HRM. Falls back silently to the raw admin
-            # polygon if the difference operation fails.
-            natural_land = land_polygon
-            if water_data and water_data.get("water_polygons"):
-                try:
-                    from shapely.geometry import Polygon as _ShPoly
-                    from shapely.ops import unary_union
-                    from shapely.validation import make_valid
-
-                    water_shapes = []
-                    for coords, _wt, _wn in water_data["water_polygons"]:
-                        if len(coords) < 3:
-                            continue
-                        try:
-                            sp = _ShPoly(coords)
-                            if not sp.is_valid:
-                                sp = make_valid(sp)
-                            if not sp.is_empty:
-                                water_shapes.append(sp)
-                        except Exception:
-                            continue
-                    if water_shapes:
-                        water_union = unary_union(water_shapes)
-                        if not land_polygon.is_valid:
-                            land_polygon = make_valid(land_polygon)
-                        carved = land_polygon.difference(water_union)
-                        if not carved.is_empty:
-                            natural_land = carved
-                            log.info(
-                                "Natural land mask: carved water polygons "
-                                "from admin boundary"
-                            )
-                except Exception as e:
-                    log.warning(f"Natural-land carve failed, using admin: {e}")
-
             if hasattr(natural_land, "geoms"):
                 polys = list(natural_land.geoms)
             elif hasattr(natural_land, "exterior"):
