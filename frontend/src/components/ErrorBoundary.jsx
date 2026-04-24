@@ -1,5 +1,7 @@
 import React from "react";
 
+import { captureException } from "../sentry.js";
+
 /**
  * Top-level React error boundary.
  *
@@ -8,8 +10,10 @@ import React from "react";
  * selector, a component receiving an unexpected shape) unmounts the
  * whole app and the user sees a blank white page with no
  * explanation. With this boundary we show a recoverable error panel,
- * log the crash to the backend (via a plain fetch so it ends up
- * alongside server-side Sentry events), and offer a "Reload" action.
+ * forward the crash to Sentry (if configured) AND to the backend
+ * `/api/v1/client-errors` endpoint — the POST is the fallback for
+ * browsers where an ad-blocker rule intercepts the Sentry ingest
+ * URL, which happens often enough to matter.
  *
  * Must be a class component — React's error API is still class-only.
  */
@@ -24,10 +28,22 @@ export default class ErrorBoundary extends React.Component {
   }
 
   componentDidCatch(error, info) {
-    // Best-effort: send a crash report to the backend so we have a
-    // server-side record even if the user closes the tab before we
-    // can render anything. Wrapped in try/catch because we do NOT
-    // want the error-reporting path to itself throw during a crash.
+    // Primary channel: Sentry, if a DSN was baked into the build.
+    // captureException is a no-op otherwise.
+    captureException(error, {
+      react: {
+        componentStack: String(info?.componentStack || "").slice(0, 4000),
+      },
+    });
+
+    // Fallback channel: POST to our backend. An ad-blocker rule
+    // often blocks `*.ingest.sentry.io` but rarely blocks
+    // first-party API calls, so this catches the crashes that
+    // Sentry misses. Also serves as the sole channel when
+    // VITE_SENTRY_DSN wasn't set at build time.
+    //
+    // Wrapped in try/catch because we MUST NOT let the
+    // error-reporting path itself throw during a crash render.
     try {
       const body = JSON.stringify({
         message: String(error?.message || error),
@@ -36,8 +52,8 @@ export default class ErrorBoundary extends React.Component {
         url: window.location.href,
         userAgent: navigator.userAgent,
       });
-      // `keepalive` lets the browser finish the POST even if the tab
-      // is being torn down. Endpoint is optional; 404 is fine.
+      // `keepalive` lets the browser finish the POST even if the
+      // tab is being torn down.
       fetch("/api/v1/client-errors", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
