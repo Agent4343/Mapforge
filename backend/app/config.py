@@ -1,6 +1,7 @@
 """Application configuration from environment variables."""
 
 import os
+import sys
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -14,6 +15,38 @@ def _fixup_db_url(url: str) -> str:
         if idx != -1:
             return "postgresql+asyncpg://" + url[idx + len(scheme):]
     return url
+
+
+def _is_production() -> bool:
+    """True when we're running in a managed production environment.
+
+    Railway always injects RAILWAY_PUBLIC_DOMAIN. We also honour an
+    explicit APP_ENV=production for other hosts (Render, Fly, bare
+    Docker) so fail-fast works outside Railway too.
+    """
+    if os.getenv("APP_ENV", "").lower() in ("production", "prod"):
+        return True
+    if os.getenv("RAILWAY_PUBLIC_DOMAIN"):
+        return True
+    return False
+
+
+def _require_in_prod(name: str, value: str, min_len: int = 16) -> None:
+    """Abort startup if `value` is missing / too short in production.
+
+    Runs at module import so a misconfigured container can never serve
+    a single request — failing loudly here is far safer than leaking a
+    JWT signed with an empty key or accepting a webhook with a short
+    (guessable) shared secret.
+    """
+    if not _is_production():
+        return
+    if not value or len(value) < min_len:
+        sys.stderr.write(
+            f"FATAL: {name} is missing or shorter than {min_len} chars in "
+            f"production. Set it in the environment before starting.\n"
+        )
+        sys.exit(1)
 
 
 class Settings:
@@ -86,3 +119,16 @@ class Settings:
 
 
 settings = Settings()
+
+# ── Production fail-fast checks ───────────────────────────────────────
+# In production (Railway, or APP_ENV=production) these secrets MUST be
+# present and non-trivial. In development we tolerate the defaults so
+# `pytest` / `uvicorn --reload` continue to work without any .env file.
+_require_in_prod("SECRET_KEY", settings.SECRET_KEY, min_len=32)
+if not settings.DATABASE_URL or settings.DATABASE_URL.startswith("sqlite"):
+    if _is_production():
+        sys.stderr.write(
+            "FATAL: DATABASE_URL is unset or points at SQLite in production. "
+            "Provision a Postgres database and set DATABASE_URL.\n"
+        )
+        sys.exit(1)

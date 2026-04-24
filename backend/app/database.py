@@ -18,12 +18,26 @@ elif settings.DATABASE_URL.startswith("postgresql+asyncpg"):
 
 log.info(f"Database dialect: {settings.DATABASE_URL.split('://')[0]}")
 
-engine = create_async_engine(
-    settings.DATABASE_URL,
-    connect_args=connect_args,
-    echo=False,
-    pool_pre_ping=True,
-)
+# Pool sizing. SQLite ignores pool args, so only apply the pool config
+# when we're on asyncpg. Defaults: 10 steady-state connections + 10
+# overflow = 20 max. Tune upward if you run >2 uvicorn workers.
+# pool_recycle defends against stale connections after a Postgres
+# idle-timeout window (some managed providers close idle conns at 5
+# minutes — we recycle at 4 min to stay ahead of that).
+_engine_kwargs: dict = {
+    "connect_args": connect_args,
+    "echo": False,
+    "pool_pre_ping": True,
+}
+if settings.DATABASE_URL.startswith("postgresql+asyncpg"):
+    _engine_kwargs.update(
+        pool_size=10,
+        max_overflow=10,
+        pool_recycle=240,
+        pool_timeout=30,
+    )
+
+engine = create_async_engine(settings.DATABASE_URL, **_engine_kwargs)
 
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
