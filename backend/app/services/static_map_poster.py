@@ -380,23 +380,26 @@ def _auto_frame(
     #   bbox < 0.05 deg²   → 20/80 (village / small town — tight
     #                        focus on urban core, drop highway tails)
     #   0.05-0.5 deg²      → 10/90 (city — moderate outlier trim)
-    #   > 0.5 deg²         → 2/98  (region / island / province — keep
-    #                        the whole extent; losing the outline
-    #                        destroys the identity of a Cape Breton
-    #                        or Vancouver Island poster)
+    #   > 0.5 deg²         → 0/100 (region / island / province — no
+    #                        trimming; the whole island outline is
+    #                        the product, cropping any of it destroys
+    #                        the poster's identity)
     if bbox_area < 0.05:
         pct_lo, pct_hi = 0.20, 0.80
+        pad = 1.12
     elif bbox_area < 0.5:
         pct_lo, pct_hi = 0.10, 0.90
+        pad = 1.12
     else:
-        pct_lo, pct_hi = 0.02, 0.98
+        pct_lo, pct_hi = 0.00, 1.00
+        pad = 1.25  # extra headroom so coastline doesn't touch frame
 
     cx = _weighted_percentile(samples_x, 0.50)
     cy = _weighted_percentile(samples_y, 0.50)
-    x05 = _weighted_percentile(samples_x, pct_lo)
-    x95 = _weighted_percentile(samples_x, pct_hi)
-    y05 = _weighted_percentile(samples_y, pct_lo)
-    y95 = _weighted_percentile(samples_y, pct_hi)
+    x05 = _weighted_percentile(samples_x, pct_lo) if pct_lo > 0 else min(s[0] for s in samples_x)
+    x95 = _weighted_percentile(samples_x, pct_hi) if pct_hi < 1.0 else max(s[0] for s in samples_x)
+    y05 = _weighted_percentile(samples_y, pct_lo) if pct_lo > 0 else min(s[0] for s in samples_y)
+    y95 = _weighted_percentile(samples_y, pct_hi) if pct_hi < 1.0 else max(s[0] for s in samples_y)
 
     # Make the viewport symmetric around the centroid so the city
     # stays centered instead of drifting toward whichever side has
@@ -404,8 +407,8 @@ def _auto_frame(
     half_span_x = max(cx - x05, x95 - cx)
     half_span_y = max(cy - y05, y95 - cy)
 
-    # 12% padding so the outermost streets don't hit the frame edge.
-    pad = 1.12
+    # Padding was set per-tier above (1.12 for city/village, 1.25
+    # for region/island). Applied here to the symmetric half-extents.
     needed_w = 2 * half_span_x * pad
     needed_h = 2 * half_span_y * pad
 
