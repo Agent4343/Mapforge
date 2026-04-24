@@ -363,20 +363,17 @@ def _auto_frame(
                 return v
         return samples[-1][0]
 
-    # Median (50th) is the robust centroid. Percentile window frames
-    # the urban core and drops outlier highway tails. 15/85 works
-    # much better than the original 5/95 for small villages where a
-    # single through-highway extends 10+ km past the settled area
-    # (Baddeck NS + the Cabot Trail, Iona + Highway 223, any hamlet
-    # on a provincial route). 70% of length-weight already contains
-    # the real urban geometry; wider percentiles just let outlier
-    # tails pull the viewport into empty forest.
+    # Median (50th) is the robust centroid. Tightened 20/80 window
+    # focuses on the urban core and aggressively drops outlier highway
+    # tails. 60% of count-weight is enough to capture real urban
+    # geometry; wider percentiles let highway tails pull the viewport
+    # outward.
     cx = _weighted_percentile(samples_x, 0.50)
     cy = _weighted_percentile(samples_y, 0.50)
-    x05 = _weighted_percentile(samples_x, 0.15)
-    x95 = _weighted_percentile(samples_x, 0.85)
-    y05 = _weighted_percentile(samples_y, 0.15)
-    y95 = _weighted_percentile(samples_y, 0.85)
+    x05 = _weighted_percentile(samples_x, 0.20)
+    x95 = _weighted_percentile(samples_x, 0.80)
+    y05 = _weighted_percentile(samples_y, 0.20)
+    y95 = _weighted_percentile(samples_y, 0.80)
 
     # Make the viewport symmetric around the centroid so the city
     # stays centered instead of drifting toward whichever side has
@@ -428,17 +425,21 @@ def _auto_frame(
     meters_wide = max(w_for_x, w_for_y)
 
     # Sane floors and caps so tiny neighbourhoods don't render at
-    # 400m and entire provinces don't try to fit in 20km.
-    meters_wide = max(5_000.0, min(200_000.0, meters_wide))
+    # 400m and entire provinces don't try to fit in 20km. 3km floor
+    # (was 5km) so villages that survive into the percentile path
+    # still frame their urban core tightly.
+    meters_wide = max(3_000.0, min(200_000.0, meters_wide))
 
     # Inverse Mercator on the centroid gives us the new center.
     new_lng = cx / 20037508.34 * 180.0
     new_lat = math.degrees(math.atan(math.sinh(cy * math.pi / 20037508.34)))
 
     log.info(
-        f"Auto-frame: centroid=({new_lat:.4f},{new_lng:.4f}) "
-        f"urban_span={needed_w/1000:.1f}x{needed_h/1000:.1f}km -> "
-        f"viewport={meters_wide/1000:.1f}km"
+        f"Auto-frame: samples={len(samples_x)} "
+        f"road_span={road_span/1000:.1f}km land_span={land_span/1000:.1f}km "
+        f"centroid=({new_lat:.4f},{new_lng:.4f}) "
+        f"urban_span={needed_w/1000:.1f}x{needed_h/1000:.1f}km "
+        f"-> viewport={meters_wide/1000:.1f}km"
     )
     return new_lat, new_lng, meters_wide
 
