@@ -917,16 +917,21 @@ def render_map_image(
         drop_all_residentials = False
         drop_secondary_majors = False
         if bbox_area > 2.0:
-            # Province / country: residential grid is noise at this
-            # scale. Keep secondary so mid-weight roads still read.
-            minor_mult, major_mult = 3, 6
-            minor_min, major_min = 2, 4
+            # Province / island: residential grid is noise at this
+            # scale so it's dropped; the major/arterial hierarchy
+            # carries the whole poster. Weights bumped 6/4 -> 10/6
+            # so the Trans-Canada / highway 125 / Cabot Trail read
+            # as a clear backbone at 300 DPI instead of hairlines
+            # on an otherwise empty island.
+            minor_mult, major_mult = 5, 10
+            minor_min, major_min = 3, 6
             min_residential_px = 440
             drop_all_residentials = True
         elif bbox_area > 0.5:
             # Regional metro (Toronto/Montreal greater area).
-            minor_mult, major_mult = 4, 7
-            minor_min, major_min = 2, 4
+            # Nudged 7 -> 9 for the same reason.
+            minor_mult, major_mult = 5, 9
+            minor_min, major_min = 3, 5
             min_residential_px = 150
         elif bbox_area > 0.1:
             # Large city (Calgary, Edmonton): hairline residentials,
