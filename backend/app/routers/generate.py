@@ -172,6 +172,39 @@ def _check_tier_limits(user: User | None, req: GenerateRequest):
     return
 
 
+# Overall wall-clock ceiling for a single /generate request. Parallel
+# tile fetches at z12 now finish in ~5s on a warm connection, and the
+# subsequent SVG → PNG render is dominated by board-size (10–30s at
+# 600 DPI on a 16x20 board). 90s leaves comfortable headroom for the
+# worst legitimate case and turns a genuinely-stuck pipeline into a
+# 504 instead of a hung worker.
+_GENERATE_TIMEOUT_SEC = 90.0
+
+# Threshold for warning the user that a fetch came back partial. Below
+# 10% failure we don't warn (one flaky tile is normal); above it we
+# surface it so the client can offer a "retry" button rather than
+# silently showing a poster with visible gaps.
+_PARTIAL_FETCH_WARN_THRESHOLD = 0.10
+
+
+def _warn_on_partial_fetch(warnings: list[str], label: str, result: dict) -> None:
+    """Append a warning when a MapTiler fetch has a meaningful failure ratio."""
+    total = result.get("tiles_total") or 0
+    failed = result.get("tiles_failed") or 0
+    if total <= 0 or failed <= 0:
+        return
+    ratio = failed / total
+    if ratio >= _PARTIAL_FETCH_WARN_THRESHOLD:
+        pct = int(ratio * 100)
+        warnings.append(
+            f"{label.title()} data was partial — {pct}% of tiles failed. "
+            f"Map may show gaps; re-generate in a minute to try again."
+        )
+        log.warning(
+            f"{label} fetch partial: {failed}/{total} tiles failed ({pct}%)"
+        )
+
+
 async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession) -> GenerateResponse:
     """Core generation logic shared by single and batch endpoints."""
     warnings: list[str] = []
@@ -423,6 +456,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             has_data = result and (result.get("major_roads") or result.get("minor_roads"))
             if has_data:
                 log.info("MapTiler street fetch succeeded")
+                _warn_on_partial_fetch(warnings, "streets", result)
                 _cache_overpass(cache_key, result)
                 return result
             else:
@@ -464,6 +498,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                     f"{len(result.get('water_polygons', []))} polygons, "
                     f"{len(result.get('waterways', []))} waterways"
                 )
+                _warn_on_partial_fetch(warnings, "water", result)
                 _cache_overpass(cache_key, result)
                 return result
             log.warning("MapTiler water returned no data — falling back to Overpass")
@@ -928,7 +963,21 @@ async def generate(
         await _maybe_reset_monthly_counter(user, db)
     _check_tier_limits(user, req)
     try:
-        return await _do_generate(req, user, db)
+        return await asyncio.wait_for(
+            _do_generate(req, user, db), timeout=_GENERATE_TIMEOUT_SEC
+        )
+    except asyncio.TimeoutError:
+        log.error(
+            f"Generate timed out after {_GENERATE_TIMEOUT_SEC}s "
+            f"(user={'admin' if user else 'visitor'})"
+        )
+        raise HTTPException(
+            status_code=504,
+            detail=(
+                "Map generation timed out. This is usually a temporary issue "
+                "with one of our tile providers — please try again."
+            ),
+        )
     except HTTPException:
         raise
     except Exception as e:

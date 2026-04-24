@@ -644,7 +644,13 @@ async def fetch_streets_maptiler(
         f"minor {before_minor}->{len(minor_roads)}"
     )
 
-    return {"major_roads": major_roads, "minor_roads": minor_roads}
+    return {
+        "major_roads": major_roads,
+        "minor_roads": minor_roads,
+        "tiles_fetched": tiles_fetched,
+        "tiles_failed": tiles_failed,
+        "tiles_total": total_tiles,
+    }
 
 
 def _drop_isolated_stubs(
@@ -994,7 +1000,13 @@ async def fetch_water_maptiler(
         f"({water_dedup_skipped} tile-seam duplicates removed) in {elapsed:.1f}s"
     )
 
-    return {"water_polygons": water_polygons, "waterways": waterways}
+    return {
+        "water_polygons": water_polygons,
+        "waterways": waterways,
+        "tiles_fetched": tiles_fetched,
+        "tiles_failed": tiles_failed,
+        "tiles_total": total_tiles,
+    }
 
 
 # ── Parks / green space fetching via MapTiler vector tiles ────────────
@@ -1165,4 +1177,9 @@ async def fetch_parks_maptiler(
         f"{len(parks)} park polygons in {elapsed:.1f}s"
     )
 
-    return {"parks": parks}
+    return {
+        "parks": parks,
+        "tiles_fetched": tiles_fetched,
+        "tiles_failed": tiles_failed,
+        "tiles_total": total_tiles,
+    }
