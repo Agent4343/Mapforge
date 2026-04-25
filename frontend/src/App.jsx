@@ -1,36 +1,52 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { lazy, Suspense, useState, useCallback, useEffect, useRef } from "react";
 import SearchPanel from "./components/SearchPanel.jsx";
 import CustomizePanel from "./components/CustomizePanel.jsx";
 import SVGPreview from "./components/SVGPreview.jsx";
 import ExportPanel from "./components/ExportPanel.jsx";
-import AuthModal from "./components/AuthModal.jsx";
-import LibraryView from "./components/LibraryView.jsx";
-import MarketplaceView from "./components/MarketplaceView.jsx";
-import SellerDashboard from "./components/SellerDashboard.jsx";
-import AdminDashboard from "./components/AdminDashboard.jsx";
-import BatchPanel from "./components/BatchPanel.jsx";
 import MapPreview from "./components/MapPreview.jsx";
+import MapLibrePoster from "./components/MapLibrePoster.jsx";
+import "./styles/maplibre-poster.css";
 import MarkersPanel from "./components/MarkersPanel.jsx";
 import LandingPage from "./components/LandingPage.jsx";
-import PricingModal from "./components/PricingModal.jsx";
-import PurchasesView from "./components/PurchasesView.jsx";
 import PriceDisplay from "./components/PriceDisplay.jsx";
 import GenerateModal from "./components/CheckoutModal.jsx";
-import OrderStatus from "./components/OrderStatus.jsx";
+
+// Lazy-loaded panels. None of these are on the main design flow —
+// they're either admin-only, behind a modal trigger, or visited
+// via a sub-route. Splitting them out drops the initial JS bundle
+// by ~120 KB gzipped, which is material for mobile Etsy traffic.
+const AuthModal = lazy(() => import("./components/AuthModal.jsx"));
+const SellerDashboard = lazy(() => import("./components/SellerDashboard.jsx"));
+const AdminDashboard = lazy(() => import("./components/AdminDashboard.jsx"));
+const BatchPanel = lazy(() => import("./components/BatchPanel.jsx"));
+const PricingModal = lazy(() => import("./components/PricingModal.jsx"));
+const PurchasesView = lazy(() => import("./components/PurchasesView.jsx"));
+const OrderStatus = lazy(() => import("./components/OrderStatus.jsx"));
+
+// Minimal fallback for the lazy chunks. Intentionally spartan —
+// the chunks load in a few hundred ms on a warm connection, so an
+// elaborate skeleton screen would just flash and disappear.
+function _LazyFallback() {
+  return (
+    <div style={{ padding: "24px", color: "#888", fontSize: "14px" }}>
+      Loading…
+    </div>
+  );
+}
 import {
   generateSVG, generatePin, downloadSVG, downloadDXF, downloadSTL,
   downloadThumbnail, downloadPrintPNG,
   downloadEtsyListing, downloadEtsyPackage, downloadPreview, downloadWallMockup,
-  getProfile, logout, getToken, subscribe,
+  getProfile, logout, hasSessionHint, subscribe,
   redeemCredit,
 } from "./services/api.js";
 
 const DEFAULT_CONFIG = {
   text: "",
   subtitle: "",
-  boardSize: "print_16x20",
-  customWidth: 16,
-  customHeight: 20,
+  boardSize: "print_18x24",
+  customWidth: 18,
+  customHeight: 24,
   style: "filled",
   exportFormat: "svg",
   productType: "city",
@@ -39,19 +55,19 @@ const DEFAULT_CONFIG = {
   borderStyle: "none",
   showCoordinates: true,
   includeIslands: true,
-  includeStreets: false,
+  includeStreets: true,
   includeContours: false,
   contourType: "depth",
   numDepthBands: 5,
   outputMode: "print",
-  colorTheme: "classic",
-  posterLayout: "classic",
+  colorTheme: "city_art",
+  posterLayout: "city_art",
   heartLat: null,
   heartLon: null,
   showCompass: false,
   showScaleBar: false,
-  gradientWater: true,
-  landShadow: true,
+  gradientWater: false,
+  landShadow: false,
   includeBleed: false,
   includeCropMarks: false,
   printDPI: 300,
@@ -60,7 +76,15 @@ const DEFAULT_CONFIG = {
 function loadSavedConfig() {
   try {
     const saved = localStorage.getItem("mapforge_config");
-    if (saved) return { ...DEFAULT_CONFIG, ...JSON.parse(saved) };
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      // Only restore text/subtitle preferences — force all other defaults
+      return {
+        ...DEFAULT_CONFIG,
+        text: parsed.text || "",
+        subtitle: parsed.subtitle || "",
+      };
+    }
   } catch {}
   return DEFAULT_CONFIG;
 }
@@ -79,16 +103,21 @@ const COUNTRIES = [
   { code: "", label: "Global" },
 ];
 
-// Toast notification system
+// Toast notification system. Success / info auto-dismiss in 4 s so
+// the UI stays uncluttered; errors stay up for 8 s and require a
+// click to dismiss, giving the user time to read actionable failure
+// messages they might otherwise miss.
 function Toast({ message, type, onDismiss }) {
   useEffect(() => {
-    const timer = setTimeout(onDismiss, 4000);
+    const ttl = type === "error" ? 8000 : 4000;
+    const timer = setTimeout(onDismiss, ttl);
     return () => clearTimeout(timer);
-  }, [onDismiss]);
+  }, [onDismiss, type]);
 
   return (
     <div className={`toast toast-${type}`} onClick={onDismiss}>
       {message}
+      {type === "error" && <span className="toast-dismiss"> ×</span>}
     </div>
   );
 }
@@ -110,7 +139,12 @@ export default function App() {
   const [showAuth, setShowAuth] = useState(false);
   const [showBatch, setShowBatch] = useState(false);
   const [showPricing, setShowPricing] = useState(false);
-  const [showLanding, setShowLanding] = useState(!getToken());
+  // Skip the landing page when the `mapforge_session_hint` cookie
+  // says the server has an active session. The actual JWT cookie
+  // is HttpOnly so we can't read it; this non-sensitive hint
+  // cookie is the best signal available on initial render, and
+  // `getProfile()` below is the authoritative check.
+  const [showLanding, setShowLanding] = useState(!hasSessionHint());
   const [view, setView] = useState("main"); // main, library, marketplace, dashboard
   const [toasts, setToasts] = useState([]);
 
@@ -145,23 +179,50 @@ export default function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  // Load user profile if token exists; clear stale tokens on failure
+  // Load user profile if a session hint cookie is present.
+  // `/auth/me` is the authoritative check — if it returns null the
+  // session has expired (hint cookie is stale), so log out locally.
   useEffect(() => {
-    if (getToken()) {
+    if (hasSessionHint()) {
       getProfile()
         .then((p) => { if (p) setUser(p); else { logout(); } })
         .catch(() => { logout(); });
     }
   }, []);
 
-  // Fetch public config (Etsy shop URL, etc.)
+  // Fetch public config (Etsy shop URL, MapTiler key for MapLibre).
   const [etsyShopUrl, setEtsyShopUrl] = useState(null);
+  const [maptilerKey, setMaptilerKey] = useState("");
   useEffect(() => {
     fetch(`${import.meta.env.VITE_API_URL || ""}/api/v1/config`)
       .then((r) => r.json())
-      .then((c) => { if (c.etsy_shop_url) setEtsyShopUrl(c.etsy_shop_url); })
+      .then((c) => {
+        if (c.etsy_shop_url) setEtsyShopUrl(c.etsy_shop_url);
+        if (c.maptiler_key) setMaptilerKey(c.maptiler_key);
+      })
       .catch(() => {});
   }, []);
+
+  // MapLibre MapPlan for the currently selected search result.
+  // Fetched from /api/v1/search/plan so the browser renders with the
+  // same framing rules the backend PIL pipeline would use.
+  const [mapPlan, setMapPlan] = useState(null);
+  useEffect(() => {
+    if (!selectedResult) {
+      setMapPlan(null);
+      return;
+    }
+    const base = import.meta.env.VITE_API_URL || "";
+    const params = new URLSearchParams({
+      osm_id: String(selectedResult.osm_id),
+      osm_type: selectedResult.osm_type || "relation",
+      query: selectedResult.display_name || "",
+    });
+    fetch(`${base}/api/v1/search/plan?${params.toString()}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((plan) => setMapPlan(plan && plan.status === "OK" ? plan : null))
+      .catch(() => setMapPlan(null));
+  }, [selectedResult]);
 
   // Handle URL params: Etsy design credits (?credit=TOKEN) and referrals (?ref=etsy)
   useEffect(() => {
@@ -373,6 +434,8 @@ export default function App() {
         const params = {
           osm_id: selectedResult.osm_id,
           osm_type: selectedResult.osm_type,
+          center_lat: selectedResult.lat || undefined,
+          center_lon: selectedResult.lon || undefined,
           product_type: config.productType,
           board_size: config.boardSize,
           style: "filled",
@@ -411,7 +474,7 @@ export default function App() {
         data = await generateSVG(params);
       }
 
-      setSvgContent(data.svg);
+      setSvgContent(data.preview_image || data.svg);
       setResult(data);
 
       // Quality/generation warnings
@@ -430,12 +493,19 @@ export default function App() {
   const handleDownload = useCallback(async () => {
     if (!result) return;
     try {
+      // If MapTiler PNG, download that instead of SVG
+      if (svgContent && svgContent.startsWith("data:image/")) {
+        const resp = await fetch(svgContent);
+        const blob = await resp.blob();
+        _triggerDownload(blob, config.text, "png");
+        return;
+      }
       const blob = await downloadSVG(result.file_id);
       _triggerDownload(blob, config.text, "svg");
     } catch (err) {
       setError(err.message);
     }
-  }, [result, config.text]);
+  }, [result, config.text, svgContent]);
 
   const handleDownloadThumbnail = useCallback(async () => {
     if (!result) return;
@@ -450,12 +520,20 @@ export default function App() {
   const handleDownloadPrintPNG = useCallback(async () => {
     if (!result) return;
     try {
+      // If we have a MapTiler preview image, download it directly
+      if (svgContent && svgContent.startsWith("data:image/")) {
+        const resp = await fetch(svgContent);
+        const blob = await resp.blob();
+        _triggerDownload(blob, config.text + "_print", "png");
+        return;
+      }
       const blob = await downloadPrintPNG(result.file_id);
-      _triggerDownload(blob, config.text + "_print_300dpi", "png");
+      const dpiLabel = config.printDPI || 300;
+      _triggerDownload(blob, config.text + `_print_${dpiLabel}dpi`, "png");
     } catch (err) {
       setError(err.message);
     }
-  }, [result, config.text]);
+  }, [result, config.text, svgContent]);
 
   const handleDownloadDXF = useCallback(async () => {
     if (!result) return;
@@ -500,12 +578,18 @@ export default function App() {
   const handleDownloadPreview = useCallback(async () => {
     if (!result) return;
     try {
+      if (svgContent && svgContent.startsWith("data:image/")) {
+        const resp = await fetch(svgContent);
+        const blob = await resp.blob();
+        _triggerDownload(blob, config.text + "_preview", "png");
+        return;
+      }
       const blob = await downloadPreview(result.file_id);
       _triggerDownload(blob, config.text + "_preview", "png");
     } catch (err) {
       setError(err.message);
     }
-  }, [result, config.text]);
+  }, [result, config.text, svgContent]);
 
   const handleDownloadWallMockup = useCallback(async (style = "light_wall") => {
     if (!result) return;
@@ -541,10 +625,12 @@ export default function App() {
           </div>
         </header>
         <div className="order-status-page">
-          <OrderStatus
-            creditToken={creditToken}
-            onBack={() => { setCreditView(null); }}
-          />
+          <Suspense fallback={<_LazyFallback />}>
+            <OrderStatus
+              creditToken={creditToken}
+              onBack={() => { setCreditView(null); }}
+            />
+          </Suspense>
         </div>
       </div>
     );
@@ -558,17 +644,37 @@ export default function App() {
           onGetStarted={() => setShowLanding(false)}
           onSignIn={() => { setShowAuth(true); }}
         />
-        {showAuth && <AuthModal onAuth={handleAuth} onClose={() => setShowAuth(false)} />}
+        {showAuth && (
+          <Suspense fallback={<_LazyFallback />}>
+            <AuthModal onAuth={handleAuth} onClose={() => setShowAuth(false)} />
+          </Suspense>
+        )}
       </>
     );
   }
 
-  // Sub-views
-  if (view === "library") return <LibraryView onBack={() => setView("main")} />;
-  if (view === "marketplace") return <MarketplaceView user={user} onBack={() => setView("main")} />;
-  if (view === "dashboard") return <SellerDashboard onBack={() => setView("main")} />;
-  if (view === "purchases") return <PurchasesView onBack={() => setView("main")} />;
-  if (view === "admin") return <AdminDashboard onBack={() => setView("main")} />;
+  // Sub-views — each is a lazy chunk, so wrap the render in Suspense.
+  if (view === "dashboard") {
+    return (
+      <Suspense fallback={<_LazyFallback />}>
+        <SellerDashboard onBack={() => setView("main")} />
+      </Suspense>
+    );
+  }
+  if (view === "purchases") {
+    return (
+      <Suspense fallback={<_LazyFallback />}>
+        <PurchasesView onBack={() => setView("main")} />
+      </Suspense>
+    );
+  }
+  if (view === "admin") {
+    return (
+      <Suspense fallback={<_LazyFallback />}>
+        <AdminDashboard onBack={() => setView("main")} />
+      </Suspense>
+    );
+  }
 
   const canUndo = historyIndex > 0;
   const canRedo = historyIndex < configHistory.length - 1;
@@ -595,8 +701,6 @@ export default function App() {
             ))}
           </select>
           {user?.tier === "admin" && <button className="nav-btn" onClick={() => setShowPricing(true)}>Pricing</button>}
-          {user?.tier === "admin" && <button className="nav-btn" onClick={() => setView("marketplace")}>Marketplace</button>}
-          {user?.tier === "admin" && <button className="nav-btn" onClick={() => setView("library")}>Library</button>}
           {user?.tier === "admin" && <button className="nav-btn" onClick={() => setView("purchases")}>Purchases</button>}
           {user?.tier === "admin" && (
             <button className="nav-btn" onClick={() => setView("dashboard")}>Seller</button>
@@ -777,6 +881,10 @@ export default function App() {
           />
         </div>
         <div className="panel-right">
+          {/* MapLibre browser preview disabled inline — the 3:4 aspect
+              constraint was blowing up the panel-right layout on
+              desktop. Component stays compiled in; we'll reintroduce
+              behind a toggle once the sizing is tested properly. */}
           <SVGPreview
             svgContent={svgContent}
             loading={generating}
@@ -793,16 +901,6 @@ export default function App() {
             <span className="mobile-tab-icon">&#9670;</span>
             Generate
           </button>
-          <button className={`mobile-tab${view === "marketplace" ? " active" : ""}`} onClick={() => setView("marketplace")}>
-            <span className="mobile-tab-icon">&#9733;</span>
-            Market
-          </button>
-          {user && (
-            <button className={`mobile-tab${view === "library" ? " active" : ""}`} onClick={() => setView("library")}>
-              <span className="mobile-tab-icon">&#9776;</span>
-              Library
-            </button>
-          )}
           {user ? (
             <button className="mobile-tab" onClick={handleLogout}>
               <span className="mobile-tab-icon">&#8594;</span>
@@ -817,9 +915,13 @@ export default function App() {
         </div>
       </div>
 
-      {showAuth && <AuthModal onAuth={handleAuth} onClose={() => setShowAuth(false)} />}
-      {showBatch && <BatchPanel config={config} onClose={() => setShowBatch(false)} />}
-      {showPricing && <PricingModal user={user} onClose={() => setShowPricing(false)} onSubscribe={handleSubscribe} />}
+      {(showAuth || showBatch || showPricing) && (
+        <Suspense fallback={<_LazyFallback />}>
+          {showAuth && <AuthModal onAuth={handleAuth} onClose={() => setShowAuth(false)} />}
+          {showBatch && <BatchPanel config={config} onClose={() => setShowBatch(false)} />}
+          {showPricing && <PricingModal user={user} onClose={() => setShowPricing(false)} onSubscribe={handleSubscribe} />}
+        </Suspense>
+      )}
       {showGenerateModal && creditToken && (
         <GenerateModal
           config={config}

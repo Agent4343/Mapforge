@@ -3,7 +3,7 @@
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ProductType(str, Enum):
@@ -85,14 +85,13 @@ class AuthResponse(BaseModel):
 
 
 class UserProfile(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     email: str
     username: str
     tier: str
     generation_count_this_month: int
-
-    class Config:
-        from_attributes = True
 
 
 # --- Search ---
@@ -155,6 +154,7 @@ class PosterLayout(str, Enum):
     editorial = "editorial"   # Large text header above map
     bold = "bold"             # Full-bleed map with bold overlay text
     vintage = "vintage"       # Ornate border, serif text, aged look
+    city_art = "city_art"     # Minimalist B&W city map art print
 
 
 class OutputMode(str, Enum):
@@ -192,6 +192,8 @@ class GenerateRequest(BaseModel):
     markers: list[MapMarker] = Field(default_factory=list, max_length=10)
     color_theme: str = "classic"  # classic, modern_dark, rose_gold, midnight, sage, minimal
     poster_layout: str = "classic"  # classic, minimal, editorial, bold, vintage
+    center_lat: Optional[float] = Field(None, ge=-90, le=90, description="City center latitude from search (overrides polygon centroid)")
+    center_lon: Optional[float] = Field(None, ge=-180, le=180, description="City center longitude from search (overrides polygon centroid)")
     heart_lat: Optional[float] = Field(None, ge=-90, le=90)
     heart_lon: Optional[float] = Field(None, ge=-180, le=180)
     # Professional map elements
@@ -245,6 +247,7 @@ class PinGenerateRequest(BaseModel):
 
 class GenerateResponse(BaseModel):
     svg: Optional[str] = None
+    preview_image: Optional[str] = None  # base64 data URI PNG for map art preview
     thumbnail_available: bool = False
     print_png_available: bool = False
     etsy_listing_available: bool = False
@@ -258,6 +261,8 @@ class GenerateResponse(BaseModel):
     layer_count: int
     print_dpi: Optional[int] = None
     print_pixels: Optional[tuple[int, int]] = None
+    road_count: int = 0
+    quality_ok: bool = True
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -333,6 +338,8 @@ class MultiSizeExportResponse(BaseModel):
 # --- Template Library ---
 
 class LibraryFileResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     location_name: str
     display_text: str
@@ -349,9 +356,6 @@ class LibraryFileResponse(BaseModel):
     has_dxf: bool = False
     is_listed: bool = False
     created_at: str
-
-    class Config:
-        from_attributes = True
 
 
 class LibraryResponse(BaseModel):
@@ -379,6 +383,8 @@ class UpdateListingRequest(BaseModel):
 
 
 class ListingResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     file_id: str
     seller_username: str
@@ -396,9 +402,6 @@ class ListingResponse(BaseModel):
     board_height_mm: float
     province: Optional[str]
     created_at: str
-
-    class Config:
-        from_attributes = True
 
 
 class MarketplaceResponse(BaseModel):

@@ -39,44 +39,50 @@ def get_session_stats() -> dict:
 
 
 def _build_system_prompt() -> str:
-    return """You are a copywriter for MapForge, an Etsy shop selling digital CNC map files (SVG/DXF).
+    return """You are a copywriter for MapForge, an Etsy shop selling printable city map wall art posters (high-resolution PNG digital downloads for framing).
 
 Rules:
 - Write compelling, unique Etsy product descriptions that drive purchases
 - Each description must be genuinely different — vary sentence structure, opening hooks, selling points
 - Use natural language a real shopper would search for (SEO keywords woven in naturally)
-- Include the location's personality, vibe, or notable traits — make the buyer feel connected
-- Mention the file formats (SVG, DXF, PNG) and that it's a digital download
-- Keep descriptions between 800-1200 characters
+- Include the location's personality, vibe, or notable traits — make the buyer feel emotionally connected to the place
+- Position this as printable WALL ART — a modern, minimalist map poster for home decor
+- Suggest gift occasions: housewarming, wedding, anniversary, graduation, moving away, memorial, "hometown pride"
+- Mention it prints at standard frame sizes (8x10, 11x14, 16x20, 18x24, 24x36 inches)
+- Note the design shows the city's streets, parks, and water in a clean minimalist style with the location name and GPS coordinates
+- Mention it is an INSTANT DIGITAL DOWNLOAD — buyer receives high-resolution PNG files, no physical product is shipped
+- You may briefly mention that SVG and DXF files are also included as a bonus for CNC hobbyists and laser cutters, but this is a secondary use case — do NOT lead with it
+- Keep descriptions between 900-1400 characters
 - Do NOT use emojis, excessive punctuation, or ALL CAPS
 - Do NOT include headers/sections like "WHAT YOU GET" — write flowing prose
-- End with a subtle call to action
-- Mention CNC router compatibility (VCarve Pro, Fusion 360, Carbide Create, LightBurn)
-- Note it works on wood, acrylic, plywood, MDF
-- This is a DIGITAL FILE — no physical product shipped"""
+- Close the description with 2–3 short testimonial-style lines attributed to "buyers" (e.g. "Buyers tell us the quality is indistinguishable from the big map-art shops"). Keep them credible, not breathless; avoid fake names
+- End with a subtle call to action after the testimonials"""
 
 
 def _build_title_prompt() -> str:
-    return """You are a copywriter for MapForge, an Etsy shop selling digital CNC map files.
+    return """You are a copywriter for MapForge, an Etsy shop selling printable city map wall art posters.
 
 Generate an Etsy product title. Rules:
 - Maximum 140 characters (strict limit)
-- Front-load the most searchable keywords
-- Include: location name, "Map", "SVG", "DXF", file purpose
-- Include cut style name if provided
+- Front-load the most searchable wall-art keywords
+- Include: location name, "Map", "Wall Art", "Poster" or "Print", "Printable" or "Digital Download"
+- Optionally include "Custom Map", "City Map Art", "Home Decor", "Housewarming Gift"
 - Separate keyword clusters with em dashes (—)
 - Do NOT use emojis or excessive punctuation
+- Do NOT lead with "CNC" or "SVG" — this is wall art first
 - Return ONLY the title text, nothing else"""
 
 
 def _build_tags_prompt() -> str:
-    return """You are an Etsy SEO specialist for MapForge CNC map files.
+    return """You are an Etsy SEO specialist for MapForge printable city map wall art posters.
 
 Generate exactly 13 Etsy tags. Rules:
 - Each tag max 20 characters
-- Include location name, map type, file format, use cases
-- Mix broad terms ("CNC file", "wall art") with specific ("Ontario map")
-- Think about what a CNC hobbyist would search for
+- Focus on WALL ART and home decor buyers first
+- Include location name, "city map", "map print", "wall art", "home decor", "printable art", "digital download"
+- Include gift-occasion terms like "housewarming gift" or "wedding gift"
+- Mix broad terms ("map poster", "city art") with specific ("Toronto map")
+- You may include one or two CNC/SVG tags at the end for the hobbyist niche, but not more
 - Return ONLY a comma-separated list, nothing else"""
 
 
@@ -103,24 +109,24 @@ async def generate_description(
         logger.debug("No ANTHROPIC_API_KEY set, skipping AI description")
         return None
 
-    location_type = "city street map" if is_city else (
-        "Canadian province map" if country == "Canada" else "US state map"
+    location_type = "city street map poster" if is_city else (
+        "Canadian province map poster" if country == "Canada" else "US state map poster"
     )
     style_labels = {
-        "filled": "filled/pocket-carved silhouette",
-        "outline": "outline/profile-cut border",
-        "engraved": "engraved/v-carved detail lines",
+        "filled": "bold filled silhouette",
+        "outline": "clean outline",
+        "engraved": "detailed engraved line work",
     }
 
     features = []
     if has_streets:
         features.append("detailed street network")
     if has_water:
-        features.append("lakes and rivers")
+        features.append("rivers, lakes, and coastlines")
     if has_contours:
         features.append("elevation contours")
 
-    user_msg = f"""Write a unique Etsy product description for this CNC map file:
+    user_msg = f"""Write a unique Etsy product description for this printable city map wall art poster:
 
 Location: {location_name}
 Type: {location_type}
@@ -128,12 +134,13 @@ Country: {country}
 {f'Nickname: {nickname}' if nickname else ''}
 {f'Capital: {capital}' if capital else ''}
 {f'Province: {province}' if province and is_city else ''}
-Cut style: {style_labels.get(style, style)}
-Board size: {board_size}
-{f'Geometric complexity: {node_count:,} nodes' if node_count else ''}
-{f'Includes: {", ".join(features)}' if features else ''}
+Visual style: {style_labels.get(style, style)}
+Print size: {board_size}
+{f'Map detail: {node_count:,} individual elements' if node_count else ''}
+{f'Features shown: {", ".join(features)}' if features else ''}
 
-Write a fresh, unique description. Do not use a template format."""
+Write a fresh, unique description that leads with the wall-art / home-decor angle.
+Do not use a template format."""
 
     return await _call_claude(
         system=_build_system_prompt(),
@@ -155,8 +162,8 @@ async def generate_title(
     if not api_key:
         return None
 
-    location_type = "city street map" if is_city else (
-        "Canadian province" if country == "Canada" else "US state"
+    location_type = "city street map poster" if is_city else (
+        "Canadian province map poster" if country == "Canada" else "US state map poster"
     )
     style_labels = {"filled": "Filled", "outline": "Outline", "engraved": "Engraved"}
 
@@ -164,8 +171,8 @@ async def generate_title(
 Location: {location_name}
 Type: {location_type}
 {f'Province: {province}' if province and is_city else ''}
-Cut style: {style_labels.get(style, style)}
-Product: CNC-ready digital map file (SVG/DXF)"""
+Visual style: {style_labels.get(style, style)}
+Product: Printable city map wall art poster — high-resolution PNG digital download"""
 
     result = await _call_claude(
         system=_build_title_prompt(),
@@ -191,16 +198,16 @@ async def generate_tags(
     if not api_key:
         return None
 
-    location_type = "city street map" if is_city else (
-        "Canadian province" if country == "Canada" else "US state"
+    location_type = "city street map poster" if is_city else (
+        "Canadian province map poster" if country == "Canada" else "US state map poster"
     )
 
     user_msg = f"""Generate 13 Etsy tags for:
 Location: {location_name}
 Type: {location_type}
 Country: {country}
-Cut style: {style}
-Product: CNC digital map file (SVG/DXF) for wood carving, laser cutting"""
+Visual style: {style}
+Product: Printable city map wall art poster (high-res PNG digital download for framing). Bonus SVG/DXF included for CNC hobbyists."""
 
     result = await _call_claude(
         system=_build_tags_prompt(),
@@ -238,28 +245,28 @@ async def generate_full_listing(
     if not api_key:
         return {"title": None, "description": None, "tags": None}
 
-    location_type = "city street map" if is_city else (
-        "Canadian province map" if country == "Canada" else "US state map"
+    location_type = "city street map poster" if is_city else (
+        "Canadian province map poster" if country == "Canada" else "US state map poster"
     )
     style_labels = {
-        "filled": "filled/pocket-carved",
-        "outline": "outline/profile-cut",
-        "engraved": "engraved/v-carved",
+        "filled": "bold filled silhouette",
+        "outline": "clean outline",
+        "engraved": "detailed engraved line work",
     }
 
     features = []
     if has_streets:
         features.append("detailed street network")
     if has_water:
-        features.append("lakes and rivers")
+        features.append("rivers, lakes, and coastlines")
     if has_contours:
         features.append("elevation contours")
 
-    user_msg = f"""Generate an Etsy listing for this CNC map file. Return EXACTLY this format:
+    user_msg = f"""Generate an Etsy listing for this printable city map wall art poster. Return EXACTLY this format:
 
-TITLE: [your title here, max 140 chars]
-TAGS: [13 comma-separated tags, each max 20 chars]
-DESCRIPTION: [your description here, 800-1200 chars of flowing prose]
+TITLE: [your title here, max 140 chars — lead with wall-art keywords]
+TAGS: [13 comma-separated tags, each max 20 chars — home decor / wall art first]
+DESCRIPTION: [your description here, 800-1200 chars of flowing prose — lead with the wall-art / home-decor angle]
 
 Product details:
 - Location: {location_name}
@@ -268,18 +275,23 @@ Product details:
 {f'- Nickname: {nickname}' if nickname else ''}
 {f'- Capital: {capital}' if capital else ''}
 {f'- Province: {province}' if province and is_city else ''}
-- Cut style: {style_labels.get(style, style)}
-- Board size: {board_size}
-{f'- Complexity: {node_count:,} nodes' if node_count else ''}
-{f'- Features: {", ".join(features)}' if features else ''}
-- Formats: SVG, DXF, PNG (digital download only)
-- Compatible with: VCarve Pro, Fusion 360, Carbide Create, LightBurn, Easel"""
+- Visual style: {style_labels.get(style, style)}
+- Print size: {board_size}
+{f'- Map detail: {node_count:,} individual elements' if node_count else ''}
+{f'- Features shown: {", ".join(features)}' if features else ''}
+- Delivery: instant digital download (no physical product shipped)
+- Primary file: high-resolution PNG ready to print at frame sizes (8x10, 11x14, 16x20, 18x24, 24x36)
+- Bonus files: SVG and DXF included for CNC hobbyists and laser cutters (VCarve Pro, Fusion 360, Carbide Create, LightBurn, Easel)"""
 
-    system = """You are a copywriter for MapForge, an Etsy shop selling digital CNC map files (SVG/DXF).
+    system = """You are a copywriter for MapForge, an Etsy shop selling printable city map wall art posters (high-resolution PNG digital downloads for framing).
 
 Write compelling, unique listings that drive purchases. Each listing must be genuinely different.
-Use natural SEO keywords woven into flowing prose. Make the buyer feel connected to the location.
-Mention file formats, CNC compatibility, and that it's a digital download.
+Lead with the wall-art / home-decor angle — this is primarily framed art for the wall, not a CNC file.
+Make the buyer feel emotionally connected to the location: hometown pride, a meaningful gift, a memory of a place that matters.
+Mention gift occasions (housewarming, wedding, anniversary, moving away, graduation).
+Note that it prints at standard frame sizes and is an instant digital download.
+You may briefly mention that SVG/DXF files are also bundled for CNC hobbyists — but only as a secondary bonus, never as the lead.
+Use natural SEO keywords woven into flowing prose.
 Do NOT use emojis, ALL CAPS, or excessive punctuation.
 Do NOT use section headers in the description — write flowing prose.
 Return the EXACT format requested: TITLE, TAGS, then DESCRIPTION."""

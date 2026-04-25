@@ -19,7 +19,7 @@ _transformer = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
 
 # Douglas-Peucker tolerances (meters) per product type
 SIMPLIFICATION_TOLERANCES = {
-    ProductType.province: 800.0,
+    ProductType.province: 350.0,
     ProductType.lake: 50.0,
     ProductType.city: 75.0,
     ProductType.community: 30.0,

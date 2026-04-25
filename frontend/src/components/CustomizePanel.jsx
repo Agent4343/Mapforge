@@ -1,20 +1,17 @@
 const COLOR_THEMES = [
+  { value: "city_art", label: "City Map Art", bg: "#E8E8E8", road: "#1A1A1A", land: "#E8E8E8" },
   { value: "classic", label: "Classic", bg: "#faf8f5", road: "#8b7355", land: "#4a7c59" },
   { value: "modern_dark", label: "Modern Dark", bg: "#1a1a2e", road: "#e2e8f0", land: "#2d3748" },
-  { value: "rose_gold", label: "Rose Gold", bg: "#fdf2f0", road: "#8b6f66", land: "#d4a59a" },
   { value: "midnight", label: "Midnight Blue", bg: "#0f1923", road: "#c9d6df", land: "#1b3a4b" },
-  { value: "sage", label: "Sage Green", bg: "#f5f7f2", road: "#4a5e44", land: "#7d9b76" },
   { value: "minimal", label: "Minimal B&W", bg: "#ffffff", road: "#222222", land: "#e0e0e0" },
   { value: "navy_gold", label: "Navy & Gold", bg: "#0a1628", road: "#d4a843", land: "#1a2d52" },
-  { value: "blush", label: "Blush Pink", bg: "#fef0f0", road: "#c27c7c", land: "#e8b4b4" },
-  { value: "ocean", label: "Ocean Blue", bg: "#e8f4f8", road: "#1a5276", land: "#5dade2" },
   { value: "charcoal", label: "Charcoal", bg: "#2d2d2d", road: "#e0d5c1", land: "#4a4a4a" },
+  { value: "rose_gold", label: "Rose Gold", bg: "#fdf2f0", road: "#8b6f66", land: "#d4a59a" },
+  { value: "sage", label: "Sage Green", bg: "#f5f7f2", road: "#4a5e44", land: "#7d9b76" },
+  { value: "ocean", label: "Ocean Blue", bg: "#e8f4f8", road: "#1a5276", land: "#5dade2" },
+  { value: "blush", label: "Blush Pink", bg: "#fef0f0", road: "#c27c7c", land: "#e8b4b4" },
   { value: "terracotta", label: "Terracotta", bg: "#faf0e6", road: "#8b4513", land: "#cd7f50" },
   { value: "lavender", label: "Lavender", bg: "#f3f0ff", road: "#5b4a8a", land: "#b8a9d4" },
-  { value: "forest", label: "Forest", bg: "#0d1f0d", road: "#c4b896", land: "#1a4a1a" },
-  { value: "sunset", label: "Sunset", bg: "#fff5eb", road: "#c0392b", land: "#e67e22" },
-  { value: "arctic", label: "Arctic", bg: "#f0f8ff", road: "#2c3e50", land: "#85c1e9" },
-  { value: "vintage_map", label: "Vintage Map", bg: "#f0e6d0", road: "#2a2018", land: "#d8c8a8" },
 ];
 
 const SUBTITLE_PRESETS = [
@@ -31,266 +28,90 @@ export default function CustomizePanel({ config, onChange, user }) {
     onChange({ ...config, [key]: value });
   }
 
-  const isPro = user?.tier === "pro" || user?.tier === "admin";
-  const isPrint = true; // Always print/poster mode
-
   return (
     <div className="customize-section">
-      <h2>Customize</h2>
+      <h2>Customize Your Street Map</h2>
 
       {/* Display Text */}
       <div className="control-group">
-        <label>Display Text</label>
+        <label>City Name</label>
         <div className="input-with-count">
           <input
             type="text"
             value={config.text}
             onChange={(e) => update("text", e.target.value)}
-            placeholder="Location name"
+            placeholder="City name (auto-filled from search)"
             maxLength={200}
           />
           <span className="input-count">{config.text.length}/200</span>
         </div>
       </div>
 
-      {/* Subtitle / Tagline — Print mode */}
-      {isPrint && (
-        <div className="control-group">
-          <label>Subtitle / Tagline</label>
-          <input
-            type="text"
-            value={config.subtitle || ""}
-            onChange={(e) => update("subtitle", e.target.value)}
-            placeholder="Where We Met, Est. 2024, etc."
-            maxLength={100}
-          />
-          <div className="preset-chips">
-            {SUBTITLE_PRESETS.map((preset) => (
-              <button
-                key={preset}
-                className={`preset-chip${config.subtitle === preset ? " active" : ""}`}
-                onClick={() => update("subtitle", config.subtitle === preset ? "" : preset)}
-              >
-                {preset}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Size Settings Group */}
-      <div className="customize-group">
-        <div className="customize-group-label">{isPrint ? "Print Size" : "Board"}</div>
-        <div className="control-row">
-          <div className="control-group">
-            <label>Size</label>
-            <select
-              value={config.boardSize}
-              onChange={(e) => update("boardSize", e.target.value)}
+      {/* Subtitle / Tagline */}
+      <div className="control-group">
+        <label>Subtitle / Tagline</label>
+        <input
+          type="text"
+          value={config.subtitle || ""}
+          onChange={(e) => update("subtitle", e.target.value)}
+          placeholder="Where We Met, Est. 2024, etc."
+          maxLength={100}
+        />
+        <div className="preset-chips">
+          {SUBTITLE_PRESETS.map((preset) => (
+            <button
+              key={preset}
+              className={`preset-chip${config.subtitle === preset ? " active" : ""}`}
+              onClick={() => update("subtitle", config.subtitle === preset ? "" : preset)}
             >
-              {isPrint ? (
-                <>
-                  <option value="print_8x10">8&times;10&quot;</option>
-                  <option value="print_11x14">11&times;14&quot;</option>
-                  <option value="print_16x20">16&times;20&quot;</option>
-                  <option value="print_18x24">18&times;24&quot;</option>
-                  <option value="print_24x36">24&times;36&quot;</option>
-                  <option value="custom">Custom</option>
-                </>
-              ) : (
-                <>
-                  <option value="small">Small 12&times;16&quot;</option>
-                  <option value="medium">Medium 16&times;20&quot;</option>
-                  <option value="large">Large 20&times;24&quot;</option>
-                  <option value="xl">XL 24&times;32&quot;</option>
-                  <option value="max">Max 32&times;48&quot;</option>
-                  <option value="custom">Custom</option>
-                </>
-              )}
-            </select>
-          </div>
-
-        </div>
-
-        {config.boardSize === "custom" && (
-          <div className="control-row">
-            <div className="control-group">
-              <label>Width (in)</label>
-              <input
-                type="number"
-                min="2"
-                max="60"
-                step="0.5"
-                value={config.customWidth || 16}
-                onChange={(e) => update("customWidth", Number(e.target.value))}
-              />
-            </div>
-            <div className="control-group">
-              <label>Height (in)</label>
-              <input
-                type="number"
-                min="2"
-                max="60"
-                step="0.5"
-                value={config.customHeight || 20}
-                onChange={(e) => update("customHeight", Number(e.target.value))}
-              />
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Color Theme — Print mode only */}
-      {isPrint && (
-        <div className="customize-group">
-          <div className="customize-group-label">Color Theme</div>
-          <div className="theme-grid">
-            {COLOR_THEMES.map((theme) => (
-              <button
-                key={theme.value}
-                className={`theme-swatch${config.colorTheme === theme.value ? " active" : ""}`}
-                onClick={() => update("colorTheme", theme.value)}
-                title={theme.label}
-              >
-                <div className="theme-swatch-preview">
-                  <div className="theme-swatch-bg" style={{ background: theme.bg }} />
-                  <div className="theme-swatch-land" style={{ background: theme.land }} />
-                  <div className="theme-swatch-road" style={{ background: theme.road }} />
-                </div>
-                <span className="theme-swatch-label">{theme.label}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Poster Layout */}
-      {isPrint && (
-        <div className="customize-group">
-          <div className="customize-group-label">Poster Layout</div>
-          <div className="control-group">
-            <select
-              value={config.posterLayout || "classic"}
-              onChange={(e) => update("posterLayout", e.target.value)}
-            >
-              <option value="classic">Classic — Map top, text bottom</option>
-              <option value="minimal">Minimal — Edge-to-edge map</option>
-              <option value="editorial">Editorial — Text header above map</option>
-              <option value="bold">Bold — Full bleed with overlay text</option>
-              <option value="vintage">Vintage — Ornate border, serif text</option>
-            </select>
-          </div>
-        </div>
-      )}
-
-      {/* Typography & Frame — Print mode */}
-      {isPrint && (
-        <div className="customize-group">
-          <div className="customize-group-label">Typography & Frame</div>
-          <div className="control-row">
-            <div className="control-group">
-              <label>Font Style</label>
-              <select
-                value={config.fontFamily || "sans"}
-                onChange={(e) => update("fontFamily", e.target.value)}
-              >
-                <option value="sans">Clean Sans</option>
-                <option value="serif">Classic Serif</option>
-                <option value="script">Script / Romantic</option>
-                <option value="mono">Technical Mono</option>
-                <option value="display">Bold Display</option>
-                <option value="condensed">Condensed Elegant</option>
-                <option value="slab">Vintage Slab</option>
-              </select>
-            </div>
-            <div className="control-group">
-              <label>Border Frame</label>
-              <select
-                value={config.borderStyle || "none"}
-                onChange={(e) => update("borderStyle", e.target.value)}
-              >
-                <option value="none">None</option>
-                <option value="thin">Thin Line</option>
-                <option value="double">Double Frame</option>
-                <option value="ornate">Ornate Corners</option>
-              </select>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Heart Marker — Print mode, for gift/romantic maps */}
-      {isPrint && (config.productType === "city" || config.productType === "community") && (
-        <div className="customize-group">
-          <div className="customize-group-label">Heart Marker</div>
-          <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: "0 0 8px" }}>
-            Drop a heart on a special location — perfect for &quot;where we met&quot; gifts.
-          </p>
-          <div className="control-row">
-            <div className="control-group">
-              <label>Latitude</label>
-              <input
-                type="number"
-                step="0.0001"
-                placeholder="45.4215"
-                value={config.heartLat ?? ""}
-                onChange={(e) => update("heartLat", e.target.value ? parseFloat(e.target.value) : null)}
-              />
-            </div>
-            <div className="control-group">
-              <label>Longitude</label>
-              <input
-                type="number"
-                step="0.0001"
-                placeholder="-75.6972"
-                value={config.heartLon ?? ""}
-                onChange={(e) => update("heartLon", e.target.value ? parseFloat(e.target.value) : null)}
-              />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Product & Format Group */}
-      <div className="customize-group">
-        <div className="customize-group-label">Output</div>
-        <div className="control-row">
-          <div className="control-group">
-            <label>Product Type</label>
-            <select
-              value={config.productType}
-              onChange={(e) => update("productType", e.target.value)}
-            >
-              <option value="city">City</option>
-              <option value="community">Community</option>
-              <option value="lake">Lake</option>
-              <option value="province">Province / State</option>
-              <option value="park">Park</option>
-              <option value="name_sign">Name Sign (Pin)</option>
-            </select>
-          </div>
-
-        </div>
-
-        <div className="control-group">
-          <label>Font Size (mm)</label>
-          <input
-            type="range"
-            min="4"
-            max="40"
-            step="1"
-            value={config.fontSize}
-            onChange={(e) => update("fontSize", Number(e.target.value))}
-            className="range-input"
-          />
-          <span className="range-value">{config.fontSize}mm</span>
+              {preset}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Feature Toggles */}
+      {/* Print Size */}
       <div className="customize-group">
-        <div className="customize-group-label">Features</div>
+        <div className="customize-group-label">Print Size</div>
+        <div className="control-group">
+          <select
+            value={config.boardSize}
+            onChange={(e) => update("boardSize", e.target.value)}
+          >
+            <option value="print_8x10">8&times;10&quot;</option>
+            <option value="print_11x14">11&times;14&quot;</option>
+            <option value="print_16x20">16&times;20&quot;</option>
+            <option value="print_18x24">18&times;24&quot; (Recommended)</option>
+            <option value="print_24x36">24&times;36&quot;</option>
+          </select>
+        </div>
+      </div>
 
+      {/* Color Theme */}
+      <div className="customize-group">
+        <div className="customize-group-label">Color Theme</div>
+        <div className="theme-grid">
+          {COLOR_THEMES.map((theme) => (
+            <button
+              key={theme.value}
+              className={`theme-swatch${config.colorTheme === theme.value ? " active" : ""}`}
+              onClick={() => update("colorTheme", theme.value)}
+              title={theme.label}
+            >
+              <div className="theme-swatch-preview">
+                <div className="theme-swatch-bg" style={{ background: theme.bg }} />
+                <div className="theme-swatch-land" style={{ background: theme.land }} />
+                <div className="theme-swatch-road" style={{ background: theme.road }} />
+              </div>
+              <span className="theme-swatch-label">{theme.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Show Coordinates */}
+      <div className="customize-group">
+        <div className="customize-group-label">Options</div>
         <div className="toggle-row">
           <label>Show Coordinates</label>
           <label className="toggle-switch">
@@ -302,177 +123,81 @@ export default function CustomizePanel({ config, onChange, user }) {
             <span className="toggle-slider" />
           </label>
         </div>
+      </div>
+
+      {/* Heart Marker */}
+      <div className="customize-group">
+        <div className="customize-group-label">Heart Marker</div>
+        <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: "0 0 8px" }}>
+          Drop a heart on a special location — perfect for &quot;where we met&quot; gifts.
+        </p>
+        <div className="control-row">
+          <div className="control-group">
+            <label>Latitude</label>
+            <input
+              type="number"
+              step="0.0001"
+              placeholder="45.4215"
+              value={config.heartLat ?? ""}
+              onChange={(e) => update("heartLat", e.target.value ? parseFloat(e.target.value) : null)}
+            />
+          </div>
+          <div className="control-group">
+            <label>Longitude</label>
+            <input
+              type="number"
+              step="0.0001"
+              placeholder="-75.6972"
+              value={config.heartLon ?? ""}
+              onChange={(e) => update("heartLon", e.target.value ? parseFloat(e.target.value) : null)}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Print Production */}
+      <div className="customize-group">
+        <div className="customize-group-label">Print Production</div>
+
+        <div className="control-group">
+          <label>Print DPI</label>
+          <select
+            value={config.printDPI || 300}
+            onChange={(e) => update("printDPI", Number(e.target.value))}
+          >
+            <option value={300}>300 DPI (Standard)</option>
+            <option value={600}>600 DPI (High Quality)</option>
+          </select>
+        </div>
 
         <div className="toggle-row">
-          <label>Include Islands</label>
+          <label>Include Bleed (3mm)</label>
           <label className="toggle-switch">
             <input
               type="checkbox"
-              checked={config.includeIslands}
-              onChange={(e) => update("includeIslands", e.target.checked)}
+              checked={config.includeBleed || false}
+              onChange={(e) => update("includeBleed", e.target.checked)}
             />
             <span className="toggle-slider" />
           </label>
         </div>
 
-        {(config.productType === "city" || config.productType === "community") && (
-          <div className="toggle-row">
-            <label>Include Streets</label>
-            <label className="toggle-switch">
-              <input
-                type="checkbox"
-                checked={config.includeStreets}
-                onChange={(e) => update("includeStreets", e.target.checked)}
-              />
-              <span className="toggle-slider" />
-            </label>
-          </div>
-        )}
-
-        {(config.productType === "lake" || config.productType === "park" || config.productType === "community") && (
-          <div className="toggle-row">
-            <label>
-              Contours
-              {!isPro && <span className="pro-badge">Pro</span>}
-            </label>
-            <label className="toggle-switch">
-              <input
-                type="checkbox"
-                checked={config.includeContours}
-                onChange={(e) => update("includeContours", e.target.checked)}
-                disabled={!isPro}
-              />
-              <span className="toggle-slider" />
-            </label>
-          </div>
-        )}
-      </div>
-
-      {/* Map Elements — professional map features */}
-      {isPrint && (
-        <div className="customize-group">
-          <div className="customize-group-label">Map Elements</div>
-
-          <div className="toggle-row">
-            <label>Compass Rose</label>
-            <label className="toggle-switch">
-              <input
-                type="checkbox"
-                checked={config.showCompass || false}
-                onChange={(e) => update("showCompass", e.target.checked)}
-              />
-              <span className="toggle-slider" />
-            </label>
-          </div>
-
-          <div className="toggle-row">
-            <label>Scale Bar</label>
-            <label className="toggle-switch">
-              <input
-                type="checkbox"
-                checked={config.showScaleBar || false}
-                onChange={(e) => update("showScaleBar", e.target.checked)}
-              />
-              <span className="toggle-slider" />
-            </label>
-          </div>
-
-          <div className="toggle-row">
-            <label>Gradient Water</label>
-            <label className="toggle-switch">
-              <input
-                type="checkbox"
-                checked={config.gradientWater !== false}
-                onChange={(e) => update("gradientWater", e.target.checked)}
-              />
-              <span className="toggle-slider" />
-            </label>
-          </div>
-
-          <div className="toggle-row">
-            <label>Land Shadow</label>
-            <label className="toggle-switch">
-              <input
-                type="checkbox"
-                checked={config.landShadow !== false}
-                onChange={(e) => update("landShadow", e.target.checked)}
-              />
-              <span className="toggle-slider" />
-            </label>
-          </div>
-        </div>
-      )}
-
-      {config.includeContours && isPro && (
-        <div className="control-row">
-          <div className="control-group">
-            <label>Contour Type</label>
-            <select
-              value={config.contourType}
-              onChange={(e) => update("contourType", e.target.value)}
-            >
-              <option value="depth">Bathymetric (Depth)</option>
-              <option value="elevation">Topographic (Elevation)</option>
-            </select>
-          </div>
-          <div className="control-group">
-            <label>Depth Bands</label>
+        <div className="toggle-row">
+          <label>Include Crop Marks</label>
+          <label className="toggle-switch">
             <input
-              type="number"
-              min="2"
-              max="10"
-              value={config.numDepthBands}
-              onChange={(e) => update("numDepthBands", Number(e.target.value))}
+              type="checkbox"
+              checked={config.includeCropMarks || false}
+              onChange={(e) => update("includeCropMarks", e.target.checked)}
             />
-          </div>
+            <span className="toggle-slider" />
+          </label>
         </div>
-      )}
 
-      {/* Print Production — DPI, bleed, crop marks for professional printing */}
-      {isPrint && (
-        <div className="customize-group">
-          <div className="customize-group-label">Print Production</div>
-
-          <div className="control-group">
-            <label>Print DPI</label>
-            <select
-              value={config.printDPI || 300}
-              onChange={(e) => update("printDPI", Number(e.target.value))}
-            >
-              <option value={300}>300 DPI (Standard)</option>
-              <option value={600}>600 DPI (High Quality)</option>
-            </select>
-          </div>
-
-          <div className="toggle-row">
-            <label>Include Bleed (3mm)</label>
-            <label className="toggle-switch">
-              <input
-                type="checkbox"
-                checked={config.includeBleed || false}
-                onChange={(e) => update("includeBleed", e.target.checked)}
-              />
-              <span className="toggle-slider" />
-            </label>
-          </div>
-
-          <div className="toggle-row">
-            <label>Include Crop Marks</label>
-            <label className="toggle-switch">
-              <input
-                type="checkbox"
-                checked={config.includeCropMarks || false}
-                onChange={(e) => update("includeCropMarks", e.target.checked)}
-              />
-              <span className="toggle-slider" />
-            </label>
-          </div>
-
-          <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: "8px 0 0" }}>
-            Enable bleed and crop marks for professional print shops. Standard prints do not need these.
-          </p>
-        </div>
-      )}
+        <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: "8px 0 0" }}>
+          Enable bleed and crop marks for professional print shops. Standard prints do not need these.
+        </p>
+      </div>
     </div>
   );
 }

@@ -504,24 +504,61 @@ COLOR_THEMES = {
             "text_secondary": "#4a3828",
         },
     },
+    "city_art": {
+        "label": "City Map Art",
+        "background": "#E8E8E8",
+        "colors": {
+            "#2a2a2a": "#E8E8E8",
+            "#1a1a1a": "#AAAAAA",
+            "#d4e6f1": "#D0D0D0",
+            "#7fb3d3": "#D0D0D0",
+            "#333333": "#1A1A1A",
+            "#555555": "#888888",
+            "#444444": "#1A1A1A",
+            "#cccccc": "#AAAAAA",
+            "#666666": "#333333",
+        },
+        "poster": {
+            "mat": "#F0F0F0",
+            "map_bg": "#FFFFFF",
+            "land": "#FFFFFF",
+            "land_stroke": "#BBBBBB",
+            "water": "#D0D0D0",
+            "water_stroke": "#C0C0C0",
+            "street_major": "#1A1A1A",
+            "street_minor": "#888888",
+            "street_label": "#1A1A1A",
+            "text_primary": "#000000",
+            "text_secondary": "#333333",
+        },
+    },
 }
 
 
 def get_theme_colors(theme_name: str) -> dict:
     """Get color map for a theme. Falls back to classic."""
-    theme = COLOR_THEMES.get(theme_name, COLOR_THEMES["classic"])
+    resolved = _THEME_ALIASES.get(theme_name, theme_name)
+    theme = COLOR_THEMES.get(resolved, COLOR_THEMES["classic"])
     return theme["colors"]
 
 
 def get_theme_background(theme_name: str) -> str:
     """Get background color for a theme."""
-    theme = COLOR_THEMES.get(theme_name, COLOR_THEMES["classic"])
+    resolved = _THEME_ALIASES.get(theme_name, theme_name)
+    theme = COLOR_THEMES.get(resolved, COLOR_THEMES["classic"])
     return theme["background"]
+
+
+_THEME_ALIASES = {
+    "city_map_art": "city_art",
+    "cityart": "city_art",
+}
 
 
 def get_poster_theme(theme_name: str) -> dict:
     """Get poster-specific color palette for print-mode SVG generation."""
-    theme = COLOR_THEMES.get(theme_name, COLOR_THEMES["classic"])
+    resolved = _THEME_ALIASES.get(theme_name, theme_name)
+    theme = COLOR_THEMES.get(resolved, COLOR_THEMES["classic"])
     return theme.get("poster", COLOR_THEMES["classic"]["poster"])
 
 

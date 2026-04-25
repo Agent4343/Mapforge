@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { getLibrary, deleteLibraryFile, downloadSVG, downloadPrintPNG } from "../services/api.js";
+import { getLibrary, deleteLibraryFile, deleteAllLibraryFiles, downloadSVG, downloadPrintPNG } from "../services/api.js";
 
 export default function LibraryView({ onBack }) {
   const [files, setFiles] = useState([]);
@@ -36,6 +36,21 @@ export default function LibraryView({ onBack }) {
     }
   }
 
+  async function handleDeleteAll() {
+    if (!confirm(`Delete all ${total} files from your library? Marketplace-listed files will be kept.`)) return;
+    if (!confirm("Are you sure? This cannot be undone.")) return;
+    try {
+      const result = await deleteAllLibraryFiles();
+      setPage(1);
+      loadLibrary();
+      if (result.skipped > 0) {
+        setError(`Deleted ${result.deleted} files. ${result.skipped} marketplace-listed files were kept.`);
+      }
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   async function handleDownload(fileId, name, format) {
     try {
       let blob;
@@ -60,6 +75,11 @@ export default function LibraryView({ onBack }) {
         <button className="btn btn-secondary" onClick={onBack}>Back</button>
         <h2>Template Library</h2>
         <span className="stat-value">{total} files</span>
+        {total > 0 && (
+          <button className="btn btn-secondary" style={{ marginLeft: "auto", color: "#c0392b" }} onClick={handleDeleteAll}>
+            Delete All
+          </button>
+        )}
       </div>
 
       <input
