@@ -8,7 +8,7 @@ async def test_root(client):
     resp = await client.get("/")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["app"] == "MapForge CNC"
+    assert data["app"] == "MapForge"
     assert data["version"] == "1.0.0"
 
 

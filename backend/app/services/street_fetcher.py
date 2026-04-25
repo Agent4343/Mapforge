@@ -170,6 +170,7 @@ async def fetch_streets(
     include_minor: bool = True,
     osm_id: int | None = None,
     osm_type: str | None = None,
+    skip_detail: bool = False,
 ) -> dict:
     """Fetch street network for a geographic area.
 
@@ -179,12 +180,20 @@ async def fetch_streets(
     3. If all roads fail, fall back to major roads only
     4. Try endpoints sequentially (not racing) to avoid IP bans
 
+    Args:
+        skip_detail: If True, exclude detail-layer roads (footway, cycleway, path,
+                     steps, bridleway) from the query. Used for large cities to
+                     reduce Overpass response from 1M+ to ~200K elements.
+
     Returns:
         dict with 'major_roads' and 'minor_roads' lists
     """
     start = time.monotonic()
 
-    all_filter = "|".join(ROAD_CLASSES.keys())
+    if skip_detail:
+        road_filter = "|".join(k for k, v in ROAD_CLASSES.items() if v["layer"] != "detail")
+    else:
+        road_filter = "|".join(ROAD_CLASSES.keys())
     major_filter = "|".join(k for k, v in ROAD_CLASSES.items() if v["layer"] == "major")
 
     # Choose query builder based on whether we have an OSM relation ID
@@ -201,7 +210,7 @@ async def fetch_streets(
 
     if include_minor:
         # Try all roads with ~25s budget
-        data = await _fetch_with_fallback(build_q(all_filter), timeout_per_endpoint=15.0, total_budget=20.0)
+        data = await _fetch_with_fallback(build_q(road_filter), timeout_per_endpoint=15.0, total_budget=20.0)
 
         # Fall back to major roads if all roads failed
         if data is None:

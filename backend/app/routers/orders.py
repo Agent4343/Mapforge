@@ -16,14 +16,16 @@ import json
 import secrets
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database import async_session
+from app.database import async_session, get_db
 from app.logging_config import log
-from app.models.db_models import DesignCredit, GeneratedFile
+from app.models.db_models import DesignCredit, GeneratedFile, User
+from app.services.auth import get_current_user
 
 router = APIRouter(prefix="/api/v1/orders", tags=["orders"])
 
@@ -182,10 +184,17 @@ async def get_credit_status(token: str):
 
 
 @router.get("/download/{token}")
-async def download_files(token: str, format: str = Query("png")):
-    """Download generated files using the design credit token."""
+async def download_files(token: str, format: str = Query("zip")):
+    """Download generated files using the design credit token.
+
+    Default format is "zip" — a complete bundle containing the printable
+    wall art poster, vector sources, CNC/laser files, wall mockups, and a
+    how-to-print README. Individual formats ("png", "svg", "dxf",
+    "thumbnail") are also still supported for buyers who want a single file.
+    """
     from fastapi.responses import StreamingResponse
     from app.services.file_storage import get_file
+    from app.services.bundle_zip import build_customer_bundle_zip, seo_filename
 
     async with async_session() as db:
         result = await db.execute(
@@ -215,7 +224,38 @@ async def download_files(token: str, format: str = Query("png")):
     if not gen_file:
         raise HTTPException(status_code=404, detail="Generated file not found")
 
-    # Determine which file to serve
+    # --- ZIP bundle path (default) ---------------------------------------
+    if format == "zip":
+        try:
+            zip_bytes = await build_customer_bundle_zip(gen_file)
+        except Exception as e:
+            log.error(f"Failed to build customer bundle zip for credit {credit.id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to build download bundle. Please try again.")
+
+        if not zip_bytes:
+            raise HTTPException(status_code=404, detail="No files available for this order.")
+
+        # Increment download count only after a successful bundle build
+        async with async_session() as db:
+            result = await db.execute(select(DesignCredit).where(DesignCredit.id == credit.id))
+            c = result.scalar_one()
+            c.download_count += 1
+            await db.commit()
+
+        zip_filename = seo_filename(
+            gen_file.location_name or credit.location_name or "map",
+            "zip",
+            suffix="bundle",
+        )
+        return StreamingResponse(
+            iter([zip_bytes]),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{zip_filename}"',
+            },
+        )
+
+    # --- Single-file fallback paths (legacy) -----------------------------
     key = None
     content_type = "application/octet-stream"
     filename_ext = format
@@ -291,26 +331,43 @@ async def create_credit_manually(
     product_tier: str = "standard",
     etsy_buyer_email: str | None = None,
     max_downloads: int = 5,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Manually create a design credit (admin/testing use).
+    """Manually mint a design credit (admin-only; for testing and
+    out-of-band Etsy sales).
+
+    A credit is a prepaid entitlement to one map generation. Without
+    an auth gate, any anonymous visitor could POST here and mint
+    themselves unlimited free credits — each credit later redeems
+    into a MapTiler-backed generation we pay for. This endpoint MUST
+    require admin because every normal credit creation path is the
+    webhook handler triggered by a real Etsy purchase.
 
     Returns the unique design link that you can share with a customer.
     """
+    if user.tier != "admin":
+        raise HTTPException(status_code=403, detail="Admin only.")
+
     token = secrets.token_urlsafe(32)
     frontend_url = settings.FRONTEND_URL or "http://localhost:5173"
 
-    async with async_session() as db:
-        credit = DesignCredit(
-            product_type=product_type,
-            product_tier=product_tier,
-            etsy_buyer_email=etsy_buyer_email,
-            redeem_token=token,
-            max_downloads=max_downloads,
-        )
-        db.add(credit)
-        await db.commit()
+    credit = DesignCredit(
+        product_type=product_type,
+        product_tier=product_tier,
+        etsy_buyer_email=etsy_buyer_email,
+        redeem_token=token,
+        max_downloads=max_downloads,
+    )
+    db.add(credit)
+    await db.commit()
+    await db.refresh(credit)
 
     design_url = f"{frontend_url}?credit={token}"
+    log.info(
+        f"Admin {user.username} minted credit {credit.id} "
+        f"(product={product_type}, tier={product_tier})"
+    )
 
     return {
         "credit_id": credit.id,

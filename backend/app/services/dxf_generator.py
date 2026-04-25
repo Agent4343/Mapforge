@@ -11,6 +11,7 @@ import ezdxf
 from ezdxf.enums import TextEntityAlignment
 
 from app.services.geometry_processor import transform_wgs84_to_board
+from app.services.svg_generator import _filter_streets_for_cnc
 
 
 def generate_dxf(
@@ -103,7 +104,9 @@ def generate_dxf(
             align=TextEntityAlignment.BOTTOM_CENTER,
         )
 
-    # Streets and street labels
+    # Streets and street labels — filtered for CNC: major roads only
+    if streets_data:
+        streets_data = _filter_streets_for_cnc(streets_data)
     if streets_data:
         transform = processed.get("transform")
         doc.layers.add("STREETS", color=8)

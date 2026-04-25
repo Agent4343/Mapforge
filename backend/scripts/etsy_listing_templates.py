@@ -39,9 +39,9 @@ STYLE_NAMES = {
 }
 
 STYLE_DESCRIPTIONS = {
-    "filled": "pocket-carved with a clean filled silhouette",
-    "outline": "profile-cut with a precise outline border",
-    "engraved": "v-carved with detailed engraved lines",
+    "filled": "rendered as a bold filled silhouette",
+    "outline": "rendered with a clean outline border",
+    "engraved": "rendered with detailed engraved line work",
 }
 
 # State/province metadata for rich descriptions
@@ -136,34 +136,35 @@ LOCATION_META = {
 
 
 def generate_title(name: str, style: str) -> str:
-    """Generate an Etsy-optimized title (max 140 chars)."""
+    """Generate an Etsy-optimized title (max 140 chars) — wall art first."""
     meta = LOCATION_META.get(name, {})
     country = meta.get("country", "")
     is_city = meta.get("type") == "city"
     style_label = STYLE_NAMES.get(style, style.title())
 
     if is_city:
-        province = meta.get("province", "Canada")
-        title = f"{name} City Street Map SVG DXF — CNC Wood Carving — {style_label} — {province} Wall Art"
+        province = meta.get("province", "")
+        region = province or ("Canada" if country == "Canada" else "USA")
+        title = f"{name} City Map Print — Printable Wall Art Poster — {style_label} Style — {region} Home Decor Gift"
     elif country == "Canada":
-        title = f"{name} Map SVG DXF — CNC Wood Carving File — {style_label} Style — Canadian Province Wall Art"
+        title = f"{name} Map Print — Printable Wall Art Poster — {style_label} Style — Canadian Province Home Decor Gift"
     else:
-        title = f"{name} State Map SVG DXF — CNC Wood Carving File — {style_label} Style — Wall Art Decor"
+        title = f"{name} State Map Print — Printable Wall Art Poster — {style_label} Style — Home Decor Housewarming Gift"
 
     # Etsy title limit is 140 characters
     if len(title) > 140:
         if is_city:
-            title = f"{name} Street Map SVG DXF — CNC Carving — {style_label} — City Art"
+            title = f"{name} City Map Art — Printable Wall Poster — {style_label} — Home Decor Gift"
         elif country == "Canada":
-            title = f"{name} Map SVG DXF — CNC Carving File — {style_label} — Canadian Province Art"
+            title = f"{name} Map Art — Printable Wall Poster — {style_label} — Canadian Home Decor"
         else:
-            title = f"{name} Map SVG DXF — CNC Carving File — {style_label} — State Wall Art"
+            title = f"{name} State Map Art — Printable Wall Poster — {style_label} — Home Decor Gift"
 
     return title[:140]
 
 
 def generate_description(name: str, style: str) -> str:
-    """Generate a rich Etsy product description."""
+    """Generate a rich Etsy product description — wall art first, CNC as bonus."""
     meta = LOCATION_META.get(name, {})
     country = meta.get("country", "")
     nickname = meta.get("nickname", "")
@@ -172,116 +173,108 @@ def generate_description(name: str, style: str) -> str:
 
     if is_city:
         province = meta.get("province", "Canada")
-        product_label = f"city street map of {name}, {province}"
-        streets_section = """
-STREET MAP LAYERS:
-- detail_lines — Major and minor road network (engrave: 1/8" ball nose)
-- street_labels — Road names placed along paths (V-carve: 60° V-bit)
-- water_features — Rivers, lakes, and coastlines (pocket: 1/8" ball nose)
-"""
+        product_label = f"city street map poster of {name}, {province}"
+        features_shown = "the street network, parks, rivers, and coastlines"
         perfect_for = f"""PERFECT FOR:
-- CNC router projects (wood signs, wall art, cutting boards)
-- Laser cutting and engraving
-- City pride gifts and home decor for {name} locals
+- Home, office, and apartment wall decor
 - Housewarming gifts for someone moving to {name}
-- Real estate closing gifts
-- Wedding venue maps
-- {name}, {province} hometown pride"""
+- Wedding, anniversary, and "where we met" gifts
+- Real estate closing gifts from agents to new homeowners
+- Going-away gifts for friends leaving {name}
+- {name}, {province} hometown pride for expats
+- Graduation and college dorm art
+- Memorial or "place that mattered" keepsakes"""
     else:
-        product_label = f"{'Canadian province' if country == 'Canada' else 'US state'} map of {name}"
-        streets_section = ""
+        region_label = "Canadian province" if country == "Canada" else "US state"
+        product_label = f"{region_label} map poster of {name}"
+        features_shown = "the full state outline, major cities, rivers, and coastlines"
         perfect_for = f"""PERFECT FOR:
-- CNC router projects (wood signs, wall art, cutting boards)
-- Laser cutting and engraving
-- 3D carving with depth layers
-- {name} pride gifts and home decor
-- Housewarming, birthday, and holiday gifts"""
+- Home, office, and apartment wall decor
+- {name} pride and hometown gifts
+- Housewarming, birthday, graduation, and holiday gifts
+- Going-away gifts for friends leaving {name}
+- "Home state" nostalgia art for expats
+- Classroom, library, and travel-themed decor"""
 
     desc = f"""{name} — {nickname}
 
-A clean, CNC-ready {product_label} designed to be {style_desc} into wood, acrylic, or other materials.
+A modern, minimalist {product_label}, {style_desc} in a clean contemporary style. Instant digital download — ready to print and frame.
 
-WHAT YOU GET:
-- SVG file optimized for CNC routers (VCarve Pro, Fusion 360, Easel, Carbide Create)
-- DXF file for CAD/CAM software (AutoCAD, VCarve, Aspire)
-- PNG mockup image for preview
-- Organized layers for easy toolpath setup
-- Geographic coordinates displayed on design
-- Millimeter-precision paths (2 decimal places)
+This printable wall art shows {features_shown}, with the location name and exact GPS coordinates beautifully laid out beneath the map. It is designed to look at home above a sofa, on a gallery wall, in an office, or framed on a shelf as a daily reminder of a place that matters.
+
+WHAT YOU GET (instant digital download):
+- High-resolution PNG poster ready to print at standard frame sizes
+  (8x10, 11x14, 16x20, 18x24, and 24x36 inches)
+- 300 DPI print quality — sharp edges, clean typography
+- Bonus SVG and DXF vector files included for CNC hobbyists and laser cutters
+  (VCarve Pro, Fusion 360, Carbide Create, LightBurn, Easel compatible)
+- Map is drawn from real OpenStreetMap geographic data
 
 DESIGN DETAILS:
-- Product type: {product_label}
-- Cut style: {STYLE_NAMES.get(style, style.title())} ({style_desc})
-- Board size: 20" x 24" (Large) — resizable in your CAM software
-- All paths closed and CNC-optimized (M/L/Z commands only, no curves)
+- Location: {name}
+- Visual style: {STYLE_NAMES.get(style, style.title())} — {style_desc}
+- Default print layout: 18" x 24" (scales cleanly to any frame size)
+- Clean minimalist typography with location name + GPS coordinates
 
-LAYER STRUCTURE (for VCarve / toolpath mapping):
-- board_outline — Optional profile cut (1/4" downcut endmill)
-- geography_{style} — Main map shape
-- text_primary — "{name}" location text (V-carve: 60° V-bit)
-- text_coordinates — Lat/lon coordinates
-{streets_section}
 {perfect_for}
 
-RECOMMENDED MATERIALS:
-- Hardwood (walnut, maple, cherry, oak) for CNC carving
-- Baltic birch plywood for laser cutting
-- Acrylic or MDF for clean engraving
+HOW TO PRINT:
+- Print at home on any inkjet or laser printer
+- Upload to a local print shop, Staples, FedEx Office, or an online print service (Shutterfly, Mpix, Printful)
+- Frame in any standard frame size — no custom framing needed
 
 NOTES:
-- This is a DIGITAL FILE — no physical product will be shipped
+- This is an INSTANT DIGITAL DOWNLOAD — no physical product will be shipped
+- Files are delivered immediately after purchase
 - Geographic data sourced from OpenStreetMap (ODbL license)
-- File can be scaled to any board size in your CAM software
-- Custom markers (Home, Cottage) available — contact us"""
+- Custom locations, subtitles, and markers available — message us before ordering"""
 
     return desc
 
 
 def generate_tags(name: str, style: str) -> str:
-    """Generate Etsy tags (max 13 tags, max 20 chars each)."""
+    """Generate Etsy tags (max 13 tags, max 20 chars each) — wall art first."""
     meta = LOCATION_META.get(name, {})
     country = meta.get("country", "")
     is_city = meta.get("type") == "city"
 
-    # Base tags (always included)
+    # Base tags — home decor / wall art buyers first
     tags = [
         f"{name} map",
-        "CNC file",
-        "SVG DXF",
-        "wood carving",
-        "wall art",
-        f"{name} art",
-        "CNC router",
-        "laser cut file",
+        f"{name} print",
+        "map wall art",
+        "printable art",
+        "city map print",
+        "home decor",
+        "housewarming gift",
         "digital download",
     ]
 
     if is_city:
         province = meta.get("province", "")
         tags.extend([
-            "city map",
-            "street map",
-            f"{name} Canada",
-            province[:20] if province else "Canada map",
+            "city map poster",
+            "custom map art",
+            f"{name} poster",
+            province[:20] if province else "map art gift",
         ])
     elif country == "Canada":
         tags.extend([
-            "Canada map",
-            "Canadian art",
-            "province map",
+            "Canada map art",
+            "province poster",
             f"{name} Canada",
+            "Canadian art",
         ])
     else:
         tags.extend([
-            "state map",
-            "USA map",
+            "state map art",
+            "USA map print",
             f"{name} state",
-            "home state",
+            "home state gift",
         ])
 
-    # Style-specific tag
-    style_tag = f"{style} style"
-    tags.append(style_tag)
+    # One CNC/SVG tag at the end for the hobbyist niche
+    tags.append("svg dxf file")
 
     # Etsy allows max 13 tags, each max 20 characters
     tags = [t[:20] for t in tags[:13]]

@@ -124,7 +124,10 @@ async def fetch_water_features(
     # Simplified query — combine water selectors to reduce Overpass load.
     # Using a shorter timeout (30s instead of 45s) to fail faster and try
     # the next endpoint sooner.
-    query = f"""[out:json][timeout:30];(way["natural"="water"]({south},{west},{north},{east});way["natural"="coastline"]({south},{west},{north},{east});way["waterway"~"^(river|stream|canal)$"]({south},{west},{north},{east});relation["natural"="water"]({south},{west},{north},{east});way["water"~"^(lake|reservoir|pond)$"]({south},{west},{north},{east});relation["water"~"^(lake|reservoir|pond)$"]({south},{west},{north},{east}););out body;>;out skel qt;"""
+    # Includes natural=bay so harbour polygons (Sydney Harbour, Halifax
+    # Harbour, Vancouver Harbour, etc.) are captured as filled water bodies
+    # rather than only as coastline lines that the poster renderer ignores.
+    query = f"""[out:json][timeout:30];(way["natural"="water"]({south},{west},{north},{east});way["natural"="bay"]({south},{west},{north},{east});way["natural"="coastline"]({south},{west},{north},{east});way["waterway"~"^(river|stream|canal)$"]({south},{west},{north},{east});relation["natural"="water"]({south},{west},{north},{east});relation["natural"="bay"]({south},{west},{north},{east});way["water"~"^(lake|reservoir|pond|bay|harbour|lagoon)$"]({south},{west},{north},{east});relation["water"~"^(lake|reservoir|pond|bay|harbour|lagoon)$"]({south},{west},{north},{east}););out body;>;out skel qt;"""
 
     log.info(f"Fetching water features for bbox: {bbox}")
 
@@ -163,8 +166,8 @@ async def fetch_water_features(
 
         # Closed ways (polygons) vs open ways (rivers/streams)
         is_area = (
-            tags.get("natural") == "water"
-            or tags.get("water") in ("lake", "reservoir", "pond", "river")
+            tags.get("natural") in ("water", "bay")
+            or tags.get("water") in ("lake", "reservoir", "pond", "river", "bay", "harbour", "lagoon")
         )
         is_closed = len(coords) >= 4 and coords[0] == coords[-1]
 
@@ -175,11 +178,19 @@ async def fetch_water_features(
         elif tags.get("natural") == "coastline":
             waterways.append((coords, "coastline", name))
 
-    # Process relations (multipolygon water bodies like large lakes)
+    # Process relations (multipolygon water bodies like large lakes,
+    # plus harbour/bay relations such as Sydney Harbour)
     for rel in relations:
         tags = rel.get("tags", {})
+        # Skip non-water relations that may have been pulled in incidentally
+        natural = tags.get("natural", "")
+        water_tag = tags.get("water", "")
+        if natural not in ("water", "bay") and water_tag not in (
+            "lake", "reservoir", "pond", "river", "bay", "harbour", "lagoon"
+        ):
+            continue
         name = tags.get("name", "")
-        water_type = tags.get("water", tags.get("natural", "water"))
+        water_type = water_tag or natural or "water"
 
         outer_rings = []
         for member in rel.get("members", []):

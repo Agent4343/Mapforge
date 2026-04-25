@@ -22,26 +22,74 @@ OVERPASS_HEADERS = {"User-Agent": "MapForgeCNC/1.0 (https://mapforge-production.
 OSM_TYPE_MAP = {"node": "N", "way": "W", "relation": "R"}
 
 
-async def fetch_geometry(osm_id: int, osm_type: str = "relation") -> MultiPolygon | Polygon | None:
+async def fetch_geocode_record(
+    osm_id: int,
+    osm_type: str = "relation",
+) -> dict | None:
+    """Fetch the raw Nominatim lookup record for an OSM feature.
+
+    Returns the first result dict (with class, type, extratags,
+    boundingbox, display_name, importance, lat, lon) or None. Used
+    by the MapController to classify place type and plan the render
+    without re-geocoding. This function deliberately does NOT parse
+    the geometry — `fetch_geometry` handles that.
+    """
+    type_prefix = OSM_TYPE_MAP.get(osm_type, "R")
+    params = {
+        "osm_ids": f"{type_prefix}{osm_id}",
+        "format": "json",
+        "polygon_geojson": 0,  # no polygon — we just want metadata
+        "extratags": 1,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                NOMINATIM_LOOKUP_URL, params=params, headers=NOMINATIM_HEADERS,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except (httpx.HTTPError, httpx.ProxyError) as e:
+        log.warning(f"Nominatim metadata request failed for {osm_type}/{osm_id}: {e}")
+        return None
+    if not data:
+        return None
+    return data[0]
+
+
+async def fetch_geometry(
+    osm_id: int,
+    osm_type: str = "relation",
+    prefer_overpass: bool = False,
+) -> MultiPolygon | Polygon | None:
     """Fetch full polygon geometry for an OSM feature.
 
     Checks cache first, then tries Nominatim (fast path), falls back to Overpass.
+    When prefer_overpass=True (e.g. for provinces where Nominatim's
+    pre-simplified polygon_geojson is too coarse for poster art), Overpass
+    is tried first to get full-resolution boundary nodes.
     """
-    # Check cache
-    cache_key = make_geometry_key(osm_id, osm_type)
+    # Cache key includes source so coarse Nominatim results never shadow
+    # the high-res Overpass results (or vice versa).
+    source_tag = "ovp" if prefer_overpass else "nom"
+    cache_key = f"{make_geometry_key(osm_id, osm_type)}:{source_tag}"
     cached = await cache_get(cache_key)
     if cached is not None:
         try:
             geom = shape(cached)
             if isinstance(geom, (Polygon, MultiPolygon)):
-                log.info(f"Geometry cache hit: {osm_type}/{osm_id}")
+                log.info(f"Geometry cache hit: {osm_type}/{osm_id} ({source_tag})")
                 return geom
         except Exception:
             pass
 
-    geom = await _fetch_via_nominatim(osm_id, osm_type)
-    if geom is None:
+    if prefer_overpass:
         geom = await _fetch_via_overpass(osm_id, osm_type)
+        if geom is None:
+            geom = await _fetch_via_nominatim(osm_id, osm_type)
+    else:
+        geom = await _fetch_via_nominatim(osm_id, osm_type)
+        if geom is None:
+            geom = await _fetch_via_overpass(osm_id, osm_type)
 
     # Cache the result
     if geom is not None:
