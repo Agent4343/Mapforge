@@ -169,7 +169,7 @@ _CSP = (
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
     "font-src 'self' https://fonts.gstatic.com data:; "
     "img-src 'self' data: blob: https://api.maptiler.com; "
-    "connect-src 'self' https://api.maptiler.com https://fonts.googleapis.com; "
+    "connect-src 'self' https://api.maptiler.com https://fonts.googleapis.com data: blob:; "
     "worker-src 'self' blob:; "
     "frame-ancestors 'none'; "
     "base-uri 'self'; "
