@@ -1,6 +1,4 @@
 """Test fixtures for MapForge CNC backend tests."""
-
-import asyncio
 import os
 
 # Disable slowapi rate limits for the whole test session. Fixtures
@@ -12,7 +10,6 @@ os.environ.setdefault("DISABLE_RATE_LIMIT", "1")
 
 from unittest.mock import AsyncMock, patch  # noqa: E402
 
-import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine  # noqa: E402
@@ -25,13 +22,6 @@ TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
 engine = create_async_engine(TEST_DATABASE_URL, connect_args={"check_same_thread": False})
 TestSession = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-
-@pytest.fixture(scope="session")
-def event_loop():
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
 
 
 @pytest_asyncio.fixture
