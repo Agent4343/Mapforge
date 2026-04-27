@@ -42,16 +42,17 @@ POSTER_THEMES = {
         # Mat stays one shade lighter than land so the poster sits
         # on a visible but subtle backdrop.
         "bg": (252, 252, 251), "map_bg": (248, 248, 246),
-        "title": (25, 25, 25), "subtitle": (100, 100, 100),
+        "title": (28, 28, 28), "subtitle": (108, 108, 108),
         "border": (200, 200, 200), "line": (180, 180, 180),
-        # Four-tier road hierarchy per the spec: highways dark
-        # charcoal medium thickness, secondary grey thin, local
-        # very light grey. Matches Mapiful's weighting so arterials
-        # read as backbone and residentials as texture.
-        "road_major": (20, 20, 20),    # motorway, trunk
-        "road_arterial": (70, 70, 70), # primary, secondary
-        "road_collector": (125, 125, 125),# tertiary
-        "road_minor": (180, 180, 180), # residential, service
+        # Four-tier road hierarchy with a refined charcoal top tier
+        # (instead of pure-black). Pure black on cream reads as
+        # printer ink, not a gallery print — a hair of warmth on the
+        # darkest tone makes the whole composition feel printed on
+        # paper rather than rendered on a screen.
+        "road_major": (44, 44, 44),    # motorway, trunk
+        "road_arterial": (88, 88, 88), # primary, secondary
+        "road_collector": (138, 138, 138),# tertiary
+        "road_minor": (188, 188, 188), # residential, service
         "map_mode": "light", "water": (167, 199, 231),   # #A7C7E7
         "water_edge": (110, 150, 190),
         "park": (232, 239, 231),                         # #E8EFE7
@@ -919,12 +920,13 @@ def render_map_image(
         if bbox_area > 2.0:
             # Province / island: residential grid is noise at this
             # scale so it's dropped; the major/arterial hierarchy
-            # carries the whole poster. Weights bumped 6/4 -> 10/6
-            # so the Trans-Canada / highway 125 / Cabot Trail read
-            # as a clear backbone at 300 DPI instead of hairlines
-            # on an otherwise empty island.
-            minor_mult, major_mult = 5, 10
-            minor_min, major_min = 3, 6
+            # carries the whole poster. The previous 10/6 weights
+            # rendered the Trans-Canada / Hwy 125 / Cabot Trail as
+            # bold black slabs that visually dominated Cape Breton.
+            # Trimmed to 7/4 — backbone reads clearly without
+            # overpowering the island silhouette.
+            minor_mult, major_mult = 4, 7
+            minor_min, major_min = 2, 4
             min_residential_px = 440
             drop_all_residentials = True
         elif bbox_area > 0.5:
