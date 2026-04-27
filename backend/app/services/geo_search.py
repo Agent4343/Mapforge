@@ -30,6 +30,104 @@ MIN_IMPORTANCE = 0.05
 MAX_LAT = 85.0          # Web Mercator practical limit
 MIN_LAT = -85.0
 
+# ── Vague-match filter ──────────────────────────────────────────────
+#
+# Posters of "Halifax County" or "downtown Halifax suburb XYZ" are
+# almost never what a user means when they search "Halifax". Filter
+# these out unless the query explicitly asks for one.
+#
+# The spec calls these out as "vague matches such as regions,
+# counties, nearby suburbs, or bounding boxes". We treat:
+#
+#   - place=suburb / quarter / neighbourhood       → suburb-class
+#   - boundary=administrative admin_level 5,6,7    → county / district
+#
+# as vague unless the user explicitly typed a related keyword.
+
+_VAGUE_PLACE_TYPES = frozenset({"suburb", "quarter", "neighbourhood"})
+_VAGUE_ADMIN_LEVELS = frozenset({"5", "6", "7"})
+_VAGUE_OVERRIDE_KEYWORDS = frozenset({
+    "county", "counties", "district", "districts",
+    "suburb", "suburbs", "borough", "boroughs",
+    "region", "regions", "neighbourhood", "neighborhood",
+    "quarter",
+})
+
+
+def _is_vague_match(item: dict, query_tokens: set[str]) -> bool:
+    """True if this Nominatim result is the kind of vague match the
+    spec says to drop (county, suburb, region) — unless the query
+    explicitly mentions one of those keywords."""
+    if query_tokens & _VAGUE_OVERRIDE_KEYWORDS:
+        return False
+    osm_class = (item.get("class") or "").lower()
+    osm_type = (item.get("type") or "").lower()
+    if osm_class == "place" and osm_type in _VAGUE_PLACE_TYPES:
+        return True
+    if osm_class == "boundary" and osm_type == "administrative":
+        admin_level = str((item.get("extratags") or {}).get("admin_level", ""))
+        if admin_level in _VAGUE_ADMIN_LEVELS:
+            return True
+    return False
+
+
+# ── Match scoring ───────────────────────────────────────────────────
+#
+# After validation + vague-filter, we re-rank results by how well they
+# match the user's query *structurally*: an exact "Toronto" hit on the
+# city-class result outranks a partial hit on "Toronto Island" or
+# "North Toronto" (which Nominatim's importance can flip when the
+# importance scores are close).
+
+_PLACE_TYPE_PRIORITY: dict[tuple[str, str], float] = {
+    ("place", "city"):          0.40,
+    ("place", "town"):          0.40,
+    ("place", "village"):       0.30,
+    ("place", "hamlet"):        0.22,
+    ("place", "island"):        0.35,
+    ("place", "archipelago"):   0.30,
+    ("place", "locality"):      0.18,
+}
+
+
+def _admin_level_priority(admin_level: str) -> float:
+    """Boost for boundary=administrative results by admin_level."""
+    if admin_level in ("2",):       # country
+        return 0.30
+    if admin_level in ("3", "4"):   # state / province
+        return 0.35
+    if admin_level in ("8",):       # city
+        return 0.32
+    if admin_level in ("9", "10"):  # village
+        return 0.20
+    return 0.0
+
+
+def _match_score(item: dict, query: str, query_tokens: set[str]) -> float:
+    """Higher score = better match. Combines Nominatim importance with
+    structured signals: exact-first-segment match, query-token coverage,
+    and place-type priority."""
+    importance = float(item.get("importance", 0) or 0)
+    display_name = item.get("display_name", "") or ""
+    name_tokens = _tokenize(display_name)
+
+    if query_tokens:
+        token_cov = len(query_tokens & name_tokens) / len(query_tokens)
+    else:
+        token_cov = 0.0
+
+    first_segment = display_name.split(",")[0].strip().lower()
+    exact_first = 1.0 if first_segment == query.strip().lower() else 0.0
+
+    osm_class = (item.get("class") or "").lower()
+    osm_type = (item.get("type") or "").lower()
+    place_type_bonus = _PLACE_TYPE_PRIORITY.get((osm_class, osm_type), 0.0)
+    if place_type_bonus == 0.0 and osm_class == "boundary" and osm_type == "administrative":
+        admin_level = str((item.get("extratags") or {}).get("admin_level", ""))
+        place_type_bonus = _admin_level_priority(admin_level)
+
+    return importance + 0.5 * exact_first + 0.3 * token_cov + place_type_bonus
+
 
 # ── Result validation ────────────────────────────────────────────────
 
@@ -117,13 +215,25 @@ async def search_location(query: str, country: str = "ca", limit: int = 10) -> l
             detail="Unable to reach search service. Please try again later.",
         )
 
-    results = []
+    query_tokens = _tokenize(query)
+    scored: list[tuple[float, SearchResult]] = []
     rejected = 0
+    dropped_vague = 0
     for item in data:
         ok, reason = _validate_result(item, query)
         if not ok:
             rejected += 1
             log.info(f"Search reject: {reason} (q='{query}')")
+            continue
+
+        if _is_vague_match(item, query_tokens):
+            dropped_vague += 1
+            log.info(
+                f"Search reject (vague): class={item.get('class')} "
+                f"type={item.get('type')} admin_level="
+                f"{(item.get('extratags') or {}).get('admin_level', '?')} "
+                f"q='{query}'"
+            )
             continue
 
         osm_type = item.get("osm_type", "node")
@@ -132,7 +242,8 @@ async def search_location(query: str, country: str = "ca", limit: int = 10) -> l
             "Polygon", "MultiPolygon",
         )
 
-        results.append(SearchResult(
+        score = _match_score(item, query, query_tokens)
+        scored.append((score, SearchResult(
             osm_id=int(item["osm_id"]),
             osm_type=osm_type,
             display_name=item.get("display_name", ""),
@@ -141,10 +252,18 @@ async def search_location(query: str, country: str = "ca", limit: int = 10) -> l
             feature_type=feature_type,
             boundingbox=[float(b) for b in item.get("boundingbox", [])],
             has_geometry=has_geometry,
-        ))
+        )))
 
-    if rejected:
-        log.info(f"Search '{query}': {len(results)} kept, {rejected} rejected")
+    # Highest-score results first. Stable sort preserves Nominatim order
+    # within ties so the API stays predictable for identical queries.
+    scored.sort(key=lambda s: s[0], reverse=True)
+    results = [r for _, r in scored]
+
+    if rejected or dropped_vague:
+        log.info(
+            f"Search '{query}': {len(results)} kept, "
+            f"{rejected} rejected, {dropped_vague} vague-dropped"
+        )
 
     # Cache results
     await cache_set(cache_key, [r.model_dump() for r in results], ttl=settings.CACHE_TTL_SEARCH)

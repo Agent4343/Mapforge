@@ -40,6 +40,10 @@ async def fetch_geocode_record(
         "format": "json",
         "polygon_geojson": 0,  # no polygon — we just want metadata
         "extratags": 1,
+        # Address fields (country, state/province) — needed by the
+        # render validator to confirm we're not exporting "Halifax UK"
+        # when the user searched for "Halifax NS".
+        "addressdetails": 1,
     }
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -293,6 +297,43 @@ def _merge_way_segments(segments: list[list[tuple]]) -> list[list[tuple]]:
         merged.append(current)
 
     return merged
+
+
+def viewport_polygon_from_geocode(
+    geocode_record: dict,
+    padding: float = 0.04,
+) -> Polygon | None:
+    """Build a padded rectangular WGS84 polygon from a Nominatim bbox.
+
+    Used as the spec-mandated fallback when no admin boundary polygon
+    exists for a geocoded place — the search succeeded, the place is
+    real, but OSM has no polygon. Padding is a fraction of bbox width
+    added on each side so a tight bbox doesn't render with map content
+    touching the frame.
+
+    Returns None if the geocode record has no usable boundingbox.
+    """
+    bb = geocode_record.get("boundingbox") or []
+    if len(bb) != 4:
+        return None
+    try:
+        south, north, west, east = (
+            float(bb[0]), float(bb[1]),
+            float(bb[2]), float(bb[3]),
+        )
+    except (TypeError, ValueError):
+        return None
+    if north <= south or east <= west:
+        return None
+    pad_lat = (north - south) * padding
+    pad_lon = (east - west) * padding
+    return Polygon([
+        (west - pad_lon, south - pad_lat),
+        (east + pad_lon, south - pad_lat),
+        (east + pad_lon, north + pad_lat),
+        (west - pad_lon, north + pad_lat),
+        (west - pad_lon, south - pad_lat),
+    ])
 
 
 async def fetch_area_around_point(

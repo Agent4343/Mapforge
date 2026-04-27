@@ -23,7 +23,9 @@ from app.models.schemas import (
 from app.services.auth import get_current_user, get_optional_user
 from app.services.dxf_generator import generate_dxf
 from app.services.stl_generator import generate_stl
-from app.services.geo_fetch import fetch_area_around_point, fetch_geometry
+from app.services.geo_fetch import (
+    fetch_area_around_point, fetch_geometry, viewport_polygon_from_geocode,
+)
 from app.services.geometry_processor import process_geometry, transform_wgs84_to_board
 from app.services.svg_generator import generate_svg
 from app.services.street_fetcher import fetch_streets
@@ -245,18 +247,45 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     # rate limits). Falls back to Overpass for anything not bundled.
     log.info(f"Generating {req.product_type.value} for OSM {req.osm_type}/{req.osm_id}")
     geom = None
+    boundary_source = "admin"
     if req.product_type.value == "province" and req.text:
         from app.services.boundary_loader import load_local_province
         geom = load_local_province(req.text)
+        if geom is not None:
+            boundary_source = "local"
     if geom is None:
         prefer_overpass = req.product_type.value == "province"
         geom = await fetch_geometry(req.osm_id, req.osm_type, prefer_overpass=prefer_overpass)
-    if geom is None:
+
+    # Lookup the geocode record now — we need it for both the viewport
+    # fallback (next block) and the MapController plan (below).
+    from app.services.geo_fetch import fetch_geocode_record
+    geocode_record = await fetch_geocode_record(req.osm_id, req.osm_type)
+    if geocode_record is None:
+        log.warning("Geocode lookup returned None for %s/%s", req.osm_type, req.osm_id)
         raise HTTPException(
-            status_code=404,
-            detail=f"Could not fetch geometry for {req.osm_type}/{req.osm_id}. "
-            "The location may not have polygon data in OpenStreetMap.",
+            status_code=503,
+            detail="Location service temporarily unavailable. Please try again in a moment.",
         )
+
+    if geom is None:
+        # Spec #5: "If no boundary exists, use a clean rectangular
+        # viewport around the geocoded place." Build a padded bbox
+        # polygon from the Nominatim boundingbox so we never export a
+        # 404 for a real, geocodable place — only for places that
+        # don't actually exist.
+        log.info(
+            f"No admin polygon for {req.osm_type}/{req.osm_id}; "
+            f"using rectangular viewport fallback"
+        )
+        geom = viewport_polygon_from_geocode(geocode_record)
+        if geom is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Could not fetch geometry or build viewport for "
+                f"{req.osm_type}/{req.osm_id}.",
+            )
+        boundary_source = "viewport"
 
     # ── Map rendering controller (spec: validate, classify, plan) ─────
     #
@@ -268,20 +297,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     #     geocode point (auto-framer keeps working)
     # Plan status surfaces as a structured error rather than silent
     # fallbacks.
-    from app.services.geo_fetch import fetch_geocode_record
     from app.services.map_controller import plan_render
-    geocode_record = await fetch_geocode_record(req.osm_id, req.osm_type)
-    if geocode_record is None:
-        # Distinct error: upstream Nominatim call failed (timeout /
-        # DNS / rate limit). Without this branch the null propagates
-        # into plan_render → INVALID_MAP_RENDER, and the user sees
-        # "pick a different result" when the actual cause was an
-        # upstream outage. 503 lets the client auto-retry.
-        log.warning("Geocode lookup returned None for %s/%s", req.osm_type, req.osm_id)
-        raise HTTPException(
-            status_code=503,
-            detail="Location service temporarily unavailable. Please try again in a moment.",
-        )
     map_plan = plan_render(
         user_input=req.text or str(req.osm_id),
         geocode=geocode_record,
@@ -299,6 +315,33 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             "similar confidence. Please refine your search (add a province / state).",
         )
     log.info("MapController plan: %s", map_plan.to_dict())
+
+    # ── Spec validation gate (real geography, not fake) ───────────────
+    #
+    # Final pre-render check that the geocode + plan + boundary
+    # together describe the place the user actually searched for. We
+    # hard-fail here rather than export a poster of the wrong place.
+    from app.services.map_validator import validate_render_inputs
+    validation = validate_render_inputs(
+        user_input=req.text or "",
+        geocode=geocode_record,
+        plan=map_plan,
+        geometry=geom,
+        boundary_source=boundary_source,
+    )
+    if not validation.ok:
+        log.warning(
+            "Render validation FAILED for '%s': %s",
+            req.text, "; ".join(validation.issues),
+        )
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Map validation failed for '{req.text}': "
+                f"{'; '.join(validation.issues)}. "
+                "Pick a different result from the search suggestions."
+            ),
+        )
 
     # Process geometry
     try:
