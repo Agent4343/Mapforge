@@ -1197,10 +1197,11 @@ def _generate_print_svg(
             lat, lon = latlon
             lat_dms = _format_dms(lat, "N", "S")
             lon_dms = _format_dms(lon, "E", "W")
-            # Em-space + slim pipe glyph for a refined separator that
-            # reads as one composed coordinate line rather than two
-            # values jammed together with ASCII pipes.
-            coord_text = f"{lat_dms}  │  {lon_dms}"
+            # ASCII pipe with double-spaces — the wider letter-spacing on
+            # the text element does the typographic refinement; using a
+            # Unicode box-drawings glyph here can break rasterisation
+            # when the cairosvg fallback font lacks the codepoint.
+            coord_text = f"{lat_dms}  |  {lon_dms}"
             lines.append(
                 f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
                 f' text-anchor="middle" font-family="{ca_ff}"'
