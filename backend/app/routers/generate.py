@@ -1327,12 +1327,13 @@ async def download(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Download a generated SVG, PNG, DXF, or STL file (admin only).
+    """Download a generated SVG, PNG, DXF, or STL file.
 
-    Customer downloads go through /api/v1/orders/download/{token} using their credit token.
+    Allowed for the file's owner OR an admin. Mirrors the /preview
+    endpoint's auth gate so logged-in users can download files they
+    generated themselves. Etsy customers (no MapForge account) use
+    the token-based /api/v1/orders/download/{token} endpoint instead.
     """
-    if user.tier != "admin":
-        raise HTTPException(status_code=403, detail="Downloads are available through your Etsy design credit link.")
     result = await db.execute(
         select(GeneratedFile).where(GeneratedFile.id == file_id)
     )
@@ -1340,12 +1341,22 @@ async def download(
     if not file_record:
         raise HTTPException(status_code=404, detail="File not found.")
 
+    is_owner = file_record.owner_id and file_record.owner_id == user.id
+    if not is_owner and user.tier != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="You can only download files you generated yourself.",
+        )
+
     if format == ExportFormat.png:
         content = None
         if file_record.print_png_key:
             content = await retrieve_file(file_record.print_png_key)
-        # Fallback: render PNG on-demand from stored SVG if pre-rendered PNG
-        # is missing (happens when cairosvg fails during generation)
+        # Fallback: render PNG on-demand from stored SVG if the
+        # pre-rendered PNG is missing (cairosvg failed at generate
+        # time, storage eviction, etc.). Pass through the file's
+        # actual board size so the on-demand output matches what
+        # the user originally generated, not a 16" default.
         if content is None and file_record.svg_storage_key:
             svg_bytes = await retrieve_file(file_record.svg_storage_key)
             if svg_bytes:
@@ -1355,12 +1366,25 @@ async def download(
                         generate_print_image,
                         svg_bytes.decode("utf-8"),
                         skip_remap=True,
+                        board_size=file_record.board_size,
                     )
-                    log.info(f"On-demand PNG render succeeded for {file_id}")
+                    log.info(
+                        f"On-demand PNG render succeeded for {file_id} "
+                        f"(board_size={file_record.board_size})"
+                    )
                 except Exception as e:
-                    log.error(f"On-demand PNG render failed for {file_id}: {e}")
+                    log.error(
+                        f"On-demand PNG render failed for {file_id}: "
+                        f"{type(e).__name__}: {e}"
+                    )
         if content is None:
-            raise HTTPException(status_code=404, detail="Print PNG not available for this file.")
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Print PNG could not be generated for this file. "
+                    "Please regenerate the map and try again."
+                ),
+            )
         media_type = "image/png"
         ext = "png"
     elif format == ExportFormat.dxf:
