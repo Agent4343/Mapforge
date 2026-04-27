@@ -422,14 +422,7 @@ export default function App() {
         data = await generatePin(pinParams);
       } else {
         // Build markers list from valid entries
-        const validMarkers = markers
-          .filter((m) => m.lat !== "" && m.lon !== "" && !isNaN(m.lat) && !isNaN(m.lon))
-          .map((m) => ({
-            lat: parseFloat(m.lat),
-            lon: parseFloat(m.lon),
-            label: m.label || "",
-            icon: m.icon || "pin",
-          }));
+        const validMarkers = sanitizeMarkers(markers);
 
         const params = {
           osm_id: selectedResult.osm_id,

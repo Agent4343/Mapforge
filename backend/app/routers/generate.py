@@ -42,6 +42,56 @@ from app.services.thumbnail_generator import (
 router = APIRouter(prefix="/api/v1", tags=["generate"])
 
 
+def _bbox_from_geom(geom) -> tuple[float, float, float, float]:
+    """Return bbox as (south, west, north, east) from a Shapely geometry."""
+    minx, miny, maxx, maxy = geom.bounds
+    return (miny, minx, maxy, maxx)
+
+
+def _bboxes_overlap_ratio(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> float:
+    """Return overlap ratio of bbox intersection over min(area(a), area(b))."""
+    a_s, a_w, a_n, a_e = a
+    b_s, b_w, b_n, b_e = b
+    inter_w = max(0.0, min(a_e, b_e) - max(a_w, b_w))
+    inter_h = max(0.0, min(a_n, b_n) - max(a_s, b_s))
+    inter = inter_w * inter_h
+    area_a = max(0.0, (a_e - a_w) * (a_n - a_s))
+    area_b = max(0.0, (b_e - b_w) * (b_n - b_s))
+    denom = min(area_a, area_b)
+    if denom <= 0:
+        return 0.0
+    return inter / denom
+
+
+def _validate_map_accuracy(
+    *,
+    map_plan,
+    geom,
+    streets_data: dict | None,
+    product_type: str,
+) -> list[str]:
+    """Run pre-export validation checks based on real geocode + map data."""
+    errors: list[str] = []
+
+    west, south, east, north = map_plan.bbox
+    if not (south <= map_plan.lat <= north and west <= map_plan.lon <= east):
+        errors.append("Selected center point falls outside the verified geocoder bounding box")
+
+    geom_bbox = _bbox_from_geom(geom)
+    overlap = _bboxes_overlap_ratio((south, west, north, east), geom_bbox)
+    if overlap < 0.25:
+        errors.append(f"Geometry/bounding-box mismatch (overlap {overlap:.0%})")
+
+    if product_type in ("city", "community"):
+        road_count = 0
+        if streets_data:
+            road_count = len(streets_data.get("major_roads", [])) + len(streets_data.get("minor_roads", []))
+        if road_count < 20:
+            errors.append("Road network is too sparse for a recognizable city/town map")
+
+    return errors
+
+
 def _compute_street_viewport(streets_data: dict, transform: dict, bounds_mm: tuple,
                               center_latlon: tuple | None = None,
                               board_mm: tuple | None = None,
@@ -335,7 +385,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         need_streets = True
 
     bounds = geom.bounds  # minx, miny, maxx, maxy
-    bbox = (bounds[1], bounds[0], bounds[3], bounds[2])
+    # fetchers use (south, west, north, east) ordering
+    bbox = (map_plan.bbox[1], map_plan.bbox[0], map_plan.bbox[3], map_plan.bbox[2])
     # Store geographic extent for scale-aware rendering (used by vintage maps)
     processed["geo_lat_span"] = bounds[3] - bounds[1]
     processed["geo_lon_span"] = bounds[2] - bounds[0]
@@ -612,9 +663,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     if streets_data:
         _road_count = len(streets_data.get("major_roads", [])) + len(streets_data.get("minor_roads", []))
 
-    # Override center_latlon with accurate city center from Nominatim search
-    if req.center_lat is not None and req.center_lon is not None:
-        processed["center_latlon"] = (req.center_lat, req.center_lon)
+    # Always use geocoder-verified center point for title coordinates / centering.
+    processed["center_latlon"] = (map_plan.lat, map_plan.lon)
 
     # Cap road count to prevent massive SVGs that timeout the browser.
     # Dense cities like Toronto can have 300K+ roads — cap aggressively.
@@ -658,8 +708,46 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             processed["bounds_mm"] = street_viewport
             log.info(f"Zoomed viewport to urban street grid")
 
+    # Pre-export validation: geometry, bbox, centerpoint, and road recognizability.
+    validation_errors = _validate_map_accuracy(
+        map_plan=map_plan,
+        geom=geom,
+        streets_data=streets_data,
+        product_type=req.product_type.value,
+    )
+    if validation_errors:
+        geom_bbox = _bbox_from_geom(geom)
+        overlap = _bboxes_overlap_ratio((map_plan.bbox[1], map_plan.bbox[0], map_plan.bbox[3], map_plan.bbox[2]), geom_bbox)
+        if overlap < 0.25:
+            # Recalculate bbox from real geometry bounds and continue once.
+            log.warning("Map validation failed; recalculating bbox from geometry bounds: %s", validation_errors)
+            map_plan = type(map_plan)(
+                name=map_plan.name,
+                lat=map_plan.lat,
+                lon=map_plan.lon,
+                bbox=(geom_bbox[1], geom_bbox[0], geom_bbox[3], geom_bbox[2]),
+                place_type=map_plan.place_type,
+                zoom=map_plan.zoom,
+                use_fit_bounds=map_plan.use_fit_bounds,
+                style=map_plan.style,
+                status=map_plan.status,
+            )
+            # fetchers use (south, west, north, east) ordering
+            bbox = (map_plan.bbox[1], map_plan.bbox[0], map_plan.bbox[3], map_plan.bbox[2])
+            validation_errors = _validate_map_accuracy(
+                map_plan=map_plan,
+                geom=geom,
+                streets_data=streets_data,
+                product_type=req.product_type.value,
+            )
+        if validation_errors:
+            raise HTTPException(
+                status_code=422,
+                detail="Map validation failed: " + "; ".join(validation_errors),
+            )
+
     # Generate map art output
-    location_name = req.text or f"Location {req.osm_id}"
+    location_name = (req.text or map_plan.name.split(",")[0].strip() or f"Location {req.osm_id}")
     board_w, board_h = processed["board_mm"]
 
     # For city_art maps: generate PNG poster directly from road geometry (no tiles)

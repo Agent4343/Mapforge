@@ -3,12 +3,14 @@ import { searchLocations } from "../services/api.js";
 import MapPreview from "./MapPreview.jsx";
 
 const TYPE_LABELS = {
-  lake: "Lake",
-  province: "Province",
   city: "City",
+  town: "Town",
+  neighbourhood: "Neighbourhood",
+  island: "Island",
+  province: "Province/State",
+  country: "Country",
+  landmark: "Landmark",
   community: "Community",
-  park: "Park",
-  name_sign: "Name Sign",
 };
 
 export default function SearchPanel({ onSelect, selectedResult, country }) {
@@ -56,13 +58,13 @@ export default function SearchPanel({ onSelect, selectedResult, country }) {
     <div className="search-section">
       <h2>City Street Map Art</h2>
       <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: "-4px 0 8px" }}>
-        Search for a city to generate a street map art print.
+        Search for any location, then choose the exact match before generating.
       </p>
       <div className="search-input-wrap">
         <input
           type="text"
           className="search-input"
-          placeholder="Search a city (e.g. Miami, Toronto, London)..."
+          placeholder="Search any place (city, island, province, landmark)..."
           value={query}
           onChange={handleInput}
           maxLength={200}
@@ -99,7 +101,7 @@ export default function SearchPanel({ onSelect, selectedResult, country }) {
             >
               <div className="result-name">
                 <span className="result-type-badge">
-                  {TYPE_LABELS[r.feature_type] || r.feature_type}
+                  {TYPE_LABELS[r.place_type] || TYPE_LABELS[r.feature_type] || r.place_type || r.feature_type}
                 </span>
                 {r.display_name.split(",")[0]}
               </div>

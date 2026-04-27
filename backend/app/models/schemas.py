@@ -103,6 +103,7 @@ class SearchResult(BaseModel):
     lat: float
     lon: float
     feature_type: str
+    place_type: str = "city"  # city/town/neighbourhood/island/province/country/landmark/community
     boundingbox: list[float] = []
     has_geometry: bool = False
 
