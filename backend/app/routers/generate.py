@@ -44,6 +44,36 @@ from app.services.thumbnail_generator import (
 router = APIRouter(prefix="/api/v1", tags=["generate"])
 
 
+# Codepoints that the production cairosvg/pango font stack (Liberation
+# Sans / DejaVu fallback) doesn't have a glyph for. Replaced with safe
+# ASCII before the SVG hits cairosvg so on-demand PNG rasterisation
+# doesn't blow up on a single decorative character.
+_CAIRO_UNSAFE_REPLACEMENTS = {
+    " ": " ",   # EM SPACE
+    " ": " ",   # EN SPACE
+    " ": " ",   # THIN SPACE
+    "​": "",    # ZERO WIDTH SPACE
+    "│": "|",   # BOX DRAWINGS LIGHT VERTICAL
+    "─": "-",   # BOX DRAWINGS LIGHT HORIZONTAL
+    "—": "-",   # EM DASH
+    "–": "-",   # EN DASH
+}
+
+
+def _sanitize_svg_for_cairo(svg_text: str) -> str:
+    """Replace cairosvg-unsafe Unicode glyphs with ASCII equivalents.
+
+    Used by the on-demand PNG fallback so older posters in storage
+    (which may contain decorative box-drawings glyphs the production
+    font stack can't render) still rasterise to PNG.
+    """
+    out = svg_text
+    for bad, good in _CAIRO_UNSAFE_REPLACEMENTS.items():
+        if bad in out:
+            out = out.replace(bad, good)
+    return out
+
+
 def _compute_street_viewport(streets_data: dict, transform: dict, bounds_mm: tuple,
                               center_latlon: tuple | None = None,
                               board_mm: tuple | None = None,
@@ -1352,11 +1382,19 @@ async def download(
         if content is None and file_record.svg_storage_key:
             svg_bytes = await retrieve_file(file_record.svg_storage_key)
             if svg_bytes:
+                svg_text = svg_bytes.decode("utf-8", errors="replace")
+                # Strip codepoints that the production cairosvg/pango
+                # font stack can't render (box-drawings glyphs,
+                # zero-width chars, etc.). Older posters in storage
+                # may contain a U+2502 separator that breaks the on-
+                # demand PNG path; this keeps existing files
+                # downloadable without forcing a regenerate.
+                svg_text = _sanitize_svg_for_cairo(svg_text)
                 try:
                     from app.services.thumbnail_generator import generate_print_image
                     content = await asyncio.to_thread(
                         generate_print_image,
-                        svg_bytes.decode("utf-8"),
+                        svg_text,
                         skip_remap=True,
                         board_size=file_record.board_size,
                     )
@@ -1365,9 +1403,11 @@ async def download(
                         f"(board_size={file_record.board_size})"
                     )
                 except Exception as e:
+                    import traceback
                     log.error(
                         f"On-demand PNG render failed for {file_id}: "
-                        f"{type(e).__name__}: {e}"
+                        f"{type(e).__name__}: {e}\n"
+                        f"{traceback.format_exc()}"
                     )
         if content is None:
             # Distinguish "we never made a PNG" from "the file vanished":
