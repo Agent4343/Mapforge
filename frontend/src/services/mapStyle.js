@@ -19,10 +19,10 @@
 // swap the PALETTE object per theme so preview and download match.
 
 export const PALETTE = {
-  water: "#A7C7E7",
-  land: "#F8F8F6",
-  park: "#E8EFE7",
-  highway: "#1C1C1C",
+  water: "#AFC6D9",
+  land: "#E9ECEF",
+  park: "#DDE6DE",
+  highway: "#1F1F1F",
   secondary: "#777777",
   local: "#CCCCCC",
 };

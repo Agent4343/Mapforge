@@ -21,12 +21,14 @@ export function getAdjustedBounds(place) {
 }
 
 export function shouldUseFitBounds(place) {
-  // Keep in sync with backend map_controller._PLACE_TYPE_MAP.
-  // Backend never emits "state" — province is the only admin-level
-  // tier that uses fit-bounds. "state" was a spec artefact that
-  // slipped in; left unguarded it silently falls through to
-  // center+zoom on US states, producing wrong framing.
-  return ["island", "province"].includes(place.place_type);
+  // Prefer the backend's computed decision when present (backend sets
+  // use_fit_bounds=True for city/town/neighbourhood/community/island/
+  // province/country via the radius-bbox or full-boundary path).
+  if (typeof place.use_fit_bounds === "boolean") {
+    return place.use_fit_bounds;
+  }
+  // Fallback for legacy search results without use_fit_bounds.
+  return ["island", "province", "country"].includes(place.place_type);
 }
 
 export function shouldShowMarker(place) {
@@ -34,12 +36,33 @@ export function shouldShowMarker(place) {
 }
 
 export function getSmartZoom(place) {
-  const [west, , east] = place.bbox;
-  const width = east - west;
-  if (width > 2) return 6;
-  if (width > 0.5) return 8;
-  if (width > 0.1) return 11;
-  return 13;
+  // Spec Step 2 — Lock Bounding Box: per-type zoom when the backend
+  // sends use_fit_bounds=True the zoom is advisory; when center+zoom
+  // is used these values drive the MapLibre viewport directly.
+  switch (place.place_type) {
+    case "country":       return 6;
+    case "province":      return 8;
+    case "island": {
+      const [west, , east] = place.bbox || [0, 0, 0.5];
+      const w = east - west;
+      if (w > 2) return 7;
+      if (w > 0.5) return 10;
+      return 12;
+    }
+    case "city":          return 12;
+    case "town":          return 13;
+    case "neighbourhood": return 15;
+    case "community":     return 14;
+    case "landmark":      return 16;
+    default: {
+      const [west, , east] = place.bbox || [0, 0, 0.5];
+      const w = east - west;
+      if (w > 2) return 7;
+      if (w > 0.5) return 9;
+      if (w > 0.1) return 12;
+      return 14;
+    }
+  }
 }
 
 // ── Coordinate formatting (Step 8) ────────────────────────────────────

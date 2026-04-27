@@ -22,6 +22,7 @@ Rendering code treats the plan as gospel — no second-guessing.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -150,8 +151,19 @@ def _classify_place_type(geocode: dict[str, Any]) -> str:
 # ── Zoom table (from spec) ───────────────────────────────────────────
 #
 # When `use_fit_bounds` is True these zooms are advisory — the real
-# viewport comes from the bbox. For center-zoom cases (city/town) the
-# zoom is honoured directly.
+# viewport comes from the bbox. For center-zoom cases the zoom is
+# honoured directly.
+
+# Per-type zoom override (spec Step 2 — Lock Bounding Box)
+_PLACE_TYPE_ZOOM: dict[str, int] = {
+    "country":       6,
+    "province":      8,
+    "city":         12,
+    "town":         13,
+    "neighbourhood": 15,
+    "community":    14,
+    "landmark":     16,
+}
 
 def _zoom_from_bbox_width(lon_span: float) -> int:
     if lon_span > 2.0:
@@ -163,6 +175,32 @@ def _zoom_from_bbox_width(lon_span: float) -> int:
     if lon_span > 0.02:
         return 13
     return 14
+
+
+# ── Radius-based bounding box (spec Step 2) ──────────────────────────
+#
+# Tight viewport radii per place type so the map shows only the
+# relevant area, not the entire sprawling Nominatim bbox.
+
+# Approximate kilometers per degree of latitude (WGS-84 mean).
+_KM_PER_DEGREE_LAT: float = 111.32
+
+_PLACE_TYPE_RADIUS_KM: dict[str, float] = {
+    "city":          12.0,   # spec: 8–15 km
+    "town":           6.0,   # spec: 4–8 km
+    "neighbourhood":  2.5,   # spec: 1–3 km
+    "community":      4.0,
+    "landmark":       1.0,
+}
+
+
+def _radius_bbox(lat: float, lon: float, radius_km: float) -> tuple[float, float, float, float]:
+    """Return (west, south, east, north) for a radius around a point."""
+    # Clamp latitude to avoid cos(90°) = 0 (division-by-zero at the poles).
+    clat = max(-89.9, min(89.9, lat))
+    lat_delta = radius_km / _KM_PER_DEGREE_LAT
+    lon_delta = radius_km / (_KM_PER_DEGREE_LAT * math.cos(math.radians(clat)))
+    return (lon - lon_delta, lat - lat_delta, lon + lon_delta, lat + lat_delta)
 
 
 # ── Entry point ──────────────────────────────────────────────────────
@@ -248,12 +286,33 @@ def plan_render(
 
     place_type = _classify_place_type(geocode)
 
-    # Per spec: islands & provinces use fitBounds; everything else
-    # center-zooms on the geocode point.
+    # Per spec Step 2 — Lock Bounding Box:
+    # Islands, provinces and countries use the full Nominatim bbox (the
+    # outline IS the product). City/town/neighbourhood/community/landmark
+    # get a radius-based tight crop intersected with the Nominatim bbox
+    # so we never render a sprawling metro area as a backdrop.
     use_fit_bounds = place_type in ("island", "province", "country")
 
+    if place_type in _PLACE_TYPE_RADIUS_KM:
+        radius_km = _PLACE_TYPE_RADIUS_KM[place_type]
+        r_west, r_south, r_east, r_north = _radius_bbox(lat, lon, radius_km)
+        # Intersect radius box with Nominatim box: keeps us inside the
+        # geocoder-verified boundary while cropping regional sprawl.
+        i_west  = max(r_west,  west)
+        i_south = max(r_south, south)
+        i_east  = min(r_east,  east)
+        i_north = min(r_north, north)
+        if i_east > i_west and i_north > i_south:
+            west, south, east, north = i_west, i_south, i_east, i_north
+        else:
+            # Intersection empty (e.g. pin fell outside Nominatim bbox) —
+            # fall back to the pure radius crop.
+            west, south, east, north = r_west, r_south, r_east, r_north
+        use_fit_bounds = True
+
+    # Zoom: use per-type table when available, fall back to bbox width.
     lon_span = abs(east - west)
-    zoom = _zoom_from_bbox_width(lon_span)
+    zoom = _PLACE_TYPE_ZOOM.get(place_type) or _zoom_from_bbox_width(lon_span)
 
     plan = MapPlan(
         name=str(geocode.get("display_name", user_input)),

@@ -35,26 +35,24 @@ MAP_RENDER_H = 2400
 # ── Color themes ───────────────────────────────────────────────────────
 POSTER_THEMES = {
     "city_art": {
-        # Palette locked to the MapController spec:
-        #   water  = #A7C7E7 (muted blue)
-        #   land   = #F8F8F6 (off-white)
-        #   parks  = #E8EFE7 (very light green)
-        # Mat stays one shade lighter than land so the poster sits
-        # on a visible but subtle backdrop.
-        "bg": (252, 252, 251), "map_bg": (248, 248, 246),
+        # Palette locked to the spec:
+        #   water  = #AFC6D9 (muted steel blue)
+        #   land   = #E9ECEF (light grey)
+        #   parks  = #DDE6DE (very light sage green)
+        #   roads  = #1F1F1F (near-black)
+        "bg": (233, 236, 239), "map_bg": (233, 236, 239),
         "title": (25, 25, 25), "subtitle": (100, 100, 100),
         "border": (200, 200, 200), "line": (180, 180, 180),
-        # Four-tier road hierarchy per the spec: highways dark
-        # charcoal medium thickness, secondary grey thin, local
-        # very light grey. Matches Mapiful's weighting so arterials
-        # read as backbone and residentials as texture.
-        "road_major": (20, 20, 20),    # motorway, trunk
-        "road_arterial": (70, 70, 70), # primary, secondary
+        # Four-tier road hierarchy per the spec: motorway/trunk dark
+        # charcoal, primary/secondary grey medium, tertiary light grey,
+        # residential very light grey.
+        "road_major": (31, 31, 31),     # motorway, trunk — #1F1F1F
+        "road_arterial": (70, 70, 70),  # primary, secondary
         "road_collector": (125, 125, 125),# tertiary
-        "road_minor": (180, 180, 180), # residential, service
-        "map_mode": "light", "water": (167, 199, 231),   # #A7C7E7
-        "water_edge": (110, 150, 190),
-        "park": (232, 239, 231),                         # #E8EFE7
+        "road_minor": (180, 180, 180),  # residential, service
+        "map_mode": "light", "water": (175, 198, 217),   # #AFC6D9
+        "water_edge": (120, 155, 185),
+        "park": (221, 230, 222),                         # #DDE6DE
     },
     "classic": {
         "bg": (250, 248, 244), "map_bg": (252, 250, 246),
