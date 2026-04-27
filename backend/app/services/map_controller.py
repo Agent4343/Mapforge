@@ -182,6 +182,9 @@ def _zoom_from_bbox_width(lon_span: float) -> int:
 # Tight viewport radii per place type so the map shows only the
 # relevant area, not the entire sprawling Nominatim bbox.
 
+# Approximate kilometers per degree of latitude (WGS-84 mean).
+_KM_PER_DEGREE_LAT: float = 111.32
+
 _PLACE_TYPE_RADIUS_KM: dict[str, float] = {
     "city":          12.0,   # spec: 8–15 km
     "town":           6.0,   # spec: 4–8 km
@@ -193,9 +196,10 @@ _PLACE_TYPE_RADIUS_KM: dict[str, float] = {
 
 def _radius_bbox(lat: float, lon: float, radius_km: float) -> tuple[float, float, float, float]:
     """Return (west, south, east, north) for a radius around a point."""
+    # Clamp latitude to avoid cos(90°) = 0 (division-by-zero at the poles).
     clat = max(-89.9, min(89.9, lat))
-    lat_delta = radius_km / 111.32
-    lon_delta = radius_km / (111.32 * math.cos(math.radians(clat)))
+    lat_delta = radius_km / _KM_PER_DEGREE_LAT
+    lon_delta = radius_km / (_KM_PER_DEGREE_LAT * math.cos(math.radians(clat)))
     return (lon - lon_delta, lat - lat_delta, lon + lon_delta, lat + lat_delta)
 
 
