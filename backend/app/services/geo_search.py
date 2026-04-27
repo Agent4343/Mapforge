@@ -40,12 +40,25 @@ MIN_LAT = -85.0
 # counties, nearby suburbs, or bounding boxes". We treat:
 #
 #   - place=suburb / quarter / neighbourhood       → suburb-class
-#   - boundary=administrative admin_level 5,6,7    → county / district
+#   - boundary=administrative whose display_name
+#     contains a county/district/region keyword    → bureaucratic match
 #
 # as vague unless the user explicitly typed a related keyword.
+#
+# IMPORTANT: we do NOT filter by admin_level alone. OSM's admin_level
+# meaning varies by country — admin_level=6 is "county" in some
+# countries but "single-tier municipality" in others (Toronto, ON is
+# admin_level=6 with type=administrative; dropping it by level alone
+# silently breaks every Canadian metro search). Detection by the
+# actual word in display_name is the reliable signal.
 
 _VAGUE_PLACE_TYPES = frozenset({"suburb", "quarter", "neighbourhood"})
-_VAGUE_ADMIN_LEVELS = frozenset({"5", "6", "7"})
+_VAGUE_NAME_KEYWORDS = frozenset({
+    "county", "counties",
+    "district", "districts",
+    "borough", "boroughs",
+    "regional municipality",
+})
 _VAGUE_OVERRIDE_KEYWORDS = frozenset({
     "county", "counties", "district", "districts",
     "suburb", "suburbs", "borough", "boroughs",
@@ -64,10 +77,15 @@ def _is_vague_match(item: dict, query_tokens: set[str]) -> bool:
     osm_type = (item.get("type") or "").lower()
     if osm_class == "place" and osm_type in _VAGUE_PLACE_TYPES:
         return True
+    # Bureaucratic admin boundaries: drop only if the display_name
+    # explicitly says "X County" / "X District" / "X Borough" — that
+    # word is what makes the result a sub-municipal jurisdiction
+    # rather than the place itself.
     if osm_class == "boundary" and osm_type == "administrative":
-        admin_level = str((item.get("extratags") or {}).get("admin_level", ""))
-        if admin_level in _VAGUE_ADMIN_LEVELS:
-            return True
+        display_lc = (item.get("display_name") or "").lower()
+        for kw in _VAGUE_NAME_KEYWORDS:
+            if kw in display_lc:
+                return True
     return False
 
 

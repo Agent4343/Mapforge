@@ -43,7 +43,31 @@ def _nominatim_hit(
     return item
 
 
-def test_vague_match_filter_drops_county():
+def test_vague_filter_keeps_city_at_admin_level_6():
+    """Regression: in Canada, admin_level=6 can be a single-tier
+    municipality (Toronto). The filter must not drop these — admin_level
+    meaning varies by country, so we detect 'county' / 'district' /
+    'borough' in the display_name instead of relying on level alone."""
+    from app.services.geo_search import _is_vague_match, _tokenize
+    toronto = _nominatim_hit(
+        name="Toronto, Golden Horseshoe, Ontario, Canada",
+        cls="boundary", type_="administrative", admin_level="6",
+    )
+    assert _is_vague_match(toronto, _tokenize("toronto")) is False
+
+
+def test_vague_filter_drops_regional_municipality_by_name():
+    """A 'Regional Municipality of X' entry IS bureaucratic context,
+    not a mappable place. Dropped when its name announces itself."""
+    from app.services.geo_search import _is_vague_match, _tokenize
+    item = _nominatim_hit(
+        name="Regional Municipality of Cape Breton, Nova Scotia, Canada",
+        cls="boundary", type_="administrative", admin_level="6",
+    )
+    assert _is_vague_match(item, _tokenize("cape breton")) is True
+
+
+def test_vague_filter_drops_county():
     from app.services.geo_search import _is_vague_match, _tokenize
     item = _nominatim_hit(
         name="Halifax County, Nova Scotia, Canada",
