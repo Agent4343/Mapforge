@@ -778,7 +778,9 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                     parks_data=parks_data,
                     land_polygon=geom,
                     fit_bounds_bbox=(
-                        map_plan.bbox if map_plan.use_fit_bounds else None
+                        map_plan.bbox
+                        if map_plan.place_type in ("island", "province", "country")
+                        else None
                     ),
                 )
                 if poster_bytes:
@@ -932,7 +934,9 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                         parks_data=parks_data,
                         land_polygon=geom,
                         fit_bounds_bbox=(
-                            map_plan.bbox if map_plan.use_fit_bounds else None
+                            map_plan.bbox
+                            if map_plan.place_type in ("island", "province", "country")
+                            else None
                         ),
                     )
                 except Exception as e:
