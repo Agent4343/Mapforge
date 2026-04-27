@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mapforge-config
+  namespace: mapforge
+data:
+  PORT: "8000"
+  STORAGE_BACKEND: "local"
+  STORAGE_LOCAL_PATH: "/tmp/mapforge_storage"
+  PYTHONUNBUFFERED: "1"
