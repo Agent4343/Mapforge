@@ -147,6 +147,8 @@ export default function MarkersPanel({ markers, onChange }) {
                 className="search-input"
                 style={{ fontSize: "12px", padding: "5px 8px" }}
                 step="0.0001"
+                min="-90"
+                max="90"
                 placeholder="45.4215"
                 value={marker.lat}
                 onChange={(e) => updateMarker(i, "lat", e.target.value)}
@@ -159,6 +161,8 @@ export default function MarkersPanel({ markers, onChange }) {
                 className="search-input"
                 style={{ fontSize: "12px", padding: "5px 8px" }}
                 step="0.0001"
+                min="-180"
+                max="180"
                 placeholder="-75.6972"
                 value={marker.lon}
                 onChange={(e) => updateMarker(i, "lon", e.target.value)}
@@ -172,7 +176,7 @@ export default function MarkersPanel({ markers, onChange }) {
             color: "var(--text-muted, #777)",
             fontStyle: "italic",
           }}>
-            Tip: Right-click on Google Maps and copy coordinates
+            Tip: Right-click on Google Maps and copy coordinates. Valid range: latitude -90 to 90, longitude -180 to 180
           </p>
         </div>
       ))}

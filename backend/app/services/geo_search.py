@@ -127,7 +127,8 @@ async def search_location(query: str, country: str = "ca", limit: int = 10) -> l
             continue
 
         osm_type = item.get("osm_type", "node")
-        feature_type = _classify_feature(item)
+        place_type = _classify_place_type(item)
+        feature_type = _feature_type_from_place(item, place_type)
         has_geometry = "geojson" in item and item["geojson"]["type"] in (
             "Polygon", "MultiPolygon",
         )
@@ -139,6 +140,7 @@ async def search_location(query: str, country: str = "ca", limit: int = 10) -> l
             lat=float(item["lat"]),
             lon=float(item["lon"]),
             feature_type=feature_type,
+            place_type=place_type,
             boundingbox=[float(b) for b in item.get("boundingbox", [])],
             has_geometry=has_geometry,
         ))
@@ -152,27 +154,53 @@ async def search_location(query: str, country: str = "ca", limit: int = 10) -> l
     return results
 
 
-def _classify_feature(item: dict) -> str:
-    """Classify an OSM result into a MapForge product type."""
-    osm_class = item.get("class", "")
-    osm_type_tag = item.get("type", "")
+def _classify_place_type(item: dict) -> str:
+    """Classify an OSM result into a canonical place type for rendering."""
+    osm_class = (item.get("class") or "").lower()
+    osm_type_tag = (item.get("type") or "").lower()
+
+    if osm_class == "place":
+        if osm_type_tag in ("city", "town"):
+            return osm_type_tag
+        if osm_type_tag in ("suburb", "neighbourhood", "quarter"):
+            return "neighbourhood"
+        if osm_type_tag in ("village", "hamlet", "locality", "isolated_dwelling"):
+            return "community"
+        if osm_type_tag in ("island", "islet", "archipelago"):
+            return "island"
+
+    if osm_class == "boundary" and osm_type_tag == "administrative":
+        admin_level = str(item.get("extratags", {}).get("admin_level", ""))
+        if admin_level == "2":
+            return "country"
+        if admin_level in ("3", "4", "5"):
+            return "province"
+        if admin_level in ("8", "9"):
+            return "city"
+        return "community"
+
+    if osm_class == "leisure" and osm_type_tag == "park":
+        return "community"
+
+    if osm_class in ("tourism", "historic", "man_made"):
+        return "landmark"
+
+    return "city"
+
+
+def _feature_type_from_place(item: dict, place_type: str) -> str:
+    """Map canonical place types to product categories."""
+    osm_class = (item.get("class") or "").lower()
+    osm_type_tag = (item.get("type") or "").lower()
 
     if osm_class == "natural" and osm_type_tag == "water":
         return "lake"
-    if osm_class == "boundary" and osm_type_tag == "administrative":
-        admin_level = item.get("extratags", {}).get("admin_level", "")
-        if admin_level in ("2", "4"):
-            return "province"
-        if admin_level in ("8", "9", "10"):
-            return "community"
-        return "city"
-    if osm_class == "leisure" and osm_type_tag == "park":
-        return "park"
     if osm_class == "boundary" and osm_type_tag == "national_park":
         return "park"
-    if osm_class == "place":
-        place_type = item.get("type", "")
-        if place_type in ("village", "hamlet", "locality", "isolated_dwelling"):
-            return "community"
-        return "city"
-    return "lake"
+    if osm_class == "leisure" and osm_type_tag == "park":
+        return "park"
+    if place_type in ("province", "country"):
+        return "province"
+    if place_type in ("city", "town", "neighbourhood", "community", "landmark", "island"):
+        return "city" if place_type != "community" else "community"
+    return "city"

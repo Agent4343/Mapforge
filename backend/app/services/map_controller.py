@@ -40,7 +40,7 @@ class MapPlan:
     lat: float
     lon: float
     bbox: tuple[float, float, float, float]  # (west, south, east, north)
-    place_type: str                           # city | town | island | province | neighbourhood | community
+    place_type: str                           # city | town | neighbourhood | island | province | country | landmark | community
     zoom: int
     use_fit_bounds: bool
     style: str
@@ -81,11 +81,16 @@ _PLACE_TYPE_MAP: dict[tuple[str, str], str] = {
     ("place", "quarter"):            "neighbourhood",
     ("place", "locality"):           "community",
     ("place", "isolated_dwelling"):  "community",
+    ("tourism", "attraction"):    "landmark",
+    ("tourism", "viewpoint"):     "landmark",
+    ("historic", "monument"):     "landmark",
+    ("historic", "memorial"):     "landmark",
+    ("man_made", "lighthouse"):   "landmark",
 }
 
 # Admin level → place type (only used when place tag is absent).
 _ADMIN_LEVEL_MAP: dict[str, str] = {
-    "2": "province",    # country
+    "2": "country",     # country
     "3": "province",
     "4": "province",    # state / province
     "5": "province",
@@ -125,6 +130,8 @@ def _classify_place_type(geocode: dict[str, Any]) -> str:
             lat_span = abs(north - south)
             lon_span = abs(east - west)
             area = lat_span * lon_span
+            if area > 25.0:
+                return "country"
             if area > 1.0:
                 return "province"
             if area > 0.3:
@@ -243,7 +250,7 @@ def plan_render(
 
     # Per spec: islands & provinces use fitBounds; everything else
     # center-zooms on the geocode point.
-    use_fit_bounds = place_type in ("island", "province")
+    use_fit_bounds = place_type in ("island", "province", "country")
 
     lon_span = abs(east - west)
     zoom = _zoom_from_bbox_width(lon_span)

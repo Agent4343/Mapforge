@@ -1,3 +1,5 @@
+import { countValidMarkers } from "../services/markers.js";
+
 // Client-side price table (mirrors backend for instant updates)
 const BASE_PRICE_CENTS = {
   province: 499, city: 699, lake: 799, park: 699, community: 599, name_sign: 899,
@@ -25,9 +27,10 @@ function quickPrice(config, markers = []) {
     addons.push({ label: "Contours", cents: ADDON_FEES.include_contours });
     total += ADDON_FEES.include_contours;
   }
-  if (markers.length > 0) {
-    const fee = ADDON_FEES.markers * markers.length;
-    addons.push({ label: `Markers (${markers.length})`, cents: fee });
+  const validMarkerCount = countValidMarkers(markers);
+  if (validMarkerCount > 0) {
+    const fee = ADDON_FEES.markers * validMarkerCount;
+    addons.push({ label: `Markers (${validMarkerCount})`, cents: fee });
     total += fee;
   }
   if (config.heartLat != null && config.heartLon != null) {
