@@ -1327,26 +1327,18 @@ async def download(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Download a generated SVG, PNG, DXF, or STL file.
+    """Download a generated SVG, PNG, DXF, or STL file (admin only).
 
-    Allowed for the file's owner OR an admin. Mirrors the /preview
-    endpoint's auth gate so logged-in users can download files they
-    generated themselves. Etsy customers (no MapForge account) use
-    the token-based /api/v1/orders/download/{token} endpoint instead.
+    Customer downloads go through /api/v1/orders/download/{token} using their credit token.
     """
+    if user.tier != "admin":
+        raise HTTPException(status_code=403, detail="Downloads are available through your Etsy design credit link.")
     result = await db.execute(
         select(GeneratedFile).where(GeneratedFile.id == file_id)
     )
     file_record = result.scalar_one_or_none()
     if not file_record:
         raise HTTPException(status_code=404, detail="File not found.")
-
-    is_owner = file_record.owner_id and file_record.owner_id == user.id
-    if not is_owner and user.tier != "admin":
-        raise HTTPException(
-            status_code=403,
-            detail="You can only download files you generated yourself.",
-        )
 
     if format == ExportFormat.png:
         content = None
@@ -1378,11 +1370,16 @@ async def download(
                         f"{type(e).__name__}: {e}"
                     )
         if content is None:
+            # Distinguish "we never made a PNG" from "the file vanished":
+            # an admin hitting this almost always means cairosvg failed
+            # at generate time AND failed again on the on-demand retry.
+            # 503 + "regenerate" is more actionable than 404.
             raise HTTPException(
                 status_code=503,
                 detail=(
-                    "Print PNG could not be generated for this file. "
-                    "Please regenerate the map and try again."
+                    "Print PNG could not be rendered for this file. "
+                    "Check the server log for the cairosvg error and "
+                    "regenerate the map."
                 ),
             )
         media_type = "image/png"
