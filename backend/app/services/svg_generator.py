@@ -1756,6 +1756,7 @@ def _generate_vintage_map_svg(
 
         # Road classes by filtering tier
         detail_classes = {"footway", "cycleway", "path", "steps", "bridleway"}
+        clutter_classes = {"service", "track", "living_street"}
 
         # Scale-based filtering using geographic extent:
         if map_scale == "province":
