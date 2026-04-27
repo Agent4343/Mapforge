@@ -6,7 +6,9 @@ metadata:
   labels:
     app: mapforge
 spec:
-  replicas: 2
+  # replicas is intentionally omitted here; the HorizontalPodAutoscaler (hpa.yaml)
+  # manages the replica count (min=2, max=10). Setting a static value conflicts
+  # with HPA and causes reconciliation loops.
   selector:
     matchLabels:
       app: mapforge
@@ -59,4 +61,8 @@ spec:
             failureThreshold: 3
           securityContext:
             allowPrivilegeEscalation: false
+            # readOnlyRootFilesystem is false because the app writes to
+            # /tmp/mapforge_storage (local file storage) and Python may write
+            # .pyc files. For stricter hardening, mount an emptyDir volume at
+            # /tmp and set this to true.
             readOnlyRootFilesystem: false
