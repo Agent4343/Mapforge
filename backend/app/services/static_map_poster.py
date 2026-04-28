@@ -793,11 +793,21 @@ def render_map_image(
                         continue
                 if water_shapes:
                     water_union = unary_union(water_shapes)
+                    # A side counts as "water" only when the majority
+                    # (>=2 of 3 samples) are in water. The single-
+                    # sample-wins rule misclassified Toronto's east
+                    # and west edges as coastal because Lake Ontario
+                    # leaks into the southern corner of those edges
+                    # (the sample at the southern third of the east
+                    # edge lands offshore even though Pickering itself
+                    # is dry land).
                     for side, samples in edge_samples.items():
-                        for lon, lat in samples:
-                            if water_union.contains(_ShPoint(lon, lat)):
-                                sides_with_water += 1
-                                break
+                        in_water = sum(
+                            1 for lon, lat in samples
+                            if water_union.contains(_ShPoint(lon, lat))
+                        )
+                        if in_water >= 2:
+                            sides_with_water += 1
             except Exception as e:
                 log.debug(f"Side-coverage check skipped: {e}")
                 sides_with_water = 4  # conservatively assume coastal
