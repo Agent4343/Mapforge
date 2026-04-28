@@ -35,24 +35,23 @@ MAP_RENDER_H = 2400
 # ── Color themes ───────────────────────────────────────────────────────
 POSTER_THEMES = {
     "city_art": {
-        # Palette locked to the MapController spec:
-        #   water  = #A7C7E7 (muted blue)
-        #   land   = #F8F8F6 (off-white)
-        #   parks  = #E8EFE7 (very light green)
-        # Mat stays one shade lighter than land so the poster sits
-        # on a visible but subtle backdrop.
-        "bg": (252, 252, 251), "map_bg": (248, 248, 246),
+        # Palette locked to the wall-art spec:
+        #   water       = #A7C7E7 (soft blue)
+        #   land/map_bg = #F5F5F5 (light neutral)
+        #   road_major  = #2B2B2B (bold dark)
+        #   road_minor  = #B0B0B0 (thin grey)
+        # parks  = #E8EFE7 (very light green)
+        # Mat stays one shade lighter than the map so the poster
+        # sits on a visible but subtle backdrop.
+        "bg": (250, 250, 250), "map_bg": (245, 245, 245),  # #F5F5F5
         "title": (28, 28, 28), "subtitle": (108, 108, 108),
         "border": (200, 200, 200), "line": (180, 180, 180),
-        # Four-tier road hierarchy with a refined charcoal top tier
-        # (instead of pure-black). Pure black on cream reads as
-        # printer ink, not a gallery print — a hair of warmth on the
-        # darkest tone makes the whole composition feel printed on
-        # paper rather than rendered on a screen.
-        "road_major": (44, 44, 44),    # motorway, trunk
-        "road_arterial": (88, 88, 88), # primary, secondary
-        "road_collector": (138, 138, 138),# tertiary
-        "road_minor": (188, 188, 188), # residential, service
+        # Four-tier road hierarchy. Major locked to spec #2B2B2B,
+        # minor to spec #B0B0B0; arterial / collector interpolate.
+        "road_major": (43, 43, 43),    # #2B2B2B — motorway, trunk
+        "road_arterial": (90, 90, 90), # primary, secondary
+        "road_collector": (140, 140, 140),# tertiary
+        "road_minor": (176, 176, 176), # #B0B0B0 — residential, service
         "map_mode": "light", "water": (167, 199, 231),   # #A7C7E7
         "water_edge": (110, 150, 190),
         "park": (232, 239, 231),                         # #E8EFE7
@@ -420,77 +419,48 @@ def _auto_frame(
             land_bounds = land_polygon.bounds  # (minx, miny, maxx, maxy)
             lx_min, ly_min = _to_mercator(land_bounds[1], land_bounds[0])
             lx_max, ly_max = _to_mercator(land_bounds[3], land_bounds[2])
-            land_w = (lx_max - lx_min) * 1.5
-            land_h = (ly_max - ly_min) * 1.5
-            if land_w > 0 and needed_w > land_w:
-                needed_w = land_w
-            if land_h > 0 and needed_h > land_h:
-                needed_h = land_h
-            # Recenter on land centroid since the road bbox might have
-            # pulled the centroid out over water.
-            land_cx = (lx_min + lx_max) * 0.5
-            land_cy = (ly_min + ly_max) * 0.5
-            cx = (cx + land_cx) * 0.5
-            cy = (cy + land_cy) * 0.5
+            # Show the full admin polygon with ~8% padding on each
+            # side. Previous "1.5× land bbox" was for a road-centric
+            # frame that allowed the city to overflow into water; the
+            # spec now wants the polygon ITSELF as the framed product
+            # with equal padding all the way around.
+            land_w_raw = lx_max - lx_min
+            land_h_raw = ly_max - ly_min
+            needed_w = land_w_raw * 1.08
+            needed_h = land_h_raw * 1.08
+            # Center exactly on the polygon centroid (Shapely centroid
+            # is the geometric center of mass — accurate even for
+            # irregular shapes like Toronto's L-shape; the road
+            # midpoint and the bbox midpoint can both drift far off
+            # the actual visual center for non-convex city outlines).
+            try:
+                ctr = land_polygon.centroid
+                cx, cy = _to_mercator(ctr.y, ctr.x)
+                centroid_src = "polygon centroid"
+            except Exception:
+                cx = (lx_min + lx_max) * 0.5
+                cy = (ly_min + ly_max) * 0.5
+                centroid_src = "bbox center (centroid fallback)"
             log.info(
-                f"Auto-frame: land bbox clamp "
-                f"{land_w/1.5/1000:.1f}x{land_h/1.5/1000:.1f}km "
-                f"-> viewport limited to 1.5× land"
+                f"Auto-frame: full-boundary fit "
+                f"{land_w_raw/1000:.1f}x{land_h_raw/1000:.1f}km "
+                f"+ 8% padding, centered on {centroid_src}"
             )
         except Exception as e:
             log.warning(f"Land-bbox clamp skipped: {e}")
 
-    # Fit to canvas aspect.
+    # Fit to canvas aspect — letterbox always.
     #
-    # LETTERBOX (max): viewport contains the full land span on both
-    # axes, leaving empty space on whichever axis is shorter. This is
-    # what we want for islands and provinces where the entire
-    # silhouette is the product — Cape Breton must not have its
-    # Highlands tip cropped.
-    #
-    # FILL (min): viewport tightly fills one axis, cropping the
-    # other. This is what we want for wide cities like Toronto on a
-    # portrait canvas — the city is 52×22 km on a 18×24 board, so
-    # letterbox leaves the top half empty water/cream above the
-    # land. Fill instead crops Etobicoke and Scarborough east/west
-    # so the urban core fills the frame edge-to-edge — the
-    # Mapiful gallery look.
-    #
-    # We use fill when:
-    #   - bbox_area indicates a city (not a region/island/province)
-    #   - the land aspect mismatches the canvas aspect strongly
-    #     enough that letterbox would leave >35% empty on the
-    #     shorter axis
-    # Otherwise we letterbox to preserve full silhouettes.
+    # Per the wall-art spec the FULL admin boundary must be visible
+    # with equal padding on all sides. The viewport is sized to
+    # contain both axes of the land span; whichever axis is shorter
+    # gets equal-margin padding from the canvas. The clip-to-admin
+    # mask paints the empty padding region in the theme's neutral
+    # land colour so it reads as paper around the city silhouette,
+    # not as fake water or fake suburbs.
     w_for_x = needed_w
     w_for_y = needed_h / img_aspect if img_aspect > 0 else needed_w
-    letterbox_w = max(w_for_x, w_for_y)
-    fill_w = min(w_for_x, w_for_y)
-
-    use_fill = False
-    if bbox_area <= 0.5 and letterbox_w > 0 and fill_w > 0:
-        # Empty-fraction = how much of the canvas the LETTERBOX
-        # framing would leave blank along the shorter axis. >35%
-        # is the "Toronto problem" — switch to fill so the city
-        # owns the frame.
-        empty_fraction = 1.0 - (fill_w / letterbox_w)
-        if empty_fraction > 0.35:
-            use_fill = True
-
-    if use_fill:
-        # Show land + ~10% breathing room on the bound axis.
-        # The other axis takes whatever cropping the canvas aspect
-        # imposes — usually 30-50% of the longer land span clipped
-        # for very wide cities.
-        meters_wide = fill_w * 1.10
-        log.info(
-            f"Auto-frame: FILL framing (city aspect mismatch, "
-            f"letterbox would leave {empty_fraction*100:.0f}% empty) "
-            f"-> viewport={meters_wide/1000:.1f}km, "
-            f"cropping along longer axis"
-        )
-    else:
-        meters_wide = letterbox_w
+    meters_wide = max(w_for_x, w_for_y)
 
     # Sane floors and caps so tiny neighbourhoods don't render at
     # 400m and entire provinces don't try to fit in 20km. 3km floor
@@ -1688,10 +1658,17 @@ def generate_road_poster(
         auto_compose=auto_compose,
         parks_data=parks_data,
         land_polygon=land_polygon,
-        # Mapiful-style posters frame the full rectangle — admin
-        # boundaries are not part of the look. Keep the ocean mask
-        # (coastal cities need it) but skip the inland-city crop.
-        clip_to_admin=(color_theme != "city_art"),
+        # Strict-clip to the admin boundary. Per the wall-art spec
+        # (Toronto poster regression: water polygons for Lake Ontario
+        # extend across the whole canvas and bleed past the city,
+        # painting the suburbs above Toronto blue). Inside admin: real
+        # geography (city + its harbour). Outside admin: theme map_bg
+        # (light neutral). When the place is a coastal island /
+        # peninsula and the ocean mask was applied earlier, the inland
+        # clip is bypassed (see render_map_image: the two masks are
+        # mutually exclusive — ocean wins for islands, inland clip
+        # wins for cities).
+        clip_to_admin=True,
     )
 
     # Compose into poster — pin draws at true location, not center
