@@ -722,26 +722,19 @@ def render_map_image(
             land_rings_px = []
 
     apply_ocean_mask = False
-    if land_rings_px:
+    if land_rings_px and not clip_to_admin:
+        # Ocean mask path — only used when the caller hasn't asked
+        # for strict admin clipping. Per the wall-art spec, city
+        # posters always strict-clip (outside admin polygon =
+        # neutral background, never water). The ocean mask is
+        # retained here as a fallback for legacy callers that pass
+        # clip_to_admin=False.
         canvas_area = img_w * img_h
         total_land_area = sum(
             abs(_ring_signed_area(r)) for r in land_rings_px
         )
         land_ratio = total_land_area / canvas_area if canvas_area else 0
 
-        # Inland-city guard. The original rule — "any land polygon
-        # covering less than 75% of the canvas is an island/peninsula
-        # and should be clipped" — breaks on inland cities like
-        # Calgary whose admin boundaries follow township section
-        # lines (giving a rectangular staircase outline). Without
-        # this guard we paint the "outside" of the city limits with
-        # water colour and the poster looks like Calgary is floating
-        # in an ocean.
-        #
-        # Real islands/peninsulas always have a LARGE water polygon
-        # (ocean or big lake) nearby — that's the definition of a
-        # coastline. We only apply the mask when water_data contains
-        # at least one polygon that takes up >=8% of the canvas.
         has_large_water = False
         if water_data:
             for coords, _wt, _wn in water_data.get("water_polygons", []):
@@ -753,107 +746,19 @@ def render_map_image(
                     has_large_water = True
                     break
 
-        # Side-coverage check. A real island/peninsula has water on
-        # multiple sides — that's why the "paint outside-admin as
-        # water" mask works for it. Toronto, by contrast, has Lake
-        # Ontario only on its SOUTH side; its north/east/west edges
-        # touch suburbs (Vaughan, Markham, Mississauga) which are
-        # land. The previous "any large water" rule mis-classified
-        # Toronto as coastal and painted the suburbs blue.
-        #
-        # Sample 12 points just outside the admin bbox (3 per side)
-        # and count how many sides have at least one sample inside
-        # a water polygon. <2 sides = inland-with-coastline → skip
-        # mask. ≥2 sides = peninsula/island → apply.
-        sides_with_water = 0
-        if has_large_water and land_polygon is not None and water_data:
-            try:
-                from shapely.geometry import Polygon as _ShPoly, Point as _ShPoint
-                from shapely.ops import unary_union
-                from shapely.validation import make_valid
-                lb = land_polygon.bounds  # (minx, miny, maxx, maxy)
-                w_span = lb[2] - lb[0]
-                h_span = lb[3] - lb[1]
-                # Probe just outside each edge of the bbox, three
-                # samples spread along that edge.
-                offset = max(w_span, h_span) * 0.04
-                edge_samples = {
-                    "north": [
-                        (lb[0] + w_span * t, lb[3] + offset)
-                        for t in (0.25, 0.5, 0.75)
-                    ],
-                    "south": [
-                        (lb[0] + w_span * t, lb[1] - offset)
-                        for t in (0.25, 0.5, 0.75)
-                    ],
-                    "east": [
-                        (lb[2] + offset, lb[1] + h_span * t)
-                        for t in (0.25, 0.5, 0.75)
-                    ],
-                    "west": [
-                        (lb[0] - offset, lb[1] + h_span * t)
-                        for t in (0.25, 0.5, 0.75)
-                    ],
-                }
-                water_shapes = []
-                for coords, _wt, _wn in water_data.get("water_polygons", []):
-                    if len(coords) < 3:
-                        continue
-                    try:
-                        sp = _ShPoly(coords)
-                        if not sp.is_valid:
-                            sp = make_valid(sp)
-                        if not sp.is_empty:
-                            water_shapes.append(sp)
-                    except Exception:
-                        continue
-                if water_shapes:
-                    water_union = unary_union(water_shapes)
-                    # A side counts as "water" only when the majority
-                    # (>=2 of 3 samples) are in water. The single-
-                    # sample-wins rule misclassified Toronto's east
-                    # and west edges as coastal because Lake Ontario
-                    # leaks into the southern corner of those edges
-                    # (the sample at the southern third of the east
-                    # edge lands offshore even though Pickering itself
-                    # is dry land).
-                    for side, samples in edge_samples.items():
-                        in_water = sum(
-                            1 for lon, lat in samples
-                            if water_union.contains(_ShPoint(lon, lat))
-                        )
-                        if in_water >= 2:
-                            sides_with_water += 1
-            except Exception as e:
-                log.debug(f"Side-coverage check skipped: {e}")
-                sides_with_water = 4  # conservatively assume coastal
-
-        is_peninsular = sides_with_water >= 2
-
-        if 0 < land_ratio < 0.75 and has_large_water and is_peninsular:
+        if 0 < land_ratio < 0.75 and has_large_water:
             apply_ocean_mask = True
             log.info(
-                f"Ocean mask will be applied post-draw: land "
-                f"{land_ratio*100:.1f}% of canvas ({len(land_rings_px)} polygons), "
-                f"water on {sides_with_water} sides — peninsula/island"
+                f"Ocean mask (legacy path): land "
+                f"{land_ratio*100:.1f}% of canvas, large water polygon "
+                f"detected, clip_to_admin=False"
             )
-        elif 0 < land_ratio < 0.75 and has_large_water and not is_peninsular:
-            log.info(
-                f"Ocean mask skipped: land {land_ratio*100:.1f}% "
-                f"with water on only {sides_with_water} side(s) — "
-                f"inland city with coastline (suburbs continue outside admin)"
-            )
-        elif 0 < land_ratio < 0.75 and not has_large_water:
-            log.info(
-                f"Ocean mask skipped: land {land_ratio*100:.1f}% "
-                f"but no large water polygon — treating as inland city "
-                f"(admin boundary is not a coastline)"
-            )
-        else:
-            log.info(
-                f"Ocean mask skipped: land {land_ratio*100:.1f}% "
-                f"of canvas (>=75%, treating as inland)"
-            )
+    elif land_rings_px and clip_to_admin:
+        log.info(
+            "Ocean mask suppressed: clip_to_admin=True — strict "
+            "admin clipping renders outside-polygon as neutral "
+            "background per wall-art spec"
+        )
 
     # ── Draw water polygons (inland lakes, rivers, bays) ──
     # Universal "ONE dominant feature" rule: rank water polygons by
