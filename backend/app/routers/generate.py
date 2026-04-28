@@ -284,8 +284,22 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         if geom is not None:
             boundary_source = "local"
     if geom is None:
-        prefer_overpass = req.product_type.value == "province"
-        geom = await fetch_geometry(req.osm_id, req.osm_type, prefer_overpass=prefer_overpass)
+        # Prefer Overpass for any boundary that needs vertex-accurate
+        # rendering — provinces always, cities/communities now too.
+        # Nominatim's polygon_geojson endpoint returns a pre-simplified
+        # polygon (server-side Douglas-Peucker for performance) which
+        # smooths Toronto's actual ~3000-vertex admin relation down to
+        # ~30 vertices, producing a "clean angled edge" parallelogram
+        # that doesn't match Toronto's real irregular shape. Overpass
+        # fetches raw OSM nodes so the polygon arrives full-detail
+        # and only our 25 m simplification (downstream in
+        # process_geometry) actually gates the output resolution.
+        prefer_overpass = req.product_type.value in (
+            "province", "city", "community", "park", "lake",
+        )
+        geom = await fetch_geometry(
+            req.osm_id, req.osm_type, prefer_overpass=prefer_overpass,
+        )
 
     # Lookup the geocode record now — we need it for both the viewport
     # fallback (next block) and the MapController plan (below).
@@ -316,6 +330,30 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                 f"{req.osm_type}/{req.osm_id}.",
             )
         boundary_source = "viewport"
+
+    # Polygon detail audit — make it trivially verifiable from the
+    # server log that the visible city shape is the actual admin
+    # polygon and not a simplified bbox. A real city admin relation
+    # like Toronto has 1000-3000 vertices; if this prints a vertex
+    # count under ~50 the polygon is server-side simplified (a
+    # symptom of Nominatim's polygon_geojson returning a coarse
+    # version) and the render will look like a clean parallelogram.
+    try:
+        if hasattr(geom, "geoms"):
+            vertex_count = sum(len(p.exterior.coords) for p in geom.geoms)
+            piece_count = len(list(geom.geoms))
+        else:
+            vertex_count = len(geom.exterior.coords)
+            piece_count = 1
+        bounds = geom.bounds  # (minx, miny, maxx, maxy)
+        log.info(
+            "Boundary polygon: source=%s, type=%s, pieces=%d, "
+            "vertices=%d, bounds=(%.4f,%.4f,%.4f,%.4f)",
+            boundary_source, type(geom).__name__, piece_count,
+            vertex_count, bounds[0], bounds[1], bounds[2], bounds[3],
+        )
+    except Exception as e:
+        log.warning(f"Polygon audit log failed: {e}")
 
     # ── Map rendering controller (spec: validate, classify, plan) ─────
     #
