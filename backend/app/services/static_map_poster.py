@@ -737,12 +737,85 @@ def render_map_image(
                     has_large_water = True
                     break
 
-        if 0 < land_ratio < 0.75 and has_large_water:
+        # Side-coverage check. A real island/peninsula has water on
+        # multiple sides — that's why the "paint outside-admin as
+        # water" mask works for it. Toronto, by contrast, has Lake
+        # Ontario only on its SOUTH side; its north/east/west edges
+        # touch suburbs (Vaughan, Markham, Mississauga) which are
+        # land. The previous "any large water" rule mis-classified
+        # Toronto as coastal and painted the suburbs blue.
+        #
+        # Sample 12 points just outside the admin bbox (3 per side)
+        # and count how many sides have at least one sample inside
+        # a water polygon. <2 sides = inland-with-coastline → skip
+        # mask. ≥2 sides = peninsula/island → apply.
+        sides_with_water = 0
+        if has_large_water and land_polygon is not None and water_data:
+            try:
+                from shapely.geometry import Polygon as _ShPoly, Point as _ShPoint
+                from shapely.ops import unary_union
+                from shapely.validation import make_valid
+                lb = land_polygon.bounds  # (minx, miny, maxx, maxy)
+                w_span = lb[2] - lb[0]
+                h_span = lb[3] - lb[1]
+                # Probe just outside each edge of the bbox, three
+                # samples spread along that edge.
+                offset = max(w_span, h_span) * 0.04
+                edge_samples = {
+                    "north": [
+                        (lb[0] + w_span * t, lb[3] + offset)
+                        for t in (0.25, 0.5, 0.75)
+                    ],
+                    "south": [
+                        (lb[0] + w_span * t, lb[1] - offset)
+                        for t in (0.25, 0.5, 0.75)
+                    ],
+                    "east": [
+                        (lb[2] + offset, lb[1] + h_span * t)
+                        for t in (0.25, 0.5, 0.75)
+                    ],
+                    "west": [
+                        (lb[0] - offset, lb[1] + h_span * t)
+                        for t in (0.25, 0.5, 0.75)
+                    ],
+                }
+                water_shapes = []
+                for coords, _wt, _wn in water_data.get("water_polygons", []):
+                    if len(coords) < 3:
+                        continue
+                    try:
+                        sp = _ShPoly(coords)
+                        if not sp.is_valid:
+                            sp = make_valid(sp)
+                        if not sp.is_empty:
+                            water_shapes.append(sp)
+                    except Exception:
+                        continue
+                if water_shapes:
+                    water_union = unary_union(water_shapes)
+                    for side, samples in edge_samples.items():
+                        for lon, lat in samples:
+                            if water_union.contains(_ShPoint(lon, lat)):
+                                sides_with_water += 1
+                                break
+            except Exception as e:
+                log.debug(f"Side-coverage check skipped: {e}")
+                sides_with_water = 4  # conservatively assume coastal
+
+        is_peninsular = sides_with_water >= 2
+
+        if 0 < land_ratio < 0.75 and has_large_water and is_peninsular:
             apply_ocean_mask = True
             log.info(
                 f"Ocean mask will be applied post-draw: land "
                 f"{land_ratio*100:.1f}% of canvas ({len(land_rings_px)} polygons), "
-                f"large water polygon detected"
+                f"water on {sides_with_water} sides — peninsula/island"
+            )
+        elif 0 < land_ratio < 0.75 and has_large_water and not is_peninsular:
+            log.info(
+                f"Ocean mask skipped: land {land_ratio*100:.1f}% "
+                f"with water on only {sides_with_water} side(s) — "
+                f"inland city with coastline (suburbs continue outside admin)"
             )
         elif 0 < land_ratio < 0.75 and not has_large_water:
             log.info(
