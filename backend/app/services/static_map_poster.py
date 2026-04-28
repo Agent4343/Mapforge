@@ -549,6 +549,52 @@ def render_map_image(
         except Exception as e:
             log.warning(f"Natural-land carve skipped: {e}")
 
+    # Default framing to natural_land instead of the full admin
+    # polygon. Toronto's admin boundary extends ~2km into Lake
+    # Ontario for the harbour + Toronto Islands; using the unmodified
+    # admin polygon for framing makes the lake-extension drive the
+    # bbox and the city ends up squashed into the bottom 60% of the
+    # poster with empty water filling the rest. natural_land has
+    # the water carved out so the framer sees the urban land bbox.
+    #
+    # When natural_land splits into multiple pieces (multi-island
+    # archipelago, or a city that the carve fragmented because of
+    # internal water bodies) we collapse to the dominant piece ONLY
+    # when it accounts for ≥70% of the total land area. Otherwise
+    # keep the full multi-piece geometry so genuinely two-sided
+    # cities like Halifax (peninsula + Dartmouth, ≈55/45) keep
+    # both sides framed with the harbour between them.
+    #
+    # Pin-containing-piece logic below still runs and refines this
+    # further when a pin is provided.
+    if natural_land is not None:
+        try:
+            framing_land = natural_land
+            pieces = (
+                list(natural_land.geoms)
+                if hasattr(natural_land, "geoms")
+                else [natural_land]
+            )
+            if len(pieces) > 1:
+                total_area = sum(getattr(p, "area", 0.0) for p in pieces)
+                largest = max(pieces, key=lambda p: getattr(p, "area", 0.0))
+                largest_area = getattr(largest, "area", 0.0)
+                if total_area > 0 and largest_area / total_area >= 0.70:
+                    framing_land = largest
+                    log.info(
+                        f"Framing land: {len(pieces)} pieces, dominant "
+                        f"({largest_area / total_area * 100:.0f}% of total) "
+                        f"-> tight bbox to dominant piece"
+                    )
+                else:
+                    log.info(
+                        f"Framing land: {len(pieces)} comparable pieces, "
+                        f"largest is {largest_area / max(total_area, 1e-9) * 100:.0f}% "
+                        f"-> keeping full natural_land bbox"
+                    )
+        except Exception as e:
+            log.warning(f"Largest-piece framing selection skipped: {e}")
+
     # Pick the pin-containing piece for framing. The render mask still
     # uses the full natural_land so multi-island villages keep all
     # their pieces drawn.
