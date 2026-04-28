@@ -283,6 +283,20 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         geom = load_local_province(req.text)
         if geom is not None:
             boundary_source = "local"
+    # Lookup the geocode record FIRST so its lat/lon can validate any
+    # polygon we fetch. Toronto's Overpass response can be partially
+    # truncated by the 25 s timeout, force-closing into a polygon that
+    # doesn't actually contain downtown — passing the geocode point
+    # in lets fetch_geometry detect that and fall back automatically.
+    from app.services.geo_fetch import fetch_geocode_record
+    geocode_record = await fetch_geocode_record(req.osm_id, req.osm_type)
+    if geocode_record is None:
+        log.warning("Geocode lookup returned None for %s/%s", req.osm_type, req.osm_id)
+        raise HTTPException(
+            status_code=503,
+            detail="Location service temporarily unavailable. Please try again in a moment.",
+        )
+
     if geom is None:
         # Prefer Overpass for any boundary that needs vertex-accurate
         # rendering — provinces always, cities/communities now too.
@@ -297,19 +311,16 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         prefer_overpass = req.product_type.value in (
             "province", "city", "community", "park", "lake",
         )
+        try:
+            gc_lat = float(geocode_record.get("lat", 0) or 0)
+            gc_lon = float(geocode_record.get("lon", 0) or 0)
+            validation_pt = (gc_lat, gc_lon) if (gc_lat or gc_lon) else None
+        except (TypeError, ValueError):
+            validation_pt = None
         geom = await fetch_geometry(
-            req.osm_id, req.osm_type, prefer_overpass=prefer_overpass,
-        )
-
-    # Lookup the geocode record now — we need it for both the viewport
-    # fallback (next block) and the MapController plan (below).
-    from app.services.geo_fetch import fetch_geocode_record
-    geocode_record = await fetch_geocode_record(req.osm_id, req.osm_type)
-    if geocode_record is None:
-        log.warning("Geocode lookup returned None for %s/%s", req.osm_type, req.osm_id)
-        raise HTTPException(
-            status_code=503,
-            detail="Location service temporarily unavailable. Please try again in a moment.",
+            req.osm_id, req.osm_type,
+            prefer_overpass=prefer_overpass,
+            validation_point=validation_pt,
         )
 
     if geom is None:

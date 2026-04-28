@@ -64,13 +64,22 @@ async def fetch_geometry(
     osm_id: int,
     osm_type: str = "relation",
     prefer_overpass: bool = False,
+    validation_point: tuple[float, float] | None = None,
 ) -> MultiPolygon | Polygon | None:
     """Fetch full polygon geometry for an OSM feature.
 
-    Checks cache first, then tries Nominatim (fast path), falls back to Overpass.
-    When prefer_overpass=True (e.g. for provinces where Nominatim's
-    pre-simplified polygon_geojson is too coarse for poster art), Overpass
-    is tried first to get full-resolution boundary nodes.
+    Checks cache first, then tries Nominatim (fast path), falls back
+    to Overpass. When prefer_overpass=True the order is reversed —
+    Overpass returns raw OSM nodes (full resolution), Nominatim
+    returns a pre-simplified polygon.
+
+    `validation_point=(lat, lon)` enables a sanity check: if the
+    primary source returns a polygon that does NOT contain the
+    validation point (within a 5km tolerance), fall back to the
+    alternative source. Toronto's Overpass response can be partially
+    truncated by the 25-second timeout, producing a force-closed
+    malformed polygon that excludes downtown — the validation point
+    catches that and recovers via the Nominatim path.
     """
     # Cache key includes source so coarse Nominatim results never shadow
     # the high-res Overpass results (or vice versa).
@@ -81,19 +90,49 @@ async def fetch_geometry(
         try:
             geom = shape(cached)
             if isinstance(geom, (Polygon, MultiPolygon)):
-                log.info(f"Geometry cache hit: {osm_type}/{osm_id} ({source_tag})")
-                return geom
+                if _polygon_contains_point(geom, validation_point):
+                    log.info(f"Geometry cache hit: {osm_type}/{osm_id} ({source_tag})")
+                    return geom
+                else:
+                    log.warning(
+                        f"Cached geometry for {osm_type}/{osm_id} ({source_tag}) "
+                        f"failed validation against {validation_point} — refetching"
+                    )
         except Exception:
             pass
 
     if prefer_overpass:
-        geom = await _fetch_via_overpass(osm_id, osm_type)
-        if geom is None:
-            geom = await _fetch_via_nominatim(osm_id, osm_type)
+        primary = await _fetch_via_overpass(osm_id, osm_type)
+        primary_tag = "overpass"
+        if primary is None or not _polygon_contains_point(primary, validation_point):
+            if primary is not None:
+                log.warning(
+                    f"Overpass returned a polygon for {osm_type}/{osm_id} "
+                    f"that does NOT contain validation point "
+                    f"{validation_point} — falling back to Nominatim. "
+                    f"Probable cause: Overpass timeout / partial relation."
+                )
+            fallback = await _fetch_via_nominatim(osm_id, osm_type)
+            if fallback is not None and _polygon_contains_point(fallback, validation_point):
+                geom = fallback
+                source_tag = "nom"
+                cache_key = f"{make_geometry_key(osm_id, osm_type)}:{source_tag}"
+            else:
+                geom = primary if primary is not None else fallback
+        else:
+            geom = primary
     else:
-        geom = await _fetch_via_nominatim(osm_id, osm_type)
-        if geom is None:
-            geom = await _fetch_via_overpass(osm_id, osm_type)
+        primary = await _fetch_via_nominatim(osm_id, osm_type)
+        if primary is None or not _polygon_contains_point(primary, validation_point):
+            fallback = await _fetch_via_overpass(osm_id, osm_type)
+            if fallback is not None and _polygon_contains_point(fallback, validation_point):
+                geom = fallback
+                source_tag = "ovp"
+                cache_key = f"{make_geometry_key(osm_id, osm_type)}:{source_tag}"
+            else:
+                geom = primary if primary is not None else fallback
+        else:
+            geom = primary
 
     # Cache the result
     if geom is not None:
@@ -105,6 +144,36 @@ async def fetch_geometry(
     return geom
 
 
+def _polygon_contains_point(
+    geom: MultiPolygon | Polygon | None,
+    point: tuple[float, float] | None,
+    tolerance_m: float = 5_000.0,
+) -> bool:
+    """True when `point=(lat, lon)` is inside `geom` (or within
+    `tolerance_m` of its boundary). Returns True when point is None
+    so callers that don't care about validation aren't gated.
+    """
+    if point is None or geom is None:
+        return True
+    try:
+        import math
+        from shapely.geometry import Point
+        lat, lon = point
+        p = Point(lon, lat)
+        if geom.intersects(p):
+            return True
+        # Convert tolerance to degrees at this latitude, take the
+        # tighter of the two axes (more conservative).
+        lat_rad = math.radians(lat)
+        m_per_deg_lat = 111_320.0
+        m_per_deg_lon = 111_320.0 * max(math.cos(lat_rad), 0.01)
+        tol_deg = tolerance_m / max(m_per_deg_lat, m_per_deg_lon)
+        return geom.distance(p) <= tol_deg
+    except Exception as e:
+        log.debug(f"Polygon containment check failed: {e}")
+        return True  # don't block on a check-side error
+
+
 async def _fetch_via_nominatim(osm_id: int, osm_type: str) -> MultiPolygon | Polygon | None:
     """Try to get geometry directly from Nominatim lookup with polygon output."""
     type_prefix = OSM_TYPE_MAP.get(osm_type, "R")
@@ -112,6 +181,14 @@ async def _fetch_via_nominatim(osm_id: int, osm_type: str) -> MultiPolygon | Pol
         "osm_ids": f"{type_prefix}{osm_id}",
         "format": "json",
         "polygon_geojson": 1,
+        # polygon_threshold=0.0 → return the polygon at full
+        # resolution (no server-side Douglas-Peucker). Nominatim
+        # default is a small but non-zero tolerance; for poster art
+        # we re-simplify downstream at 25 m and need the input at
+        # full detail. Without this Toronto's admin polygon arrives
+        # as ~30 vertices instead of ~3000, rendering as a clean
+        # angled trapezoid instead of an irregular shape.
+        "polygon_threshold": 0.0,
     }
 
     try:
