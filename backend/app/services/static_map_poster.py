@@ -440,11 +440,57 @@ def _auto_frame(
         except Exception as e:
             log.warning(f"Land-bbox clamp skipped: {e}")
 
-    # Fit to canvas aspect: take the larger of (width to contain x-span,
-    # width to contain y-span at canvas aspect).
+    # Fit to canvas aspect.
+    #
+    # LETTERBOX (max): viewport contains the full land span on both
+    # axes, leaving empty space on whichever axis is shorter. This is
+    # what we want for islands and provinces where the entire
+    # silhouette is the product — Cape Breton must not have its
+    # Highlands tip cropped.
+    #
+    # FILL (min): viewport tightly fills one axis, cropping the
+    # other. This is what we want for wide cities like Toronto on a
+    # portrait canvas — the city is 52×22 km on a 18×24 board, so
+    # letterbox leaves the top half empty water/cream above the
+    # land. Fill instead crops Etobicoke and Scarborough east/west
+    # so the urban core fills the frame edge-to-edge — the
+    # Mapiful gallery look.
+    #
+    # We use fill when:
+    #   - bbox_area indicates a city (not a region/island/province)
+    #   - the land aspect mismatches the canvas aspect strongly
+    #     enough that letterbox would leave >35% empty on the
+    #     shorter axis
+    # Otherwise we letterbox to preserve full silhouettes.
     w_for_x = needed_w
     w_for_y = needed_h / img_aspect if img_aspect > 0 else needed_w
-    meters_wide = max(w_for_x, w_for_y)
+    letterbox_w = max(w_for_x, w_for_y)
+    fill_w = min(w_for_x, w_for_y)
+
+    use_fill = False
+    if bbox_area <= 0.5 and letterbox_w > 0 and fill_w > 0:
+        # Empty-fraction = how much of the canvas the LETTERBOX
+        # framing would leave blank along the shorter axis. >35%
+        # is the "Toronto problem" — switch to fill so the city
+        # owns the frame.
+        empty_fraction = 1.0 - (fill_w / letterbox_w)
+        if empty_fraction > 0.35:
+            use_fill = True
+
+    if use_fill:
+        # Show land + ~10% breathing room on the bound axis.
+        # The other axis takes whatever cropping the canvas aspect
+        # imposes — usually 30-50% of the longer land span clipped
+        # for very wide cities.
+        meters_wide = fill_w * 1.10
+        log.info(
+            f"Auto-frame: FILL framing (city aspect mismatch, "
+            f"letterbox would leave {empty_fraction*100:.0f}% empty) "
+            f"-> viewport={meters_wide/1000:.1f}km, "
+            f"cropping along longer axis"
+        )
+    else:
+        meters_wide = letterbox_w
 
     # Sane floors and caps so tiny neighbourhoods don't render at
     # 400m and entire provinces don't try to fit in 20km. 3km floor
