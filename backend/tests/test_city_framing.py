@@ -26,15 +26,17 @@ def test_city_base_tolerance_is_in_wall_art_spec_range():
     assert 10.0 <= SIMPLIFICATION_TOLERANCES[ProductType.city] <= 15.0
 
 
-def test_toronto_sized_city_gets_12m_tolerance():
+def test_toronto_sized_city_gets_75m_tolerance():
     # Build a polygon spanning Toronto (~40 km wide) in Web Mercator
     # to feed into _get_tolerance. Numbers are approximate metres.
     poly = Polygon(
         [(0, 0), (40_000, 0), (40_000, 30_000), (0, 30_000), (0, 0)]
     )
     tol = _get_tolerance(poly, ProductType.city, "auto")
-    # 15 m base * 0.8 multiplier (5 km < extent < 50 km).
-    assert tol == pytest.approx(12.0, rel=0.01)
+    # 15 m base * 0.5 multiplier (5 km < extent < 50 km). Tightened
+    # from 0.8x so Toronto's natural Steeles-Avenue jogs survive
+    # the simplification pass instead of collapsing into one line.
+    assert tol == pytest.approx(7.5, rel=0.01)
 
 
 def test_island_sized_extent_uses_base_tolerance():

@@ -1471,9 +1471,28 @@ def render_map_image(
             )
             bg_layer = Image.new("RGB", (img_w, img_h), bg_color)
             img.paste(bg_layer, (0, 0), clip_mask)
+            # Trace the boundary in a thin dark line directly on top of
+            # the clipped image. Without this, the only "edge" between
+            # the polygon and the mat is the implicit colour transition
+            # — which print + anti-aliasing smooth into a clean line
+            # even when the polygon has 3000 natural vertices. Drawing
+            # the outline explicitly makes the real boundary's
+            # irregularity visible (Steeles Ave's small jogs, the
+            # Etobicoke Creek meander, the Pickering border zig-zag).
+            outline_color = theme.get("border", (140, 140, 140))
+            outline_width = max(1, int(min(img_w, img_h) * 0.0014))
+            for ring_px in land_rings_px:
+                if len(ring_px) < 3:
+                    continue
+                draw.line(
+                    ring_px + [ring_px[0]],
+                    fill=outline_color,
+                    width=outline_width,
+                    joint="curve",
+                )
             log.info(
                 "Inland-city clip mask applied: features outside the "
-                "admin boundary erased onto map_bg"
+                "admin boundary erased onto map_bg + boundary outlined"
             )
         except Exception as e:
             log.warning(f"Inland-city clip mask failed: {e}", exc_info=True)

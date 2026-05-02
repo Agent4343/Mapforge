@@ -193,7 +193,13 @@ def _get_tolerance(geom_m: Polygon | MultiPolygon, product_type: ProductType, si
     if extent < 5000:       # < 5km neighbourhood
         return base * 0.3   # 4.5 m for cities
     elif extent < 50000:    # < 50km city (Toronto, Calgary, Halifax)
-        return base * 0.8   # 12 m for cities — keeps Toronto Islands
+        # 0.5x base = 7.5 m for cities. Reviewer feedback called the
+        # north boundary "perfectly straight diagonal" — at 12 m the
+        # natural Steeles-Avenue jogs (15-30 m offsets at the
+        # boundary survey lines) were collapsing into one clean
+        # line. 7.5 m preserves them so the boundary reads as
+        # naturally irregular under the inland-clip mask.
+        return base * 0.5
     elif extent < 500000:   # < 500km region (Cape Breton)
         return base
     else:                   # > 500km (provinces)
