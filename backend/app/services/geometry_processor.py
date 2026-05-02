@@ -19,18 +19,20 @@ _transformer = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
 
 # Douglas-Peucker tolerances (meters) per product type.
 #
-# city: 25 m — tightened from 75 m. At a 25 km city framed onto an
-# 18×24″ 300 DPI poster (~5400 px wide), 25 m ≈ 5 px which is the
-# practical visual tolerance at print scale; 75 m was rounding off
-# small bays, harbour edges, and Toronto-Islands-scale features
-# enough to read as a quality defect on paid wall art. The adaptive
-# scaling below still trims this further for tiny extents (≤ 5 km
-# city: 7.5 m) and relaxes it for huge extents (≥ 500 km: 37.5 m).
+# city: 15 m — tightened from 25 m to match the wall-art spec
+# (cities: 10–15 m, regions: 25–50 m). At an 18×24″ 300 DPI poster
+# (~5400 px wide) framed onto a 25 km city, 15 m ≈ 3 px which is
+# below visual tolerance at print scale; the previous 25 m base
+# scaled to 17.5 m for medium cities (Toronto) and was rounding
+# Toronto Islands and harbour-edge detail enough to read as a
+# quality defect on paid wall art. The adaptive scaling below
+# trims further for tiny extents (≤ 5 km city: 4.5 m) and relaxes
+# for huge extents (≥ 500 km region: 22.5 m).
 SIMPLIFICATION_TOLERANCES = {
     ProductType.province: 350.0,
     ProductType.lake: 50.0,
-    ProductType.city: 25.0,
-    ProductType.community: 30.0,
+    ProductType.city: 15.0,
+    ProductType.community: 20.0,
     ProductType.park: 100.0,
     ProductType.name_sign: 50.0,
 }
@@ -170,15 +172,17 @@ def _get_tolerance(geom_m: Polygon | MultiPolygon, product_type: ProductType, si
         except ValueError:
             pass
 
-    # Adaptive: scale tolerance based on feature size
+    # Adaptive: scale tolerance based on feature size. The bands map
+    # to the wall-art spec's two-tier rule (city: 10–15 m, region:
+    # 25–50 m) when the base tolerance is 15 m for cities.
     bounds = geom_m.bounds  # minx, miny, maxx, maxy
     extent = max(bounds[2] - bounds[0], bounds[3] - bounds[1])
 
-    if extent < 5000:       # < 5km
-        return base * 0.3
-    elif extent < 50000:    # < 50km
-        return base * 0.7
-    elif extent < 500000:   # < 500km
+    if extent < 5000:       # < 5km neighbourhood
+        return base * 0.3   # 4.5 m for cities
+    elif extent < 50000:    # < 50km city (Toronto, Calgary, Halifax)
+        return base * 0.8   # 12 m for cities — keeps Toronto Islands
+    elif extent < 500000:   # < 500km region (Cape Breton)
         return base
     else:                   # > 500km (provinces)
         return base * 1.5

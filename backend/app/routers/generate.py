@@ -427,6 +427,28 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             ),
         )
 
+    # Spec step 6 (city wall-art rule): "If no boundary can be resolved
+    # → STOP and return error (do not render a fake map)." The
+    # rectangular `viewport` fallback exists for hamlets / pin drops
+    # that have no admin polygon — perfectly fine for a name_sign,
+    # but a city poster rendered from a padded geocoder bbox is
+    # exactly the "fake map" the spec rejects. Refuse the export so
+    # the customer never receives a rectangular pseudo-Toronto.
+    if (
+        req.product_type.value == "city"
+        and boundary_source == "viewport"
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"No municipal boundary could be resolved for "
+                f"'{req.text}'. City wall-art posters require an "
+                "actual administrative polygon — please pick a "
+                "different search result, or switch the product type "
+                "to a region / pin-drop map."
+            ),
+        )
+
     # Process geometry
     try:
         processed = process_geometry(
@@ -466,6 +488,26 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     # Store geographic extent for scale-aware rendering (used by vintage maps)
     processed["geo_lat_span"] = bounds[3] - bounds[1]
     processed["geo_lon_span"] = bounds[2] - bounds[0]
+
+    # Spec step 7: compute fit-bounds from the boundary geometry, not
+    # from the geocoder bbox or road-sample percentiles. The static-map
+    # auto-framer drifts toward whichever side of the city has more
+    # roads (Toronto's road-density centroid sits north of the lake,
+    # cropping the harbour off the bottom of the poster) — we bypass
+    # it for any product type that has a real admin polygon by passing
+    # an explicit fit_bounds_bbox derived from `geom.bounds`. Spec step
+    # 8: pad in [5%, 10%]; we use map_controller's clamped helper so
+    # the same 7.5% default applies on screen and in print.
+    from app.services.map_controller import pad_bbox as _pad_bbox
+    use_polygon_frame = req.product_type.value in (
+        "city", "community", "park", "name_sign"
+    ) or (map_plan and map_plan.use_fit_bounds)
+    if use_polygon_frame:
+        polygon_fit_bbox = _pad_bbox(
+            (bounds[0], bounds[1], bounds[2], bounds[3])  # W,S,E,N
+        )
+    else:
+        polygon_fit_bbox = None
 
     # Expand the street fetch area beyond the boundary for all street-based maps.
     # This ensures surrounding roads fill the map edges instead of cutting off
@@ -816,9 +858,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                     color_theme=req.color_theme,
                     parks_data=parks_data,
                     land_polygon=geom,
-                    fit_bounds_bbox=(
-                        map_plan.bbox if map_plan.use_fit_bounds else None
-                    ),
+                    fit_bounds_bbox=polygon_fit_bbox,
                 )
                 if poster_bytes:
                     b64 = base64.b64encode(poster_bytes).decode("ascii")
@@ -970,9 +1010,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                         color_theme=req.color_theme,
                         parks_data=parks_data,
                         land_polygon=geom,
-                        fit_bounds_bbox=(
-                            map_plan.bbox if map_plan.use_fit_bounds else None
-                        ),
+                        fit_bounds_bbox=polygon_fit_bbox,
                     )
                 except Exception as e:
                     log.warning(f"Road poster for print failed (non-fatal): {e}")
