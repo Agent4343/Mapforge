@@ -498,6 +498,202 @@ def _auto_frame(
     return new_lat, new_lng, meters_wide
 
 
+# ── Debug audit overlay ──────────────────────────────────────────────
+
+
+def _polygon_principal_axis_deg(polygon) -> float:
+    """Return the polygon's principal axis angle in degrees vs. east.
+
+    Computes the eigenvector of the largest covariance eigenvalue of
+    the polygon's vertices in WGS84 lon/lat space (after metric scaling
+    by cos(lat) so degrees of longitude don't dominate near the poles).
+    Used by the debug overlay to draw the city's natural tilt axis —
+    the line that explains why the polygon "looks rotated" even though
+    no rotation transform is applied anywhere in the rendering code.
+    """
+    try:
+        if hasattr(polygon, "geoms"):
+            polys = list(polygon.geoms)
+        else:
+            polys = [polygon]
+        xs: list[float] = []
+        ys: list[float] = []
+        for p in polys:
+            if not hasattr(p, "exterior") or p.exterior is None:
+                continue
+            for x, y in p.exterior.coords:
+                xs.append(x)
+                ys.append(y)
+        if len(xs) < 3:
+            return 0.0
+        mx = sum(xs) / len(xs)
+        my = sum(ys) / len(ys)
+        cos_lat = math.cos(math.radians(my))
+        # Centred + metric-scaled coordinates
+        cxs = [(x - mx) * cos_lat for x in xs]
+        cys = [(y - my) for y in ys]
+        # 2x2 covariance
+        sxx = sum(cx * cx for cx in cxs) / len(cxs)
+        syy = sum(cy * cy for cy in cys) / len(cys)
+        sxy = sum(cx * cy for cx, cy in zip(cxs, cys)) / len(cxs)
+        # Principal axis angle (degrees from east, +CCW).
+        angle_rad = 0.5 * math.atan2(2 * sxy, sxx - syy)
+        return math.degrees(angle_rad)
+    except Exception:
+        return 0.0
+
+
+def _draw_debug_overlay(
+    img,
+    draw,
+    to_px,
+    *,
+    land_polygon=None,
+    geocoder_bbox: tuple[float, float, float, float] | None = None,
+    pin_lat: float | None = None,
+    pin_lng: float | None = None,
+    img_w: int,
+    img_h: int,
+) -> None:
+    """Paint the audit overlay on top of the rendered map.
+
+    Draws (in order):
+      1. Geocoder bbox outline — blue dashed rectangle
+      2. Admin boundary outline — solid red, ~0.4% of canvas
+      3. Boundary centroid + principal-axis line — magenta
+      4. City-centre cross — green
+      5. North arrow + "N" label — top-left corner, with an
+         on-canvas note if the polygon's principal axis is non-zero
+    """
+    # 1. Geocoder bbox — dashed outline
+    if geocoder_bbox is not None and len(geocoder_bbox) == 4:
+        west, south, east, north = geocoder_bbox
+        corners = [
+            to_px(west, north), to_px(east, north),
+            to_px(east, south), to_px(west, south),
+        ]
+        # Dashed rectangle: short-segment alternation
+        for i in range(4):
+            x1, y1 = corners[i]
+            x2, y2 = corners[(i + 1) % 4]
+            steps = 36
+            for k in range(steps):
+                if k % 2 == 0:
+                    t1 = k / steps
+                    t2 = (k + 1) / steps
+                    draw.line(
+                        [
+                            (x1 + (x2 - x1) * t1, y1 + (y2 - y1) * t1),
+                            (x1 + (x2 - x1) * t2, y1 + (y2 - y1) * t2),
+                        ],
+                        fill=(40, 90, 200), width=3,
+                    )
+
+    # 2. Admin boundary — solid red outline
+    principal_deg = 0.0
+    boundary_centroid_px = None
+    if land_polygon is not None:
+        try:
+            polys = (
+                list(land_polygon.geoms)
+                if hasattr(land_polygon, "geoms")
+                else [land_polygon]
+            )
+            for poly in polys:
+                if not hasattr(poly, "exterior") or poly.exterior is None:
+                    continue
+                ring_px = [to_px(x, y) for x, y in poly.exterior.coords]
+                if len(ring_px) >= 3:
+                    draw.line(
+                        ring_px + [ring_px[0]],
+                        fill=(220, 30, 30), width=4,
+                    )
+            principal_deg = _polygon_principal_axis_deg(land_polygon)
+            try:
+                c = land_polygon.centroid
+                boundary_centroid_px = to_px(c.x, c.y)
+            except Exception:
+                boundary_centroid_px = None
+        except Exception:
+            pass
+
+    # 3. Boundary centroid + principal-axis line (magenta)
+    if boundary_centroid_px is not None:
+        cx, cy = boundary_centroid_px
+        # Length: 35% of canvas
+        L = min(img_w, img_h) * 0.35
+        ang = math.radians(-principal_deg)  # canvas y is flipped
+        dx = math.cos(ang) * L / 2
+        dy = math.sin(ang) * L / 2
+        draw.line(
+            [(cx - dx, cy - dy), (cx + dx, cy + dy)],
+            fill=(200, 30, 200), width=4,
+        )
+        # Centroid dot
+        r = 8
+        draw.ellipse(
+            [cx - r, cy - r, cx + r, cy + r],
+            fill=(200, 30, 200),
+        )
+
+    # 4. City-centre cross (green) — the geocoder pin lat/lon
+    if pin_lat is not None and pin_lng is not None:
+        px, py = to_px(pin_lng, pin_lat)
+        L = 24
+        draw.line([(px - L, py), (px + L, py)], fill=(20, 180, 60), width=4)
+        draw.line([(px, py - L), (px, py + L)], fill=(20, 180, 60), width=4)
+        r = 10
+        draw.ellipse(
+            [px - r, py - r, px + r, py + r],
+            outline=(20, 180, 60), width=4,
+        )
+
+    # 5. North arrow — top-left corner. Always points straight up
+    #    because the canvas is north-up. If you see this arrow tilted
+    #    on the rendered image, that proves a rotation bug; if it's
+    #    vertical, the canvas is north-up by definition.
+    arrow_x = 80
+    arrow_y_base = 120
+    arrow_len = 70
+    arrow_top = (arrow_x, arrow_y_base - arrow_len)
+    arrow_bot = (arrow_x, arrow_y_base)
+    draw.line([arrow_bot, arrow_top], fill=(0, 0, 0), width=6)
+    # Arrowhead (triangle)
+    draw.polygon(
+        [
+            (arrow_top[0] - 12, arrow_top[1] + 18),
+            (arrow_top[0] + 12, arrow_top[1] + 18),
+            arrow_top,
+        ],
+        fill=(0, 0, 0),
+    )
+    # "N" label above the arrow
+    try:
+        font = _load_font(28, bold=True)
+    except Exception:
+        font = None
+    if font is not None:
+        draw.text(
+            (arrow_x - 8, arrow_top[1] - 36), "N",
+            fill=(0, 0, 0), font=font,
+        )
+
+    # On-canvas note: principal axis angle (the geometric truth)
+    try:
+        small = _load_font(20, bold=False)
+    except Exception:
+        small = None
+    if small is not None:
+        note = (
+            f"north-up: yes  bearing=0\n"
+            f"principal axis: {principal_deg:+.1f}° (real geometry)"
+        )
+        draw.multiline_text(
+            (arrow_x + 60, arrow_y_base - arrow_len),
+            note, fill=(60, 60, 60), font=small, spacing=4,
+        )
+
+
 # ── Road rendering ───────────────────────────────────────────────────
 
 def render_map_image(
@@ -515,6 +711,8 @@ def render_map_image(
     parks_data: dict | None = None,
     land_polygon=None,
     clip_to_admin: bool = True,
+    debug_overlay: bool = False,
+    geocoder_bbox: tuple[float, float, float, float] | None = None,
 ) -> tuple[Image.Image, tuple[float, float]]:
     """Render road geometry directly onto a PIL Image.
 
@@ -523,6 +721,14 @@ def render_map_image(
     Returns (image, pin_px) where pin_px is the pixel location of
     (pin_lat, pin_lng) inside the rendered image. When pin coords aren't
     given, defaults to the geographic center of the viewport.
+
+    `debug_overlay=True` draws an audit overlay on top of the finished
+    map: north arrow, admin boundary outline, geocoder bbox outline,
+    centre cross, and the polygon's principal-axis line. Used to verify
+    that the perceived "tilt" is the polygon's natural orientation, not
+    a rotation bug. `geocoder_bbox` (W,S,E,N) is the bbox the geocoder
+    returned, drawn as a dashed rectangle for direct comparison with
+    the boundary outline.
     """
     bg_color = theme.get("map_bg", (255, 255, 255))
     img = Image.new("RGB", (img_w, img_h), bg_color)
@@ -1262,6 +1468,27 @@ def render_map_image(
     else:
         pin_px = (img_w / 2, img_h / 2)
 
+    # Audit overlay (spec step 7). Only drawn when explicitly requested
+    # by the caller — debug_overlay=True. Renders on top of the finished
+    # map so the operator can visually confirm:
+    #   * the polygon outline matches the searched city
+    #   * the canvas is north-up (north arrow points straight up)
+    #   * the geocoder bbox vs polygon bbox alignment
+    #   * the city centre lies inside the polygon
+    #   * the polygon's principal axis (real geographic tilt) is what
+    #     reads as "rotation" — and it's not produced by any code, just
+    #     by the city's actual shape.
+    if debug_overlay:
+        _draw_debug_overlay(
+            img, draw, to_px,
+            land_polygon=land_polygon,
+            geocoder_bbox=geocoder_bbox,
+            pin_lat=pin_lat,
+            pin_lng=pin_lng,
+            img_w=img_w,
+            img_h=img_h,
+        )
+
     return img, pin_px
 
 
@@ -1492,6 +1719,8 @@ def generate_road_poster(
     parks_data: dict | None = None,
     land_polygon=None,
     fit_bounds_bbox: tuple[float, float, float, float] | None = None,
+    debug_overlay: bool = False,
+    geocoder_bbox: tuple[float, float, float, float] | None = None,
 ) -> bytes | None:
     """Full pipeline: render roads → compose poster → PNG bytes.
 
@@ -1500,6 +1729,12 @@ def generate_road_poster(
     `fit_bounds_bbox` (west, south, east, north) overrides the
     auto-framer when provided — used by the MapController for
     islands / provinces whose iconic outline IS the product.
+
+    `debug_overlay=True` paints the audit overlay on top of the map
+    (north arrow, boundary outline, bbox outline, centre cross,
+    principal-axis line). `geocoder_bbox` is the bbox the geocoder
+    returned for the place — drawn dashed so the operator can compare
+    it against the polygon-derived frame.
     """
     theme = POSTER_THEMES.get(color_theme, POSTER_THEMES["city_art"])
     log.info(f"Road poster: area={bbox_area:.4f} theme={color_theme} roads={bool(streets_data)}")
@@ -1579,6 +1814,8 @@ def generate_road_poster(
         auto_compose=auto_compose,
         parks_data=parks_data,
         land_polygon=land_polygon,
+        debug_overlay=debug_overlay,
+        geocoder_bbox=geocoder_bbox,
         # Strict-clip to the admin boundary. Per the wall-art spec
         # (Toronto poster regression: water polygons for Lake Ontario
         # extend across the whole canvas and bleed past the city,

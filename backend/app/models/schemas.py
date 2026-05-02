@@ -205,6 +205,11 @@ class GenerateRequest(BaseModel):
     include_bleed: bool = False
     include_crop_marks: bool = False
     print_dpi: int = Field(300, description="Print DPI (300 standard, 600 high)")
+    # Audit overlay (spec step 7): paints north arrow, boundary
+    # outline, geocoder bbox, centre cross, and principal-axis line
+    # over the rendered map. Used to verify orientation objectively
+    # without rendering the canvas in a browser.
+    debug_overlay: bool = False
 
     @field_validator("text")
     @classmethod
