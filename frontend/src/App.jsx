@@ -520,11 +520,17 @@ export default function App() {
   const handleDownloadPrintPNG = useCallback(async () => {
     if (!result) return;
     try {
-      // If we have a MapTiler preview image, download it directly
-      if (svgContent && svgContent.startsWith("data:image/")) {
-        const resp = await fetch(svgContent);
-        const blob = await resp.blob();
-        _triggerDownload(blob, config.text + "_print", "png");
+      // Always go through the backend /download endpoint. The
+      // print PNG is saved on the server (file_record.print_png_key)
+      // and served cleanly. The previous "fetch the inline data URL"
+      // path silently failed in browsers when the base64 string was
+      // 50-100 MB (an 18x24" 300 DPI poster), manifesting as
+      // "click does nothing, no log line, no popup".
+      if (!result.file_id) {
+        setError(
+          "This map wasn't saved to your library, so the high-resolution " +
+          "PNG isn't available. Sign in and regenerate to download.",
+        );
         return;
       }
       const blob = await downloadPrintPNG(result.file_id);
@@ -533,7 +539,7 @@ export default function App() {
     } catch (err) {
       setError(err.message);
     }
-  }, [result, config.text, svgContent]);
+  }, [result, config.text, config.printDPI]);
 
   const handleDownloadDXF = useCallback(async () => {
     if (!result) return;

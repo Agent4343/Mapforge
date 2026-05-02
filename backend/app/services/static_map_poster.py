@@ -35,23 +35,23 @@ MAP_RENDER_H = 2400
 # ── Color themes ───────────────────────────────────────────────────────
 POSTER_THEMES = {
     "city_art": {
-        # Palette locked to the MapController spec:
-        #   water  = #A7C7E7 (muted blue)
-        #   land   = #F8F8F6 (off-white)
-        #   parks  = #E8EFE7 (very light green)
-        # Mat stays one shade lighter than land so the poster sits
-        # on a visible but subtle backdrop.
-        "bg": (252, 252, 251), "map_bg": (248, 248, 246),
-        "title": (25, 25, 25), "subtitle": (100, 100, 100),
+        # Palette locked to the wall-art spec:
+        #   water       = #A7C7E7 (soft blue)
+        #   land/map_bg = #F5F5F5 (light neutral)
+        #   road_major  = #2B2B2B (bold dark)
+        #   road_minor  = #B0B0B0 (thin grey)
+        # parks  = #E8EFE7 (very light green)
+        # Mat stays one shade lighter than the map so the poster
+        # sits on a visible but subtle backdrop.
+        "bg": (250, 250, 250), "map_bg": (245, 245, 245),  # #F5F5F5
+        "title": (28, 28, 28), "subtitle": (108, 108, 108),
         "border": (200, 200, 200), "line": (180, 180, 180),
-        # Four-tier road hierarchy per the spec: highways dark
-        # charcoal medium thickness, secondary grey thin, local
-        # very light grey. Matches Mapiful's weighting so arterials
-        # read as backbone and residentials as texture.
-        "road_major": (20, 20, 20),    # motorway, trunk
-        "road_arterial": (70, 70, 70), # primary, secondary
-        "road_collector": (125, 125, 125),# tertiary
-        "road_minor": (180, 180, 180), # residential, service
+        # Four-tier road hierarchy. Major locked to spec #2B2B2B,
+        # minor to spec #B0B0B0; arterial / collector interpolate.
+        "road_major": (43, 43, 43),    # #2B2B2B — motorway, trunk
+        "road_arterial": (90, 90, 90), # primary, secondary
+        "road_collector": (140, 140, 140),# tertiary
+        "road_minor": (176, 176, 176), # #B0B0B0 — residential, service
         "map_mode": "light", "water": (167, 199, 231),   # #A7C7E7
         "water_edge": (110, 150, 190),
         "park": (232, 239, 231),                         # #E8EFE7
@@ -419,28 +419,45 @@ def _auto_frame(
             land_bounds = land_polygon.bounds  # (minx, miny, maxx, maxy)
             lx_min, ly_min = _to_mercator(land_bounds[1], land_bounds[0])
             lx_max, ly_max = _to_mercator(land_bounds[3], land_bounds[2])
-            land_w = (lx_max - lx_min) * 1.5
-            land_h = (ly_max - ly_min) * 1.5
-            if land_w > 0 and needed_w > land_w:
-                needed_w = land_w
-            if land_h > 0 and needed_h > land_h:
-                needed_h = land_h
-            # Recenter on land centroid since the road bbox might have
-            # pulled the centroid out over water.
-            land_cx = (lx_min + lx_max) * 0.5
-            land_cy = (ly_min + ly_max) * 0.5
-            cx = (cx + land_cx) * 0.5
-            cy = (cy + land_cy) * 0.5
+            # Show the full admin polygon with ~8% padding on each
+            # side. Previous "1.5× land bbox" was for a road-centric
+            # frame that allowed the city to overflow into water; the
+            # spec now wants the polygon ITSELF as the framed product
+            # with equal padding all the way around.
+            land_w_raw = lx_max - lx_min
+            land_h_raw = ly_max - ly_min
+            needed_w = land_w_raw * 1.08
+            needed_h = land_h_raw * 1.08
+            # Center exactly on the polygon centroid (Shapely centroid
+            # is the geometric center of mass — accurate even for
+            # irregular shapes like Toronto's L-shape; the road
+            # midpoint and the bbox midpoint can both drift far off
+            # the actual visual center for non-convex city outlines).
+            try:
+                ctr = land_polygon.centroid
+                cx, cy = _to_mercator(ctr.y, ctr.x)
+                centroid_src = "polygon centroid"
+            except Exception:
+                cx = (lx_min + lx_max) * 0.5
+                cy = (ly_min + ly_max) * 0.5
+                centroid_src = "bbox center (centroid fallback)"
             log.info(
-                f"Auto-frame: land bbox clamp "
-                f"{land_w/1.5/1000:.1f}x{land_h/1.5/1000:.1f}km "
-                f"-> viewport limited to 1.5× land"
+                f"Auto-frame: full-boundary fit "
+                f"{land_w_raw/1000:.1f}x{land_h_raw/1000:.1f}km "
+                f"+ 8% padding, centered on {centroid_src}"
             )
         except Exception as e:
             log.warning(f"Land-bbox clamp skipped: {e}")
 
-    # Fit to canvas aspect: take the larger of (width to contain x-span,
-    # width to contain y-span at canvas aspect).
+    # Fit to canvas aspect — letterbox always.
+    #
+    # Per the wall-art spec the FULL admin boundary must be visible
+    # with equal padding on all sides. The viewport is sized to
+    # contain both axes of the land span; whichever axis is shorter
+    # gets equal-margin padding from the canvas. The clip-to-admin
+    # mask paints the empty padding region in the theme's neutral
+    # land colour so it reads as paper around the city silhouette,
+    # not as fake water or fake suburbs.
     w_for_x = needed_w
     w_for_y = needed_h / img_aspect if img_aspect > 0 else needed_w
     meters_wide = max(w_for_x, w_for_y)
@@ -547,6 +564,52 @@ def render_map_image(
                     log.info("Natural land mask: carved water polygons from admin boundary")
         except Exception as e:
             log.warning(f"Natural-land carve skipped: {e}")
+
+    # Default framing to natural_land instead of the full admin
+    # polygon. Toronto's admin boundary extends ~2km into Lake
+    # Ontario for the harbour + Toronto Islands; using the unmodified
+    # admin polygon for framing makes the lake-extension drive the
+    # bbox and the city ends up squashed into the bottom 60% of the
+    # poster with empty water filling the rest. natural_land has
+    # the water carved out so the framer sees the urban land bbox.
+    #
+    # When natural_land splits into multiple pieces (multi-island
+    # archipelago, or a city that the carve fragmented because of
+    # internal water bodies) we collapse to the dominant piece ONLY
+    # when it accounts for ≥70% of the total land area. Otherwise
+    # keep the full multi-piece geometry so genuinely two-sided
+    # cities like Halifax (peninsula + Dartmouth, ≈55/45) keep
+    # both sides framed with the harbour between them.
+    #
+    # Pin-containing-piece logic below still runs and refines this
+    # further when a pin is provided.
+    if natural_land is not None:
+        try:
+            framing_land = natural_land
+            pieces = (
+                list(natural_land.geoms)
+                if hasattr(natural_land, "geoms")
+                else [natural_land]
+            )
+            if len(pieces) > 1:
+                total_area = sum(getattr(p, "area", 0.0) for p in pieces)
+                largest = max(pieces, key=lambda p: getattr(p, "area", 0.0))
+                largest_area = getattr(largest, "area", 0.0)
+                if total_area > 0 and largest_area / total_area >= 0.70:
+                    framing_land = largest
+                    log.info(
+                        f"Framing land: {len(pieces)} pieces, dominant "
+                        f"({largest_area / total_area * 100:.0f}% of total) "
+                        f"-> tight bbox to dominant piece"
+                    )
+                else:
+                    log.info(
+                        f"Framing land: {len(pieces)} comparable pieces, "
+                        f"largest is {largest_area / max(total_area, 1e-9) * 100:.0f}% "
+                        f"-> keeping full natural_land bbox"
+                    )
+        except Exception as e:
+            log.warning(f"Largest-piece framing selection skipped: {e}")
 
     # Pick the pin-containing piece for framing. The render mask still
     # uses the full natural_land so multi-island villages keep all
@@ -659,26 +722,19 @@ def render_map_image(
             land_rings_px = []
 
     apply_ocean_mask = False
-    if land_rings_px:
+    if land_rings_px and not clip_to_admin:
+        # Ocean mask path — only used when the caller hasn't asked
+        # for strict admin clipping. Per the wall-art spec, city
+        # posters always strict-clip (outside admin polygon =
+        # neutral background, never water). The ocean mask is
+        # retained here as a fallback for legacy callers that pass
+        # clip_to_admin=False.
         canvas_area = img_w * img_h
         total_land_area = sum(
             abs(_ring_signed_area(r)) for r in land_rings_px
         )
         land_ratio = total_land_area / canvas_area if canvas_area else 0
 
-        # Inland-city guard. The original rule — "any land polygon
-        # covering less than 75% of the canvas is an island/peninsula
-        # and should be clipped" — breaks on inland cities like
-        # Calgary whose admin boundaries follow township section
-        # lines (giving a rectangular staircase outline). Without
-        # this guard we paint the "outside" of the city limits with
-        # water colour and the poster looks like Calgary is floating
-        # in an ocean.
-        #
-        # Real islands/peninsulas always have a LARGE water polygon
-        # (ocean or big lake) nearby — that's the definition of a
-        # coastline. We only apply the mask when water_data contains
-        # at least one polygon that takes up >=8% of the canvas.
         has_large_water = False
         if water_data:
             for coords, _wt, _wn in water_data.get("water_polygons", []):
@@ -693,21 +749,16 @@ def render_map_image(
         if 0 < land_ratio < 0.75 and has_large_water:
             apply_ocean_mask = True
             log.info(
-                f"Ocean mask will be applied post-draw: land "
-                f"{land_ratio*100:.1f}% of canvas ({len(land_rings_px)} polygons), "
-                f"large water polygon detected"
+                f"Ocean mask (legacy path): land "
+                f"{land_ratio*100:.1f}% of canvas, large water polygon "
+                f"detected, clip_to_admin=False"
             )
-        elif 0 < land_ratio < 0.75 and not has_large_water:
-            log.info(
-                f"Ocean mask skipped: land {land_ratio*100:.1f}% "
-                f"but no large water polygon — treating as inland city "
-                f"(admin boundary is not a coastline)"
-            )
-        else:
-            log.info(
-                f"Ocean mask skipped: land {land_ratio*100:.1f}% "
-                f"of canvas (>=75%, treating as inland)"
-            )
+    elif land_rings_px and clip_to_admin:
+        log.info(
+            "Ocean mask suppressed: clip_to_admin=True — strict "
+            "admin clipping renders outside-polygon as neutral "
+            "background per wall-art spec"
+        )
 
     # ── Draw water polygons (inland lakes, rivers, bays) ──
     # Universal "ONE dominant feature" rule: rank water polygons by
@@ -919,12 +970,13 @@ def render_map_image(
         if bbox_area > 2.0:
             # Province / island: residential grid is noise at this
             # scale so it's dropped; the major/arterial hierarchy
-            # carries the whole poster. Weights bumped 6/4 -> 10/6
-            # so the Trans-Canada / highway 125 / Cabot Trail read
-            # as a clear backbone at 300 DPI instead of hairlines
-            # on an otherwise empty island.
-            minor_mult, major_mult = 5, 10
-            minor_min, major_min = 3, 6
+            # carries the whole poster. The previous 10/6 weights
+            # rendered the Trans-Canada / Hwy 125 / Cabot Trail as
+            # bold black slabs that visually dominated Cape Breton.
+            # Trimmed to 7/4 — backbone reads clearly without
+            # overpowering the island silhouette.
+            minor_mult, major_mult = 4, 7
+            minor_min, major_min = 2, 4
             min_residential_px = 440
             drop_all_residentials = True
         elif bbox_area > 0.5:
@@ -1522,6 +1574,16 @@ def generate_road_poster(
         auto_compose=auto_compose,
         parks_data=parks_data,
         land_polygon=land_polygon,
+        # Strict-clip to the admin boundary. Per the wall-art spec
+        # (Toronto poster regression: water polygons for Lake Ontario
+        # extend across the whole canvas and bleed past the city,
+        # painting the suburbs above Toronto blue). Inside admin: real
+        # geography (city + its harbour). Outside admin: theme map_bg
+        # (light neutral). When the place is a coastal island /
+        # peninsula and the ocean mask was applied earlier, the inland
+        # clip is bypassed (see render_map_image: the two masks are
+        # mutually exclusive — ocean wins for islands, inland clip
+        # wins for cities).
         clip_to_admin=True,
     )
 

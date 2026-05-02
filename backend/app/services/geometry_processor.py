@@ -17,11 +17,19 @@ from app.models.schemas import ProductType, BOARD_DIMENSIONS_INCHES
 # WGS84 → Web Mercator
 _transformer = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
 
-# Douglas-Peucker tolerances (meters) per product type
+# Douglas-Peucker tolerances (meters) per product type.
+#
+# city: 25 m — tightened from 75 m. At a 25 km city framed onto an
+# 18×24″ 300 DPI poster (~5400 px wide), 25 m ≈ 5 px which is the
+# practical visual tolerance at print scale; 75 m was rounding off
+# small bays, harbour edges, and Toronto-Islands-scale features
+# enough to read as a quality defect on paid wall art. The adaptive
+# scaling below still trims this further for tiny extents (≤ 5 km
+# city: 7.5 m) and relaxes it for huge extents (≥ 500 km: 37.5 m).
 SIMPLIFICATION_TOLERANCES = {
     ProductType.province: 350.0,
     ProductType.lake: 50.0,
-    ProductType.city: 75.0,
+    ProductType.city: 25.0,
     ProductType.community: 30.0,
     ProductType.park: 100.0,
     ProductType.name_sign: 50.0,

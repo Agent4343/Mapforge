@@ -23,7 +23,9 @@ from app.models.schemas import (
 from app.services.auth import get_current_user, get_optional_user
 from app.services.dxf_generator import generate_dxf
 from app.services.stl_generator import generate_stl
-from app.services.geo_fetch import fetch_area_around_point, fetch_geometry
+from app.services.geo_fetch import (
+    fetch_area_around_point, fetch_geometry, viewport_polygon_from_geocode,
+)
 from app.services.geometry_processor import process_geometry, transform_wgs84_to_board
 from app.services.svg_generator import generate_svg
 from app.services.street_fetcher import fetch_streets
@@ -40,6 +42,36 @@ from app.services.thumbnail_generator import (
 )
 
 router = APIRouter(prefix="/api/v1", tags=["generate"])
+
+
+# Codepoints that the production cairosvg/pango font stack (Liberation
+# Sans / DejaVu fallback) doesn't have a glyph for. Replaced with safe
+# ASCII before the SVG hits cairosvg so on-demand PNG rasterisation
+# doesn't blow up on a single decorative character.
+_CAIRO_UNSAFE_REPLACEMENTS = {
+    " ": " ",   # EM SPACE
+    " ": " ",   # EN SPACE
+    " ": " ",   # THIN SPACE
+    "​": "",    # ZERO WIDTH SPACE
+    "│": "|",   # BOX DRAWINGS LIGHT VERTICAL
+    "─": "-",   # BOX DRAWINGS LIGHT HORIZONTAL
+    "—": "-",   # EM DASH
+    "–": "-",   # EN DASH
+}
+
+
+def _sanitize_svg_for_cairo(svg_text: str) -> str:
+    """Replace cairosvg-unsafe Unicode glyphs with ASCII equivalents.
+
+    Used by the on-demand PNG fallback so older posters in storage
+    (which may contain decorative box-drawings glyphs the production
+    font stack can't render) still rasterise to PNG.
+    """
+    out = svg_text
+    for bad, good in _CAIRO_UNSAFE_REPLACEMENTS.items():
+        if bad in out:
+            out = out.replace(bad, good)
+    return out
 
 
 def _compute_street_viewport(streets_data: dict, transform: dict, bounds_mm: tuple,
@@ -245,18 +277,94 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     # rate limits). Falls back to Overpass for anything not bundled.
     log.info(f"Generating {req.product_type.value} for OSM {req.osm_type}/{req.osm_id}")
     geom = None
+    boundary_source = "admin"
     if req.product_type.value == "province" and req.text:
         from app.services.boundary_loader import load_local_province
         geom = load_local_province(req.text)
-    if geom is None:
-        prefer_overpass = req.product_type.value == "province"
-        geom = await fetch_geometry(req.osm_id, req.osm_type, prefer_overpass=prefer_overpass)
-    if geom is None:
+        if geom is not None:
+            boundary_source = "local"
+    # Lookup the geocode record FIRST so its lat/lon can validate any
+    # polygon we fetch. Toronto's Overpass response can be partially
+    # truncated by the 25 s timeout, force-closing into a polygon that
+    # doesn't actually contain downtown — passing the geocode point
+    # in lets fetch_geometry detect that and fall back automatically.
+    from app.services.geo_fetch import fetch_geocode_record
+    geocode_record = await fetch_geocode_record(req.osm_id, req.osm_type)
+    if geocode_record is None:
+        log.warning("Geocode lookup returned None for %s/%s", req.osm_type, req.osm_id)
         raise HTTPException(
-            status_code=404,
-            detail=f"Could not fetch geometry for {req.osm_type}/{req.osm_id}. "
-            "The location may not have polygon data in OpenStreetMap.",
+            status_code=503,
+            detail="Location service temporarily unavailable. Please try again in a moment.",
         )
+
+    if geom is None:
+        # Prefer Overpass for any boundary that needs vertex-accurate
+        # rendering — provinces always, cities/communities now too.
+        # Nominatim's polygon_geojson endpoint returns a pre-simplified
+        # polygon (server-side Douglas-Peucker for performance) which
+        # smooths Toronto's actual ~3000-vertex admin relation down to
+        # ~30 vertices, producing a "clean angled edge" parallelogram
+        # that doesn't match Toronto's real irregular shape. Overpass
+        # fetches raw OSM nodes so the polygon arrives full-detail
+        # and only our 25 m simplification (downstream in
+        # process_geometry) actually gates the output resolution.
+        prefer_overpass = req.product_type.value in (
+            "province", "city", "community", "park", "lake",
+        )
+        try:
+            gc_lat = float(geocode_record.get("lat", 0) or 0)
+            gc_lon = float(geocode_record.get("lon", 0) or 0)
+            validation_pt = (gc_lat, gc_lon) if (gc_lat or gc_lon) else None
+        except (TypeError, ValueError):
+            validation_pt = None
+        geom = await fetch_geometry(
+            req.osm_id, req.osm_type,
+            prefer_overpass=prefer_overpass,
+            validation_point=validation_pt,
+        )
+
+    if geom is None:
+        # Spec #5: "If no boundary exists, use a clean rectangular
+        # viewport around the geocoded place." Build a padded bbox
+        # polygon from the Nominatim boundingbox so we never export a
+        # 404 for a real, geocodable place — only for places that
+        # don't actually exist.
+        log.info(
+            f"No admin polygon for {req.osm_type}/{req.osm_id}; "
+            f"using rectangular viewport fallback"
+        )
+        geom = viewport_polygon_from_geocode(geocode_record)
+        if geom is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Could not fetch geometry or build viewport for "
+                f"{req.osm_type}/{req.osm_id}.",
+            )
+        boundary_source = "viewport"
+
+    # Polygon detail audit — make it trivially verifiable from the
+    # server log that the visible city shape is the actual admin
+    # polygon and not a simplified bbox. A real city admin relation
+    # like Toronto has 1000-3000 vertices; if this prints a vertex
+    # count under ~50 the polygon is server-side simplified (a
+    # symptom of Nominatim's polygon_geojson returning a coarse
+    # version) and the render will look like a clean parallelogram.
+    try:
+        if hasattr(geom, "geoms"):
+            vertex_count = sum(len(p.exterior.coords) for p in geom.geoms)
+            piece_count = len(list(geom.geoms))
+        else:
+            vertex_count = len(geom.exterior.coords)
+            piece_count = 1
+        bounds = geom.bounds  # (minx, miny, maxx, maxy)
+        log.info(
+            "Boundary polygon: source=%s, type=%s, pieces=%d, "
+            "vertices=%d, bounds=(%.4f,%.4f,%.4f,%.4f)",
+            boundary_source, type(geom).__name__, piece_count,
+            vertex_count, bounds[0], bounds[1], bounds[2], bounds[3],
+        )
+    except Exception as e:
+        log.warning(f"Polygon audit log failed: {e}")
 
     # ── Map rendering controller (spec: validate, classify, plan) ─────
     #
@@ -268,20 +376,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     #     geocode point (auto-framer keeps working)
     # Plan status surfaces as a structured error rather than silent
     # fallbacks.
-    from app.services.geo_fetch import fetch_geocode_record
     from app.services.map_controller import plan_render
-    geocode_record = await fetch_geocode_record(req.osm_id, req.osm_type)
-    if geocode_record is None:
-        # Distinct error: upstream Nominatim call failed (timeout /
-        # DNS / rate limit). Without this branch the null propagates
-        # into plan_render → INVALID_MAP_RENDER, and the user sees
-        # "pick a different result" when the actual cause was an
-        # upstream outage. 503 lets the client auto-retry.
-        log.warning("Geocode lookup returned None for %s/%s", req.osm_type, req.osm_id)
-        raise HTTPException(
-            status_code=503,
-            detail="Location service temporarily unavailable. Please try again in a moment.",
-        )
     map_plan = plan_render(
         user_input=req.text or str(req.osm_id),
         geocode=geocode_record,
@@ -304,6 +399,33 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     if map_plan.status == "BROAD_BBOX":
         warnings.extend(map_plan.warnings)
     log.info("MapController plan: %s", map_plan.to_dict())
+
+    # ── Spec validation gate (real geography, not fake) ───────────────
+    #
+    # Final pre-render check that the geocode + plan + boundary
+    # together describe the place the user actually searched for. We
+    # hard-fail here rather than export a poster of the wrong place.
+    from app.services.map_validator import validate_render_inputs
+    validation = validate_render_inputs(
+        user_input=req.text or "",
+        geocode=geocode_record,
+        plan=map_plan,
+        geometry=geom,
+        boundary_source=boundary_source,
+    )
+    if not validation.ok:
+        log.warning(
+            "Render validation FAILED for '%s': %s",
+            req.text, "; ".join(validation.issues),
+        )
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Map validation failed for '{req.text}': "
+                f"{'; '.join(validation.issues)}. "
+                "Pick a different result from the search suggestions."
+            ),
+        )
 
     # Process geometry
     try:
@@ -1306,23 +1428,54 @@ async def download(
         content = None
         if file_record.print_png_key:
             content = await retrieve_file(file_record.print_png_key)
-        # Fallback: render PNG on-demand from stored SVG if pre-rendered PNG
-        # is missing (happens when cairosvg fails during generation)
+        # Fallback: render PNG on-demand from stored SVG if the
+        # pre-rendered PNG is missing (cairosvg failed at generate
+        # time, storage eviction, etc.). Pass through the file's
+        # actual board size so the on-demand output matches what
+        # the user originally generated, not a 16" default.
         if content is None and file_record.svg_storage_key:
             svg_bytes = await retrieve_file(file_record.svg_storage_key)
             if svg_bytes:
+                svg_text = svg_bytes.decode("utf-8", errors="replace")
+                # Strip codepoints that the production cairosvg/pango
+                # font stack can't render (box-drawings glyphs,
+                # zero-width chars, etc.). Older posters in storage
+                # may contain a U+2502 separator that breaks the on-
+                # demand PNG path; this keeps existing files
+                # downloadable without forcing a regenerate.
+                svg_text = _sanitize_svg_for_cairo(svg_text)
                 try:
                     from app.services.thumbnail_generator import generate_print_image
                     content = await asyncio.to_thread(
                         generate_print_image,
-                        svg_bytes.decode("utf-8"),
+                        svg_text,
                         skip_remap=True,
+                        board_size=file_record.board_size,
                     )
-                    log.info(f"On-demand PNG render succeeded for {file_id}")
+                    log.info(
+                        f"On-demand PNG render succeeded for {file_id} "
+                        f"(board_size={file_record.board_size})"
+                    )
                 except Exception as e:
-                    log.error(f"On-demand PNG render failed for {file_id}: {e}")
+                    import traceback
+                    log.error(
+                        f"On-demand PNG render failed for {file_id}: "
+                        f"{type(e).__name__}: {e}\n"
+                        f"{traceback.format_exc()}"
+                    )
         if content is None:
-            raise HTTPException(status_code=404, detail="Print PNG not available for this file.")
+            # Distinguish "we never made a PNG" from "the file vanished":
+            # an admin hitting this almost always means cairosvg failed
+            # at generate time AND failed again on the on-demand retry.
+            # 503 + "regenerate" is more actionable than 404.
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Print PNG could not be rendered for this file. "
+                    "Check the server log for the cairosvg error and "
+                    "regenerate the map."
+                ),
+            )
         media_type = "image/png"
         ext = "png"
     elif format == ExportFormat.dxf:
