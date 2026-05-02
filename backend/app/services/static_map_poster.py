@@ -782,7 +782,28 @@ def render_map_image(
                 carved = admin_valid.difference(water_union)
                 if not carved.is_empty:
                     natural_land = carved
-                    log.info("Natural land mask: carved water polygons from admin boundary")
+                    # Diagnostic: vertex counts before/after the
+                    # water carve. Lets us confirm full-detail
+                    # polygons aren't being silently smoothed by
+                    # Shapely's difference operation. Toronto's
+                    # admin polygon should have 1000+ vertices on
+                    # the input side; carving the lake should keep
+                    # that count roughly intact for the northern
+                    # boundary (no water near Steeles).
+                    def _count_verts(g):
+                        if hasattr(g, "geoms"):
+                            return sum(_count_verts(p) for p in g.geoms)
+                        if hasattr(g, "exterior") and g.exterior is not None:
+                            return len(g.exterior.coords) + sum(
+                                len(r.coords) for r in g.interiors
+                            )
+                        return 0
+                    log.info(
+                        "Natural land mask: %d -> %d vertices "
+                        "after water carve",
+                        _count_verts(land_polygon),
+                        _count_verts(natural_land),
+                    )
         except Exception as e:
             log.warning(f"Natural-land carve skipped: {e}")
 
@@ -1471,24 +1492,38 @@ def render_map_image(
             )
             bg_layer = Image.new("RGB", (img_w, img_h), bg_color)
             img.paste(bg_layer, (0, 0), clip_mask)
-            # Trace the boundary in a thin dark line directly on top of
-            # the clipped image. Without this, the only "edge" between
-            # the polygon and the mat is the implicit colour transition
-            # — which print + anti-aliasing smooth into a clean line
-            # even when the polygon has 3000 natural vertices. Drawing
-            # the outline explicitly makes the real boundary's
-            # irregularity visible (Steeles Ave's small jogs, the
-            # Etobicoke Creek meander, the Pickering border zig-zag).
-            outline_color = theme.get("border", (140, 140, 140))
-            outline_width = max(1, int(min(img_w, img_h) * 0.0014))
+            # Trace the boundary in a visibly dark line directly on top
+            # of the clipped image. Without this, the only "edge"
+            # between the polygon and the mat is the implicit colour
+            # transition — which print + anti-aliasing smooth into a
+            # clean line even when the polygon has 3000 natural
+            # vertices. Drawing the outline explicitly makes the real
+            # boundary's irregularity visible (Steeles Ave's small
+            # jogs, the Etobicoke Creek meander, the Pickering border
+            # zig-zag).
+            #
+            # Reviewer feedback: the previous (200,200,200) on
+            # (245,245,245) outline was 45 RGB units of contrast —
+            # invisible at print scale. Locked to the road_minor
+            # colour (~#888 in city_art) so the boundary reads as a
+            # real wall-art line, and bumped width to 0.22% of
+            # canvas (≈ 5 px on the 2400 px render → ~12 px / ~1 mm
+            # in print, the threshold for visible detail).
+            outline_color = theme.get(
+                "road_minor", theme.get("border", (140, 140, 140))
+            )
+            outline_width = max(2, int(min(img_w, img_h) * 0.0022))
             for ring_px in land_rings_px:
                 if len(ring_px) < 3:
                     continue
+                # No `joint="curve"` here — joint smoothing on a fine
+                # boundary line WOULD round off the very Steeles-Ave
+                # jogs we want visible. Plain mitred joints keep the
+                # angles intact.
                 draw.line(
                     ring_px + [ring_px[0]],
                     fill=outline_color,
                     width=outline_width,
-                    joint="curve",
                 )
             log.info(
                 "Inland-city clip mask applied: features outside the "
