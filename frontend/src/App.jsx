@@ -220,7 +220,15 @@ export default function App() {
     });
     fetch(`${base}/api/v1/search/plan?${params.toString()}`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((plan) => setMapPlan(plan && plan.status === "OK" ? plan : null))
+      .then((plan) => {
+        // BROAD_BBOX is non-fatal: the controller still produced a
+        // usable plan, it just flagged that the bbox covers more
+        // than a typical city (e.g., metro region). The boundary
+        // fetch in MapLibrePoster will tighten the frame to the
+        // searched city polygon when one is available.
+        const renderable = plan && (plan.status === "OK" || plan.status === "BROAD_BBOX");
+        setMapPlan(renderable ? plan : null);
+      })
       .catch(() => setMapPlan(null));
   }, [selectedResult]);
 

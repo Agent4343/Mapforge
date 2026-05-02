@@ -189,6 +189,22 @@ async function searchLocations(query, country = "ca") {
   return resp.json();
 }
 
+/**
+ * Fetch a city boundary GeoJSON Feature for an OSM relation.
+ *
+ * Returns the Feature on success, or `null` when the backend has no
+ * polygon for the feature (404). Network or server errors propagate
+ * so callers can decide whether to fall back to the geocoder bbox.
+ */
+async function getCityBoundary(osmId, osmType = "relation") {
+  const resp = await fetchWithTimeout(
+    `${API_BASE}/boundary?osm_id=${encodeURIComponent(osmId)}&osm_type=${encodeURIComponent(osmType)}`,
+  );
+  if (resp.status === 404) return null;
+  if (!resp.ok) throw new Error(`Boundary fetch failed: ${resp.statusText}`);
+  return resp.json();
+}
+
 // --- Generate ---
 
 async function generateSVG(params) {
@@ -693,7 +709,7 @@ async function downloadCreditFile(token, format = "png") {
 
 export {
   setToken, getToken, hasSessionHint, register, login, logout, getProfile, requestPasswordReset, resetPassword, subscribe,
-  searchLocations, generateSVG, generatePin, batchGenerate,
+  searchLocations, getCityBoundary, generateSVG, generatePin, batchGenerate,
   downloadSVG, downloadDXF, downloadSTL, downloadThumbnail, downloadPrintPNG,
   downloadEtsyListing, downloadEtsyPackage, downloadPreview, downloadWallMockup, getPrintSizes,
   getLibrary, deleteLibraryFile, deleteAllLibraryFiles,

@@ -1,6 +1,7 @@
 """Search API router with rate limiting — supports Canada, US, and global."""
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from shapely.geometry import mapping
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -8,7 +9,7 @@ from app.config import settings
 from app.logging_config import log
 from app.models.schemas import SearchResponse
 from app.services.geo_search import search_location
-from app.services.geo_fetch import fetch_geocode_record
+from app.services.geo_fetch import fetch_geocode_record, fetch_geometry
 from app.services.map_controller import plan_render
 from app.services.maptiler_geocode import geocode_with_maptiler
 
@@ -86,4 +87,61 @@ async def search_plan(
             detail="Location lookup service temporarily unavailable.",
         )
     plan = plan_render(user_input=query or str(osm_id), geocode=record)
-    return plan.to_dict()
+    payload = plan.to_dict()
+    # Echo the OSM identifiers so the frontend can fetch the matching
+    # boundary GeoJSON without keeping a parallel state slice in
+    # React. Without these, MapLibrePoster has no way to call
+    # /api/v1/boundary for the selected place.
+    payload["osm_id"] = osm_id
+    payload["osm_type"] = osm_type
+    return payload
+
+
+@router.get("/boundary")
+@limiter.limit(settings.RATE_LIMIT_SEARCH)
+async def get_boundary(
+    request: Request,
+    osm_id: int = Query(..., description="OSM feature id"),
+    osm_type: str = Query("relation", description="OSM type: node / way / relation"),
+):
+    """Return the city boundary as a GeoJSON Feature.
+
+    The frontend uses this to drive on-demand boundary clipping for
+    arbitrary search results — a curated set of bundled boundary files
+    can't cover the long tail of cities buyers might type. The backend
+    already has fetch_geometry (Nominatim → Overpass fallback) so we
+    just expose the polygon as GeoJSON and let the client cache it.
+
+    Responds with the GeoJSON Feature shape MapLibre expects:
+
+        {
+          "type": "Feature",
+          "geometry": { "type": "Polygon" | "MultiPolygon", ... },
+          "properties": { "osm_id": ..., "osm_type": ..., "bbox": [...] }
+        }
+
+    404 when the OSM feature has no polygon (e.g., a node-only place
+    like a hamlet pin); the caller should fall back to the geocoder
+    bbox.
+    """
+    geom = await fetch_geometry(osm_id, osm_type)
+    if geom is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"No polygon geometry for {osm_type}/{osm_id}. "
+                "Falling back to bounding-box framing on the client."
+            ),
+        )
+    minx, miny, maxx, maxy = geom.bounds
+    return {
+        "type": "Feature",
+        "geometry": mapping(geom),
+        "properties": {
+            "osm_id": osm_id,
+            "osm_type": osm_type,
+            # west, south, east, north — same order MapLibre fitBounds
+            # accepts after splitting into [[w,s],[e,n]].
+            "bbox": [minx, miny, maxx, maxy],
+        },
+    }
