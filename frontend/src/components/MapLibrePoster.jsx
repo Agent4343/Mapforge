@@ -3,7 +3,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { buildMinimalStyle, PALETTE } from "../services/mapStyle.js";
-import { fetchCityBoundary, geoJsonBoundsLngLat } from "../services/cityBoundary.js";
+import {
+  fetchCityBoundary,
+  geoJsonBoundsLngLat,
+  donutMaskFromBoundary,
+} from "../services/cityBoundary.js";
+
+// Poster mat colour (matches static_map_poster.POSTER_THEMES.city_art.bg).
+// The donut mask paints every pixel outside the city with this colour
+// so the live MapLibre preview matches what the backend exports.
+const POSTER_MAT_COLOR = "#F5F5F5";
 
 // Spec step 6: when no admin boundary is available we frame from the
 // geocoder bbox plus a small pad. 7.5% mirrors the backend default
@@ -412,19 +421,31 @@ function applyFraming(map, place, boundary = null) {
   });
 }
 
-// ── Boundary outline layer ───────────────────────────────────────────
+// ── Boundary mask + outline layers ───────────────────────────────────
+//
+// Two GeoJSON sources here:
+//   `city-boundary`  → the raw polygon, used for the thin outline.
+//   `city-mask`      → a "donut" Feature whose outer ring is the
+//                      whole world and whose holes are the city's
+//                      exterior rings. Filled with the poster mat
+//                      colour, this paints every pixel outside the
+//                      city while leaving the interior untouched —
+//                      the Mapiful "outside the boundary must not be
+//                      visible" technique.
 
 const BOUNDARY_SOURCE_ID = "city-boundary";
 const BOUNDARY_LINE_LAYER_ID = "city-boundary-line";
+const BOUNDARY_MASK_SOURCE_ID = "city-mask";
+const BOUNDARY_MASK_LAYER_ID = "city-mask-fill";
 
 function applyBoundaryLayer(map, boundary) {
-  // Remove any previous boundary layers first so a new search doesn't
-  // leave the old city outline visible.
-  if (map.getLayer(BOUNDARY_LINE_LAYER_ID)) {
-    map.removeLayer(BOUNDARY_LINE_LAYER_ID);
+  // Remove any previous boundary layers / sources first so a new
+  // search never leaves the old city's mask hanging in the canvas.
+  for (const layerId of [BOUNDARY_MASK_LAYER_ID, BOUNDARY_LINE_LAYER_ID]) {
+    if (map.getLayer(layerId)) map.removeLayer(layerId);
   }
-  if (map.getSource(BOUNDARY_SOURCE_ID)) {
-    map.removeSource(BOUNDARY_SOURCE_ID);
+  for (const sourceId of [BOUNDARY_MASK_SOURCE_ID, BOUNDARY_SOURCE_ID]) {
+    if (map.getSource(sourceId)) map.removeSource(sourceId);
   }
 
   if (!boundary) return;
@@ -434,9 +455,26 @@ function applyBoundaryLayer(map, boundary) {
     data: boundary,
   });
 
-  // Subtle dashed line so the city outline reads as the "frame" of
-  // the wall art without competing with roads. No fill so the
-  // underlying water / roads / land remain unchanged.
+  // Donut mask — fill paints the world outside the polygon with the
+  // mat colour. Added BEFORE the outline so the line draws on top.
+  const mask = donutMaskFromBoundary(boundary);
+  if (mask) {
+    map.addSource(BOUNDARY_MASK_SOURCE_ID, {
+      type: "geojson",
+      data: mask,
+    });
+    map.addLayer({
+      id: BOUNDARY_MASK_LAYER_ID,
+      type: "fill",
+      source: BOUNDARY_MASK_SOURCE_ID,
+      paint: {
+        "fill-color": POSTER_MAT_COLOR,
+        "fill-opacity": 1,
+      },
+    });
+  }
+
+  // Thin outline reads as the wall-art frame on top of the mask.
   map.addLayer({
     id: BOUNDARY_LINE_LAYER_ID,
     type: "line",

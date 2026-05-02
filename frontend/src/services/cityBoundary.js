@@ -76,3 +76,77 @@ export function geoJsonBoundsLngLat(geojson) {
     [east, north],
   ];
 }
+
+/**
+ * Build a "donut mask" GeoJSON Feature from a city boundary.
+ *
+ * Outer ring is the entire world (-180,-90 to 180,90); the city's
+ * exterior ring(s) become holes in that outer ring. When this is
+ * rendered as a fill layer with the poster background colour, every
+ * pixel outside the city polygon is repainted while the polygon
+ * interior shows through the underlying tile layers untouched.
+ *
+ * This is the Mapiful technique: "outside the boundary must not be
+ * visible." The backend PIL renderer does the same thing (clip-to-
+ * admin paints map_bg outside the polygon); this brings the live
+ * MapLibre preview in line so the screen and the export match.
+ *
+ * Accepts a Feature / FeatureCollection / raw geometry whose
+ * coordinates describe Polygon or MultiPolygon shapes. Returns
+ * `null` when no polygon rings can be extracted.
+ */
+export function donutMaskFromBoundary(boundary) {
+  if (!boundary) return null;
+
+  const exteriorRings = [];
+
+  function collectRings(geometry) {
+    if (!geometry) return;
+    if (geometry.type === "Polygon") {
+      // First ring of a Polygon is the exterior; any further rings
+      // are pre-existing holes which we don't add to the mask (they
+      // already represent water bodies inside the city).
+      const ext = geometry.coordinates?.[0];
+      if (ext && ext.length >= 4) exteriorRings.push(ext);
+    } else if (geometry.type === "MultiPolygon") {
+      for (const poly of geometry.coordinates || []) {
+        const ext = poly?.[0];
+        if (ext && ext.length >= 4) exteriorRings.push(ext);
+      }
+    }
+  }
+
+  if (boundary.type === "FeatureCollection") {
+    for (const f of boundary.features || []) collectRings(f.geometry);
+  } else if (boundary.type === "Feature") {
+    collectRings(boundary.geometry);
+  } else if (boundary.type === "Polygon" || boundary.type === "MultiPolygon") {
+    collectRings(boundary);
+  }
+
+  if (exteriorRings.length === 0) return null;
+
+  const worldOuter = [
+    [-180, -85],   // clipped to Web Mercator's practical lat range
+    [180, -85],
+    [180, 85],
+    [-180, 85],
+    [-180, -85],
+  ];
+
+  return {
+    type: "Feature",
+    geometry: {
+      type: "Polygon",
+      // World rectangle as the outer ring; every city sub-polygon as
+      // a hole. Renderers that don't support multi-hole Polygon
+      // (rare) will degrade gracefully — the largest hole always
+      // wins because we list the exteriors after the outer.
+      coordinates: [worldOuter, ...exteriorRings],
+    },
+    properties: {
+      _kind: "donut-mask",
+      _holes: exteriorRings.length,
+    },
+  };
+}
