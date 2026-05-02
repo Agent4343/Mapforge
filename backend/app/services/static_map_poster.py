@@ -39,7 +39,7 @@ POSTER_THEMES = {
         #   water       = #A7C7E7 (soft blue)
         #   land/map_bg = #F5F5F5 (light neutral)
         #   road_major  = #2B2B2B (bold dark)
-        #   road_minor  = #B0B0B0 (thin grey)
+        #   road_minor  = #888888 (mid grey, #777-#999 spec band)
         # parks  = #E8EFE7 (very light green)
         # bg + map_bg are deliberately the same colour so the
         # rectangular map area becomes invisible and the city polygon
@@ -51,12 +51,19 @@ POSTER_THEMES = {
         "bg": (245, 245, 245), "map_bg": (245, 245, 245),  # #F5F5F5
         "title": (28, 28, 28), "subtitle": (108, 108, 108),
         "border": (200, 200, 200), "line": (180, 180, 180),
-        # Four-tier road hierarchy. Major locked to spec #2B2B2B,
-        # minor to spec #B0B0B0; arterial / collector interpolate.
+        # Four-tier road hierarchy. Spec calls for:
+        #   highways  thick/dark   #222-#333   -> (45,45,45)
+        #   arterials medium       #444        -> (68,68,68)
+        #   collector medium-thin  #555-#666   -> (102,102,102)
+        #   local     thin/light   #777-#999   -> (136,136,136) ≈ #888
+        # Reviewer feedback: residentials at #B0B0B0 looked like a
+        # hairline texture, not solid lines, on the F5F5F5 mat. Mid-
+        # grey (#888) puts them squarely in the spec band and reads
+        # as a continuous grid at print scale.
         "road_major": (43, 43, 43),    # #2B2B2B — motorway, trunk
-        "road_arterial": (90, 90, 90), # primary, secondary
-        "road_collector": (140, 140, 140),# tertiary
-        "road_minor": (176, 176, 176), # #B0B0B0 — residential, service
+        "road_arterial": (68, 68, 68), # #444 — primary, secondary
+        "road_collector": (102, 102, 102), # #666 — tertiary
+        "road_minor": (136, 136, 136), # #888 — residential, service
         "map_mode": "light", "water": (167, 199, 231),   # #A7C7E7
         "water_edge": (110, 150, 190),
         "park": (232, 239, 231),                         # #E8EFE7
@@ -1197,17 +1204,23 @@ def render_map_image(
             minor_min, major_min = 3, 5
             min_residential_px = 150
         elif bbox_area > 0.1:
-            # Large city (Calgary, Edmonton): hairline residentials,
-            # secondary avenues visible as a mid-weight tier.
-            # Major weight trimmed 9 -> 8 so primaries don't over-
-            # dominate the village grid on a gallery poster.
+            # Large city (Toronto, Calgary, Edmonton). Reviewer
+            # feedback called the residential grid hairline / not
+            # solid: minor_min lifted 2 -> 3 px so residentials are
+            # ≥ 6.75 px in print (≈ 0.57 mm at 300 DPI on 18″
+            # poster). Combined with the #888 road_minor colour
+            # (was #B0B0B0), the grid now reads as continuous
+            # solid lines instead of a faint texture. major_min
+            # 3 -> 4 so the casing trick still has clean room to
+            # erase minor strokes at intersections.
             minor_mult, major_mult = 4, 8
-            minor_min, major_min = 2, 3
+            minor_min, major_min = 3, 4
             min_residential_px = 90
         elif bbox_area > 0.03:
-            # Medium city / tight metro crop.
+            # Medium city / tight metro crop. Same minor_min lift
+            # so the grid stays solid when zoomed in.
             minor_mult, major_mult = 5, 9
-            minor_min, major_min = 2, 4
+            minor_min, major_min = 3, 4
             min_residential_px = 70
         elif bbox_area > 0.01:
             # Halifax-sized downtown. Primary weight trimmed
