@@ -41,9 +41,14 @@ POSTER_THEMES = {
         #   road_major  = #2B2B2B (bold dark)
         #   road_minor  = #B0B0B0 (thin grey)
         # parks  = #E8EFE7 (very light green)
-        # Mat stays one shade lighter than the map so the poster
-        # sits on a visible but subtle backdrop.
-        "bg": (250, 250, 250), "map_bg": (245, 245, 245),  # #F5F5F5
+        # bg + map_bg are deliberately the same colour so the
+        # rectangular map area becomes invisible and the city polygon
+        # is the only visible silhouette on the poster (spec step 12:
+        # "outside the boundary must not be visible"). The clip-to-
+        # admin pass paints outside-polygon with map_bg, which now
+        # equals bg, so there is no rectangular ghost frame around
+        # the city.
+        "bg": (245, 245, 245), "map_bg": (245, 245, 245),  # #F5F5F5
         "title": (28, 28, 28), "subtitle": (108, 108, 108),
         "border": (200, 200, 200), "line": (180, 180, 180),
         # Four-tier road hierarchy. Major locked to spec #2B2B2B,

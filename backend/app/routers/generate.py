@@ -498,13 +498,22 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     # an explicit fit_bounds_bbox derived from `geom.bounds`. Spec step
     # 8: pad in [5%, 10%]; we use map_controller's clamped helper so
     # the same 7.5% default applies on screen and in print.
-    from app.services.map_controller import pad_bbox as _pad_bbox
+    from app.services.map_controller import (
+        pad_bbox as _pad_bbox,
+        MIN_BBOX_PAD_PCT,
+    )
     use_polygon_frame = req.product_type.value in (
         "city", "community", "park", "name_sign"
     ) or (map_plan and map_plan.use_fit_bounds)
     if use_polygon_frame:
+        # Tightest pad (5%) so the city polygon dominates the canvas
+        # and the surrounding mat area is minimal. Reviewer feedback
+        # called out that 7.5% still left enough whitespace to read
+        # as "city floating inside a frame" rather than "city is the
+        # frame." Spec allows 5-10%; 5% is the spec's lower bound.
         polygon_fit_bbox = _pad_bbox(
-            (bounds[0], bounds[1], bounds[2], bounds[3])  # W,S,E,N
+            (bounds[0], bounds[1], bounds[2], bounds[3]),  # W,S,E,N
+            pct=MIN_BBOX_PAD_PCT,
         )
     else:
         polygon_fit_bbox = None

@@ -850,14 +850,20 @@ def _choose_water_zoom(bbox: tuple[float, float, float, float]) -> int:
         return 9   # Whole country / small continent
     elif area > 1.0:
         return 10  # Full province / large island (Cape Breton, PEI)
-    elif area > 0.1:
-        return 11  # Large county / metro
+    elif area > 0.3:
+        return 11  # Regional metro (GTA when explicitly selected)
+    elif area > 0.05:
+        return 12  # Large city (Toronto ~0.14 deg², Calgary ~0.20 deg²)
+                   # — bumped from z11 so Don/Humber river centerlines
+                   # carry enough vertices to read as natural curves
+                   # rather than the over-smoothed "blob" reviewer
+                   # feedback called out.
     elif area > 0.01:
-        return 12  # Medium city / Halifax
+        return 13  # Medium city / Halifax
     elif area > 0.001:
-        return 13  # Small city
+        return 14  # Small city
     else:
-        return 14  # Neighborhood
+        return 15  # Neighborhood
 
 
 async def fetch_water_maptiler(

@@ -69,10 +69,22 @@ def process_geometry(
     # Normalize to list of polygons
     polys = list(geom_m.geoms) if isinstance(geom_m, MultiPolygon) else [geom_m]
 
-    # Step 4: Filter small polygons
+    # Step 4: Filter small polygons.
+    #
+    # Old rule: keep only polygons whose area was >= min_island_area_m2
+    # (caller-provided, default 5 k m²) OR >= 0.1% of the largest
+    # polygon's area. That second clause was the silent killer for
+    # Toronto Islands: at Toronto's ~600 sq km mainland, 0.1% = 600 k
+    # m² which excluded every island except Centre Island. The poster
+    # then rendered a single stub island instead of the iconic
+    # archipelago off downtown.
+    #
+    # New rule: keep every polygon at or above the absolute floor
+    # (min_island_area_m2). Caller can still tighten via the
+    # parameter; default of 5 k m² preserves all named Toronto Islands
+    # while filtering geometry-validity shards from make_valid().
     if len(polys) > 1:
-        largest_area = max(p.area for p in polys)
-        polys = [p for p in polys if p.area >= min_island_area_m2 or p.area >= largest_area * 0.001]
+        polys = [p for p in polys if p.area >= min_island_area_m2]
 
     if not include_islands and len(polys) > 1:
         largest = max(polys, key=lambda p: p.area)

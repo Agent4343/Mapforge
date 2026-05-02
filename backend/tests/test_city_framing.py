@@ -82,3 +82,47 @@ def test_pad_bbox_default_matches_pct_constant():
     width = padded[2] - padded[0]
     expected = 100.0 * (1.0 + 2 * DEFAULT_BBOX_PAD_PCT)
     assert width == pytest.approx(expected, rel=1e-9)
+
+
+# ── Island preservation (Toronto Islands regression) ────────────────
+
+
+def test_small_islands_survive_alongside_large_mainland():
+    """Spec: include every island in the admin multipolygon. Toronto
+    Islands' Algonquin Island (~50 k m²) sits at <0.01% of Toronto
+    mainland (~600 sq km); the previous filter dropped it.
+    """
+    from shapely.geometry import MultiPolygon, Polygon as ShPoly
+
+    from app.services.geometry_processor import process_geometry
+    from app.models.schemas import ProductType
+
+    # Mainland north of the lake.
+    mainland = ShPoly([
+        (-79.6, 43.65), (-79.1, 43.65),
+        (-79.1, 43.85), (-79.6, 43.85), (-79.6, 43.65),
+    ])
+    # A small island OFFSHORE south of the mainland (roughly Centre
+    # Island's position relative to Toronto).
+    small_island = ShPoly([
+        (-79.40, 43.62), (-79.37, 43.62),
+        (-79.37, 43.625), (-79.40, 43.625), (-79.40, 43.62),
+    ])
+    # An even smaller islet (~300 m across), also offshore.
+    islet = ShPoly([
+        (-79.36, 43.622), (-79.357, 43.622),
+        (-79.357, 43.624), (-79.36, 43.624), (-79.36, 43.622),
+    ])
+
+    multi = MultiPolygon([mainland, small_island, islet])
+    result = process_geometry(
+        geom=multi,
+        product_type=ProductType.city,
+        board_width_inches=18,
+        board_height_inches=24,
+        # Default min_island_area_m2 (5 k) keeps all three.
+    )
+    # All three sub-polygons should be in the output. The Toronto
+    # Islands case relies on this — every island is part of the
+    # admin relation and should reach the renderer.
+    assert len(result["polygons"]) == 3
