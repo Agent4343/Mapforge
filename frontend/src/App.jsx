@@ -895,10 +895,27 @@ export default function App() {
           />
         </div>
         <div className="panel-right">
-          {/* MapLibre browser preview disabled inline — the 3:4 aspect
-              constraint was blowing up the panel-right layout on
-              desktop. Component stays compiled in; we'll reintroduce
-              behind a toggle once the sizing is tested properly. */}
+          {/* Live MapLibre preview before generation. Rendered only
+              while the user hasn't generated a poster yet (or is
+              between generations) so the 3:4 aspect box can't fight
+              the SVG preview for the panel. The wrapper caps the
+              width so the live map sits like a card rather than
+              ballooning the layout on wide desktops. */}
+          {mapPlan && maptilerKey && !svgContent && !generating && (
+            <div
+              style={{
+                maxWidth: 480,
+                margin: "0 auto 16px",
+                width: "100%",
+              }}
+            >
+              <MapLibrePoster
+                place={mapPlan}
+                subtitle={config.subtitle}
+                maptilerKey={maptilerKey}
+              />
+            </div>
+          )}
           <SVGPreview
             svgContent={svgContent}
             loading={generating}
