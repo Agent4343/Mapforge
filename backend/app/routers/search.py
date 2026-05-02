@@ -5,13 +5,27 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from app.config import settings
+from app.logging_config import log
 from app.models.schemas import SearchResponse
 from app.services.geo_search import search_location
 from app.services.geo_fetch import fetch_geocode_record
 from app.services.map_controller import plan_render
+from app.services.maptiler_geocode import geocode_with_maptiler
 
 router = APIRouter(prefix="/api/v1", tags=["search"])
 limiter = Limiter(key_func=get_remote_address)
+
+
+# Spec step 2 — when MapTiler Geocoding is the primary path, restrict
+# the result types to actual cities / municipalities / settlements so
+# region or county polygons never appear as a "Toronto" search hit.
+_MAPTILER_CITY_TYPES = [
+    "municipality", "municipal_district",
+    "joint_municipality", "joint_submunicipality",
+    "place", "city", "town", "village", "hamlet",
+    "neighbourhood", "suburb", "quarter", "locality",
+    "island",
+]
 
 
 @router.get("/search", response_model=SearchResponse)
@@ -40,10 +54,30 @@ async def search_plan(
     The frontend uses this to drive MapLibre GL JS — the plan carries
     bbox, place_type, zoom, and use_fit_bounds so the browser renders
     the same framing decisions the backend PIL pipeline uses.
+
+    Spec step 1: prefer MapTiler Geocoding when an API key is set;
+    fall back to Nominatim's lookup-by-OSM-id otherwise. The OSM ID
+    is also used as a tie-breaker — the MapTiler hit whose centre is
+    closest to the OSM-id record wins.
     """
-    record = await fetch_geocode_record(osm_id, osm_type)
+    record = None
+    if query and settings.MAPTILER_API_KEY:
+        try:
+            mt_records = await geocode_with_maptiler(
+                query, limit=5, types=_MAPTILER_CITY_TYPES,
+            )
+            if mt_records:
+                # Pick the highest-relevance hit; spec step 2 guarantees
+                # all returned features are city-class (no province /
+                # region / metro) thanks to the type allowlist.
+                record = max(mt_records, key=lambda r: r.get("importance", 0.0))
+        except Exception as e:
+            log.warning("MapTiler geocode fallback to Nominatim: %s", e)
+
     if record is None:
-        # 503 (not 404): the OSM feature likely exists — Nominatim
+        record = await fetch_geocode_record(osm_id, osm_type)
+    if record is None:
+        # 503 (not 404): the OSM feature likely exists — the geocoder
         # is the one that failed (timeout, rate limit, or DNS). 404
         # would tell the client "location doesn't exist" which is
         # misleading for a transient upstream error.

@@ -11,18 +11,19 @@ islands and regions whose bounding box is the product.
 
 Contract (from the spec):
 
-    Input:  user_input text + Nominatim lookup result
+    Input:  user_input text + Nominatim / MapTiler lookup result
     Output: dict with name, lat, lon, bbox, place_type, zoom,
-            use_fit_bounds, style, status
+            use_fit_bounds, style, status, warnings
 
-    status ∈ {OK, AMBIGUOUS_LOCATION, INVALID_MAP_RENDER}
+    status ∈ {OK, AMBIGUOUS_LOCATION, INVALID_MAP_RENDER, BROAD_BBOX}
 
 Rendering code treats the plan as gospel — no second-guessing.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import math
+from dataclasses import dataclass, field
 from typing import Any
 
 from app.logging_config import log
@@ -44,7 +45,8 @@ class MapPlan:
     zoom: int
     use_fit_bounds: bool
     style: str
-    status: str                               # OK | AMBIGUOUS_LOCATION | INVALID_MAP_RENDER
+    status: str                               # OK | AMBIGUOUS_LOCATION | INVALID_MAP_RENDER | BROAD_BBOX
+    warnings: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -57,6 +59,7 @@ class MapPlan:
             "use_fit_bounds": self.use_fit_bounds,
             "style": self.style,
             "status": self.status,
+            "warnings": list(self.warnings),
         }
 
 
@@ -95,6 +98,28 @@ _ADMIN_LEVEL_MAP: dict[str, str] = {
     "9": "community",
     "10": "community",
     "11": "neighbourhood",
+}
+
+
+# Spec step 6 — when MapTiler/Nominatim returns a bbox without a separate
+# administrative boundary, the renderer should pad by 5–10% (mid 7.5%).
+# Tighter than the historical 12% so the searched city dominates the frame
+# rather than its surrounding region.
+DEFAULT_BBOX_PAD_PCT: float = 0.075
+MIN_BBOX_PAD_PCT: float = 0.05
+MAX_BBOX_PAD_PCT: float = 0.10
+
+# Spec step 13 — bbox area thresholds (deg²) above which a place_type
+# is "broader than expected" (e.g., a city result whose bbox spans the
+# whole metro). Triggers BROAD_BBOX status so the caller can either
+# shrink to the city boundary or surface a "city vs metro" prompt.
+_BROAD_BBOX_DEG2: dict[str, float] = {
+    "neighbourhood": 0.01,
+    "community":     0.05,
+    "town":          0.10,
+    "city":          0.30,
+    "island":        50.0,
+    "province":      1000.0,
 }
 
 
@@ -156,6 +181,98 @@ def _zoom_from_bbox_width(lon_span: float) -> int:
     if lon_span > 0.02:
         return 13
     return 14
+
+
+# ── BBox helpers (spec steps 6, 7, 12) ───────────────────────────────
+
+def pad_bbox(
+    bbox: tuple[float, float, float, float],
+    pct: float = DEFAULT_BBOX_PAD_PCT,
+) -> tuple[float, float, float, float]:
+    """Pad a (west, south, east, north) bbox by `pct` on every side.
+
+    Used when no administrative boundary is available (spec step 6). The
+    multiplier is clamped to [MIN_BBOX_PAD_PCT, MAX_BBOX_PAD_PCT] so callers
+    can't accidentally bake a 30% margin into a city poster.
+    """
+    pct = max(MIN_BBOX_PAD_PCT, min(MAX_BBOX_PAD_PCT, pct))
+    west, south, east, north = bbox
+    lon_span = east - west
+    lat_span = north - south
+    return (
+        west - lon_span * pct,
+        south - lat_span * pct,
+        east + lon_span * pct,
+        north + lat_span * pct,
+    )
+
+
+def is_centre_inside_bbox(
+    lat: float,
+    lon: float,
+    bbox: tuple[float, float, float, float],
+    tol: float = 1e-6,
+) -> bool:
+    """Return True iff (lat, lon) lies inside (west, south, east, north).
+
+    Tolerance covers float-precision drift from Mercator round-trips.
+    """
+    west, south, east, north = bbox
+    return (
+        (south - tol) <= lat <= (north + tol)
+        and (west - tol) <= lon <= (east + tol)
+    )
+
+
+def validate_export_frame(
+    plan: "MapPlan",
+    frame_bbox: tuple[float, float, float, float],
+    canvas_w: int,
+    canvas_h: int,
+    expected_aspect: float | None = None,
+    aspect_tol: float = 0.02,
+) -> list[str]:
+    """Spec step 12 — export-time validation.
+
+    Returns a list of human-readable warnings. Empty list = all good.
+    Checks performed:
+      * searched centre is inside the final frame
+      * frame bbox covers the plan's bbox (no truncation of selected city)
+      * canvas aspect ratio is preserved (no warp / squish)
+    """
+    warnings: list[str] = []
+
+    if not is_centre_inside_bbox(plan.lat, plan.lon, frame_bbox):
+        warnings.append(
+            f"Searched centre ({plan.lat:.4f},{plan.lon:.4f}) "
+            f"falls outside rendered frame {frame_bbox} — re-frame required."
+        )
+
+    pw, ps, pe, pn = plan.bbox
+    fw, fs, fe, fn = frame_bbox
+    if (
+        pw != 0.0 or pe != 0.0 or ps != 0.0 or pn != 0.0
+    ) and (
+        fw - 1e-4 > pw or fe + 1e-4 < pe
+        or fs - 1e-4 > ps or fn + 1e-4 < pn
+    ):
+        warnings.append(
+            f"Plan bbox {plan.bbox} not fully contained in frame {frame_bbox}."
+        )
+
+    if canvas_w <= 0 or canvas_h <= 0:
+        warnings.append(f"Canvas dimensions invalid: {canvas_w}×{canvas_h}.")
+        return warnings
+
+    if expected_aspect is not None:
+        actual_aspect = canvas_w / canvas_h
+        if abs(actual_aspect - expected_aspect) > aspect_tol:
+            warnings.append(
+                f"Aspect ratio mismatch: canvas {actual_aspect:.3f} "
+                f"vs expected {expected_aspect:.3f} (warp / squish detected)."
+            )
+
+    return warnings
 
 
 # ── Entry point ──────────────────────────────────────────────────────
@@ -246,7 +363,31 @@ def plan_render(
     use_fit_bounds = place_type in ("island", "province")
 
     lon_span = abs(east - west)
+    lat_span = abs(north - south)
     zoom = _zoom_from_bbox_width(lon_span)
+
+    # Spec step 2 + 13 — confirm the result is a city/municipality/place,
+    # not a province / region / metro. When the bbox is broader than the
+    # threshold for the chosen place_type, we surface BROAD_BBOX so the
+    # caller can either (a) shrink to the city boundary, or (b) re-prompt
+    # the user with a city-vs-metro choice. The plan still carries usable
+    # bbox + centre so the renderer can fall back to a padded city frame.
+    bbox_area = lon_span * lat_span
+    threshold = _BROAD_BBOX_DEG2.get(place_type, 0.30)
+    warnings: list[str] = []
+    status = "OK"
+    if bbox_area > threshold:
+        warnings.append(
+            f"Returned bounding box ({bbox_area:.3f} deg²) is broader than "
+            f"a typical {place_type} (>{threshold:.2f} deg²). "
+            "Consider picking the city boundary explicitly to avoid "
+            "rendering surrounding metro / region content."
+        )
+        status = "BROAD_BBOX"
+        log.warning(
+            "MapController BROAD_BBOX: %s (%s) bbox_area=%.3f deg² > %.3f",
+            user_input, place_type, bbox_area, threshold,
+        )
 
     plan = MapPlan(
         name=str(geocode.get("display_name", user_input)),
@@ -257,13 +398,14 @@ def plan_render(
         zoom=zoom,
         use_fit_bounds=use_fit_bounds,
         style=STYLE_VERSION,
-        status="OK",
+        status=status,
+        warnings=tuple(warnings),
     )
 
     log.info(
-        "MapController OK: %s (%s) bbox=%.3fx%.3f zoom=%d fit=%s",
-        plan.name.split(",")[0], plan.place_type,
-        lon_span, abs(north - south), plan.zoom, plan.use_fit_bounds,
+        "MapController %s: %s (%s) bbox=%.3fx%.3f zoom=%d fit=%s",
+        status, plan.name.split(",")[0], plan.place_type,
+        lon_span, lat_span, plan.zoom, plan.use_fit_bounds,
     )
     return plan
 

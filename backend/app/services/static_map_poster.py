@@ -1469,22 +1469,24 @@ def generate_road_poster(
     auto_compose = True
     if fit_bounds_bbox is not None:
         import math
+        # Spec step 6: when only the geocoder bbox is available,
+        # pad by 5–10%. Centralised in map_controller so all callers
+        # honour the same range and tests can pin the value.
+        from app.services.map_controller import (
+            DEFAULT_BBOX_PAD_PCT, MAX_BBOX_PAD_PCT,
+        )
         west, south, east, north = fit_bounds_bbox
         fit_center_lat = (south + north) * 0.5
         fit_center_lng = (west + east) * 0.5
-        # Visual-balance engine (spec Step 3B): target 75-85% land
-        # coverage. Start at 8% padding, then pick whichever of the
-        # width/height fit produces the tighter frame so the island
-        # dominates regardless of whether the bbox is wide or tall.
         lon_span_deg = abs(east - west)
         lat_span_deg = abs(north - south)
         meters_per_deg_lon = 111_320.0 * math.cos(math.radians(fit_center_lat))
         meters_per_deg_lat = 110_540.0
         bbox_width_m = lon_span_deg * meters_per_deg_lon
         bbox_height_m = lat_span_deg * meters_per_deg_lat
-        pad = 1.08  # 8% default per updated spec (was 12%)
-        # Canvas is square (2400×2400) at render time. Take the
-        # larger of width-fit / height-fit so neither axis clips.
+        # Default 7.5%, capped at 10% per the spec. Take the larger of
+        # width/height fits so neither axis clips on a square canvas.
+        pad = 1.0 + min(MAX_BBOX_PAD_PCT, DEFAULT_BBOX_PAD_PCT)
         viewport_meters = int(max(bbox_width_m, bbox_height_m) * pad)
         auto_compose = False
         land_fill = (
@@ -1495,9 +1497,18 @@ def generate_road_poster(
             f"fit_bounds: bbox {west:.3f},{south:.3f},{east:.3f},{north:.3f} "
             f"-> centre=({fit_center_lat:.4f},{fit_center_lng:.4f}) "
             f"viewport={viewport_meters/1000:.1f}km "
-            f"land_fill={land_fill*100:.1f}%"
+            f"pad={pad:.2f} land_fill={land_fill*100:.1f}%"
         )
 
+    # Spec step 5: clip every rendered layer to the city boundary so
+    # surrounding municipalities (Mississauga / Markham / Vaughan for a
+    # Toronto search) cannot bleed into the poster. The previous build
+    # forced clip_to_admin=False on the `city_art` theme to preserve
+    # the Mapiful-style rectangle look, but that left features from
+    # the broader bbox visible whenever the geocoder returned a metro
+    # polygon. The render_map_image clip mask paints the area outside
+    # the admin polygon with map_bg, which keeps the rectangle frame
+    # *and* matches the searched city.
     map_img, pin_image_px = render_map_image(
         streets_data=streets_data,
         water_data=water_data,
@@ -1511,11 +1522,26 @@ def generate_road_poster(
         auto_compose=auto_compose,
         parks_data=parks_data,
         land_polygon=land_polygon,
-        # Mapiful-style posters frame the full rectangle — admin
-        # boundaries are not part of the look. Keep the ocean mask
-        # (coastal cities need it) but skip the inland-city crop.
-        clip_to_admin=(color_theme != "city_art"),
+        clip_to_admin=True,
     )
+
+    # Spec step 12 — pre-export validation. The render-time validator
+    # only needs the pin pixel position: if it falls outside the
+    # rendered map image we know the searched centre is not in the
+    # final frame. The poster compositor preserves aspect ratio when
+    # cropping the map to the layout area, so a pin that's inside the
+    # render image is guaranteed inside the printed frame too (the
+    # pin-image_px output is rejected by the compositor if it lands
+    # outside the cropped area, which is checked there as well).
+    pin_px_x, pin_px_y = pin_image_px
+    if not (
+        0 <= pin_px_x <= map_img.width and 0 <= pin_px_y <= map_img.height
+    ):
+        log.warning(
+            "Export validation: searched centre fell outside render "
+            f"frame (pin_px={pin_image_px}, render={map_img.size}). "
+            "Auto-frame may have drifted; consider tightening the bbox."
+        )
 
     # Compose into poster — pin draws at true location, not center
     poster_bytes = compose_poster(

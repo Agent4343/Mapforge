@@ -298,6 +298,11 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             detail=f"Location '{req.text}' matched multiple places of "
             "similar confidence. Please refine your search (add a province / state).",
         )
+    # Spec step 13 — BROAD_BBOX is non-fatal: we still render, but we
+    # surface the controller's warnings so the client can offer a
+    # "city vs metro" prompt on the next refinement.
+    if map_plan.status == "BROAD_BBOX":
+        warnings.extend(map_plan.warnings)
     log.info("MapController plan: %s", map_plan.to_dict())
 
     # Process geometry
