@@ -207,6 +207,51 @@ def pad_bbox(
     )
 
 
+def pick_canvas_orientation(
+    canvas_w_px: int,
+    canvas_h_px: int,
+    polygon_lon_span_deg: float,
+    polygon_lat_span_deg: float,
+    centre_lat: float,
+    swap_threshold: float = 1.10,
+) -> tuple[bool, float, float]:
+    """Choose portrait vs. landscape orientation for a city polygon.
+
+    Returns `(landscape, portrait_fill, landscape_fill)` where:
+      * `landscape` is True when swapping to landscape gives a noticeably
+        better fill ratio (default >10% better than portrait).
+      * `portrait_fill` / `landscape_fill` are the fraction of the map
+        area the polygon would occupy in each orientation, useful for
+        UX strings ("auto-rotated for 67% fill vs 37%").
+
+    Decision rule: each orientation is scored by how much of the canvas
+    map area the polygon's metric bbox would cover after fit-bounds
+    scaling. The orientation with the higher score wins; we require a
+    >10% margin so we never flip between the two on near-square cities.
+    Toronto (≈50 km × 25 km) lands at portrait_fill ≈ 0.37 vs.
+    landscape_fill ≈ 0.67 → flip to landscape.
+    """
+    cos_lat = math.cos(math.radians(centre_lat))
+    poly_w_m = polygon_lon_span_deg * 111_320.0 * max(cos_lat, 0.01)
+    poly_h_m = polygon_lat_span_deg * 110_540.0
+    if poly_w_m <= 0 or poly_h_m <= 0:
+        return (False, 0.0, 0.0)
+
+    def fill(cw: float, ch: float) -> float:
+        # The map area is ~80% of canvas height for portrait, with 8%
+        # margins. Approximating the map area aspect ≈ canvas aspect
+        # is close enough for the orientation decision (off by at most
+        # the 80/20 split, which doesn't change the winner).
+        scale = min(cw / poly_w_m, ch / poly_h_m)
+        used = (poly_w_m * scale) * (poly_h_m * scale)
+        return used / (cw * ch)
+
+    portrait_fill = fill(canvas_w_px, canvas_h_px)
+    landscape_fill = fill(canvas_h_px, canvas_w_px)
+    landscape = landscape_fill > portrait_fill * swap_threshold
+    return (landscape, portrait_fill, landscape_fill)
+
+
 def is_centre_inside_bbox(
     lat: float,
     lon: float,

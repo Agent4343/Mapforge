@@ -19,7 +19,10 @@ MAT_PCT = 0.03        # Outer mat border
 MAP_AREA_PCT = 0.80   # Map takes 80% of poster height (Mapiful-style)
 TEXT_AREA_PCT = 0.20  # Text/title takes 20%
 
-# Poster sizes at 300 DPI
+# Poster sizes at 300 DPI. Listed in portrait orientation; the
+# `landscape` flag on generate_road_poster transposes the dimensions
+# at render time so the same size string works for both orientations
+# without parallel "24x18"-style entries.
 POSTER_SIZES = {
     "18x24": (5400, 7200),
     "12x16": (3600, 4800),
@@ -1573,10 +1576,20 @@ def compose_poster(
     show_coordinates: bool = True,
     color_theme: str = "city_art",
     pin_image_px: tuple[float, float] | None = None,
+    landscape: bool = False,
 ) -> bytes:
-    """Compose a print-ready poster from rendered map image + text."""
+    """Compose a print-ready poster from rendered map image + text.
+
+    `landscape=True` swaps the poster dimensions so a wide city like
+    Toronto (50 km E-W vs 25 km N-S) fills the canvas naturally
+    instead of leaving large vertical whitespace in a portrait frame.
+    The 80%-map / 20%-text split below stays intact — text just sits
+    in a wider, shorter band.
+    """
     theme = POSTER_THEMES.get(color_theme, POSTER_THEMES["city_art"])
     poster_w, poster_h = POSTER_SIZES.get(board_size, POSTER_SIZES["18x24"])
+    if landscape and poster_h > poster_w:
+        poster_w, poster_h = poster_h, poster_w
 
     poster = Image.new("RGB", (poster_w, poster_h), theme["bg"])
     draw = ImageDraw.Draw(poster)
@@ -1734,6 +1747,7 @@ def generate_road_poster(
     fit_bounds_bbox: tuple[float, float, float, float] | None = None,
     debug_overlay: bool = False,
     geocoder_bbox: tuple[float, float, float, float] | None = None,
+    landscape: bool = False,
 ) -> bytes | None:
     """Full pipeline: render roads → compose poster → PNG bytes.
 
@@ -1870,6 +1884,7 @@ def generate_road_poster(
         show_coordinates=show_coordinates,
         color_theme=color_theme,
         pin_image_px=pin_image_px,
+        landscape=landscape,
     )
     log.info(f"Road poster: {len(poster_bytes)} bytes, {road_count} roads")
     return poster_bytes

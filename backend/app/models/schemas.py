@@ -210,6 +210,14 @@ class GenerateRequest(BaseModel):
     # over the rendered map. Used to verify orientation objectively
     # without rendering the canvas in a browser.
     debug_overlay: bool = False
+    # Canvas orientation override. "auto" (default) picks portrait or
+    # landscape based on the polygon's aspect ratio so a wide city like
+    # Toronto fills landscape naturally. "portrait" / "landscape" force
+    # the orientation regardless of polygon shape.
+    force_orientation: str = Field(
+        "auto",
+        description="auto | portrait | landscape",
+    )
 
     @field_validator("text")
     @classmethod

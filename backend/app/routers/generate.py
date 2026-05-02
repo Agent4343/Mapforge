@@ -518,6 +518,52 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     else:
         polygon_fit_bbox = None
 
+    # ── Canvas orientation (auto / portrait / landscape) ─────────────
+    #
+    # Wide cities (Toronto ~50 km E-W vs ~25 km N-S) leave most of a
+    # portrait poster as vertical whitespace because the fit-bounds
+    # scale is limited by the canvas width. Run the chooser to decide
+    # whether to flip the poster to landscape — Toronto lands at 67%
+    # fill in landscape vs 37% in portrait, so the swap is unambiguous.
+    # Caller can override via `force_orientation` ("portrait" /
+    # "landscape") on the request.
+    from app.services.map_controller import pick_canvas_orientation
+    landscape = False
+    portrait_fill = landscape_fill = 0.0
+    polygon_lon_span = bounds[2] - bounds[0]
+    polygon_lat_span = bounds[3] - bounds[1]
+    centre_lat = 0.5 * (bounds[1] + bounds[3])
+    forced = (req.force_orientation or "auto").lower()
+    # POSTER_SIZES is portrait-keyed (taller than wide); the chooser
+    # treats canvas_w_px as the short dimension for portrait scoring.
+    from app.services.static_map_poster import POSTER_SIZES
+    poster_w_px, poster_h_px = POSTER_SIZES.get("18x24", (5400, 7200))
+    auto_landscape, portrait_fill, landscape_fill = pick_canvas_orientation(
+        canvas_w_px=poster_w_px,
+        canvas_h_px=poster_h_px,
+        polygon_lon_span_deg=polygon_lon_span,
+        polygon_lat_span_deg=polygon_lat_span,
+        centre_lat=centre_lat,
+    )
+    if forced == "portrait":
+        landscape = False
+    elif forced == "landscape":
+        landscape = True
+    else:
+        landscape = auto_landscape
+    if landscape and forced == "auto":
+        warnings.append(
+            f"Auto-rotated to landscape for best fit "
+            f"({landscape_fill * 100:.0f}% fill vs "
+            f"{portrait_fill * 100:.0f}% in portrait). "
+            f"Set force_orientation=portrait to keep the original."
+        )
+    log.info(
+        "Orientation: forced=%s -> %s (portrait_fill=%.2f, landscape_fill=%.2f)",
+        forced, "landscape" if landscape else "portrait",
+        portrait_fill, landscape_fill,
+    )
+
     # Expand the street fetch area beyond the boundary for all street-based maps.
     # This ensures surrounding roads fill the map edges instead of cutting off
     # at invisible admin boundaries. Larger product types get less expansion.
@@ -870,6 +916,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                     fit_bounds_bbox=polygon_fit_bbox,
                     debug_overlay=req.debug_overlay,
                     geocoder_bbox=tuple(map_plan.bbox) if map_plan else None,
+                    landscape=landscape,
                 )
                 if poster_bytes:
                     b64 = base64.b64encode(poster_bytes).decode("ascii")
@@ -1024,6 +1071,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                         fit_bounds_bbox=polygon_fit_bbox,
                         debug_overlay=req.debug_overlay,
                         geocoder_bbox=tuple(map_plan.bbox) if map_plan else None,
+                        landscape=landscape,
                     )
                 except Exception as e:
                     log.warning(f"Road poster for print failed (non-fatal): {e}")
