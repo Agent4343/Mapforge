@@ -71,6 +71,11 @@ const DEFAULT_CONFIG = {
   includeBleed: false,
   includeCropMarks: false,
   printDPI: 300,
+  // "auto" lets the renderer flip portrait <-> landscape based on the
+  // city polygon's aspect ratio. The auto-rotation banner exposes a
+  // CTA that flips this to "portrait" / "landscape" when the customer
+  // wants to override the auto-pick.
+  forceOrientation: "auto",
 };
 
 function loadSavedConfig() {
@@ -155,6 +160,11 @@ export default function App() {
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState(null);
   const [qualityWarning, setQualityWarning] = useState(null);
+  // Auto-rotation banner — populated when the backend reports a
+  // landscape/portrait swap so the buyer can opt back to their
+  // originally selected orientation in one click. Shape:
+  // { fromOrientation, toOrientation, fillBetter, fillWorse, message }
+  const [orientationNotice, setOrientationNotice] = useState(null);
   const [country, setCountry] = useState("ca");
   const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [pinCoords, setPinCoords] = useState(null); // {lat, lon} for name_sign pin drop
@@ -385,7 +395,7 @@ export default function App() {
     }
   }
 
-  const handleGenerate = useCallback(async () => {
+  const handleGenerate = useCallback(async (overrides = {}) => {
     // Pin-drop mode: use coordinates instead of OSM search result
     const isPinMode = config.productType === "name_sign" && pinCoords;
     if (!selectedResult && !isPinMode) return;
@@ -474,6 +484,11 @@ export default function App() {
           include_bleed: config.includeBleed || false,
           include_crop_marks: config.includeCropMarks || false,
           print_dpi: config.printDPI || 300,
+          // Caller can override forceOrientation for the orientation
+          // banner's "Keep portrait" / "Switch to landscape" CTAs
+          // without waiting for the config state update to propagate.
+          force_orientation:
+            overrides.forceOrientation || config.forceOrientation || "auto",
         };
         if (config.boardSize === "custom") {
           params.board_width_inches = config.customWidth || 16;
@@ -484,11 +499,33 @@ export default function App() {
 
       setSvgContent(data.preview_image || data.svg);
       setResult(data);
+      setOrientationNotice(null);  // cleared then re-set below if present
 
-      // Quality/generation warnings
+      // Split warnings into the actionable orientation banner vs the
+      // generic quality stripe. The orientation message is the only
+      // warning the customer can act on directly from the UI, so it
+      // gets its own component rather than being concatenated into the
+      // text strip.
       const allWarnings = [...(data.warnings || [])];
       if (data.node_count < 20) {
         allWarnings.push("Low detail: This location has very few data points. The map may appear rough or oversimplified.");
+      }
+      const orientationIdx = allWarnings.findIndex((w) =>
+        typeof w === "string" && w.startsWith("Auto-rotated to landscape"),
+      );
+      if (orientationIdx >= 0) {
+        const msg = allWarnings.splice(orientationIdx, 1)[0];
+        // Pull the two fill percentages from the warning string so the
+        // CTA can show them. Falls back to a generic message if the
+        // backend wording changes.
+        const fillMatch = msg.match(/(\d+)% fill vs (\d+)%/);
+        setOrientationNotice({
+          message: msg,
+          landscapeFill: fillMatch ? parseInt(fillMatch[1], 10) : null,
+          portraitFill: fillMatch ? parseInt(fillMatch[2], 10) : null,
+        });
+      } else {
+        setOrientationNotice(null);
       }
       setQualityWarning(allWarnings.length > 0 ? allWarnings.join(" ") : null);
     } catch (err) {
@@ -497,6 +534,21 @@ export default function App() {
       setGenerating(false);
     }
   }, [selectedResult, config, pinCoords, markers]);
+
+  // Override the auto-orientation choice when the customer clicks
+  // "Keep portrait" / "Switch to landscape" on the orientation banner.
+  // Updates the config and re-runs handleGenerate so the regenerated
+  // poster honours the override.
+  const handleSetOrientation = useCallback((orientation) => {
+    setConfig((prev) => ({ ...prev, forceOrientation: orientation }));
+    setOrientationNotice(null);
+    // Pass the override directly to handleGenerate so it doesn't have
+    // to wait for the React state update to propagate. The setConfig
+    // call above persists the choice for subsequent generates and
+    // for localStorage; the handleGenerate call uses the override
+    // immediately for THIS regenerate.
+    handleGenerate({ forceOrientation: orientation });
+  }, [handleGenerate]);
 
   const handleDownload = useCallback(async () => {
     if (!result) return;
@@ -834,6 +886,60 @@ export default function App() {
           <MarkersPanel markers={markers} onChange={setMarkers} />
 
           <hr className="section-divider" />
+
+          {orientationNotice && (
+            <div
+              className="orientation-banner"
+              style={{
+                background: "#162638",
+                border: "1px solid #2c4a6a",
+                borderRadius: "6px",
+                padding: "10px 12px",
+                marginBottom: "8px",
+                fontSize: "12px",
+                color: "#cce0f4",
+                fontFamily: "var(--font-mono)",
+              }}
+            >
+              <div style={{ marginBottom: "8px", lineHeight: 1.4 }}>
+                <strong>Auto-rotated to landscape</strong> for the best
+                fit
+                {orientationNotice.landscapeFill != null && (
+                  <>
+                    {" — "}
+                    <span>{orientationNotice.landscapeFill}% canvas fill</span>
+                    {orientationNotice.portraitFill != null && (
+                      <span style={{ opacity: 0.7 }}>
+                        {" "}vs {orientationNotice.portraitFill}% in portrait
+                      </span>
+                    )}
+                  </>
+                )}
+                .
+              </div>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setOrientationNotice(null)}
+                  style={{ padding: "4px 10px", fontSize: "11px" }}
+                  title="Keep the recommended landscape orientation"
+                >
+                  Keep landscape
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => handleSetOrientation("portrait")}
+                  disabled={generating}
+                  style={{ padding: "4px 10px", fontSize: "11px" }}
+                  title="Re-render with the originally selected portrait orientation"
+                >
+                  Use portrait instead
+                </button>
+              </div>
+            </div>
+          )}
 
           {qualityWarning && (
             <div className="quality-warning" style={{
