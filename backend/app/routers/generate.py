@@ -506,15 +506,39 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         "city", "community", "park", "name_sign"
     ) or (map_plan and map_plan.use_fit_bounds)
     if use_polygon_frame:
-        # Tightest pad (5%) so the city polygon dominates the canvas
-        # and the surrounding mat area is minimal. Reviewer feedback
-        # called out that 7.5% still left enough whitespace to read
-        # as "city floating inside a frame" rather than "city is the
-        # frame." Spec allows 5-10%; 5% is the spec's lower bound.
-        polygon_fit_bbox = _pad_bbox(
-            (bounds[0], bounds[1], bounds[2], bounds[3]),  # W,S,E,N
-            pct=MIN_BBOX_PAD_PCT,
+        # Padding is tier-aware:
+        #   * Cities / inland places (rectangular bbox tightly bounds
+        #     the polygon): 5% so the city polygon dominates the
+        #     canvas and the surrounding mat area is minimal.
+        #   * Islands and provinces (irregular bbox includes lots of
+        #     ocean / hinterland inside the bounding rectangle): 2%
+        #     so the visible silhouette dominates instead of floating
+        #     inside ocean fill. Reviewer feedback on Cape Breton:
+        #     "the map isn't in the full picture" — the natural-shape
+        #     bbox already overshoots the visible land mass, so any
+        #     padding on top of that reads as wasted canvas.
+        is_island_or_province = (
+            map_plan
+            and map_plan.use_fit_bounds
+            and map_plan.place_type in ("island", "province")
         )
+        if is_island_or_province:
+            # Inline 2% padding — pad_bbox clamps to MIN_BBOX_PAD_PCT
+            # (5%), which is the spec's lower bound for cities. For
+            # islands the bbox already overshoots the visible land
+            # mass (Cape Breton's polygon's bbox extends past the
+            # Highlands tip and the southern Inverness coast), so 5%
+            # on top reads as wasted canvas.
+            w, s, e, n = bounds[0], bounds[1], bounds[2], bounds[3]
+            lon_pad = (e - w) * 0.02
+            lat_pad = (n - s) * 0.02
+            polygon_fit_bbox = (w - lon_pad, s - lat_pad,
+                                e + lon_pad, n + lat_pad)
+        else:
+            polygon_fit_bbox = _pad_bbox(
+                (bounds[0], bounds[1], bounds[2], bounds[3]),  # W,S,E,N
+                pct=MIN_BBOX_PAD_PCT,
+            )
     else:
         polygon_fit_bbox = None
 
