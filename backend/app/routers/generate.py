@@ -523,15 +523,20 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             and map_plan.place_type in ("island", "province")
         )
         if is_island_or_province:
-            # Inline 2% padding — pad_bbox clamps to MIN_BBOX_PAD_PCT
-            # (5%), which is the spec's lower bound for cities. For
-            # islands the bbox already overshoots the visible land
-            # mass (Cape Breton's polygon's bbox extends past the
-            # Highlands tip and the southern Inverness coast), so 5%
-            # on top reads as wasted canvas.
+            # 8% padding around the polygon's bbox. Tighter than this
+            # (we tried 2%) puts the polygon's outermost vertices
+            # right against the canvas edges — northern Cape Breton
+            # Highlands at the top edge, Sydney coast at the right
+            # edge, southern Isle Madame at the bottom edge — and
+            # the island reads as "cut off" even though no actual
+            # cropping happens. 8% gives enough breathing room that
+            # every coastline sits comfortably inside the frame.
+            # Cities still use the 5% MIN_BBOX_PAD_PCT path because
+            # their polygons fill the bbox and don't need surrounding
+            # ocean to define context.
             w, s, e, n = bounds[0], bounds[1], bounds[2], bounds[3]
-            lon_pad = (e - w) * 0.02
-            lat_pad = (n - s) * 0.02
+            lon_pad = (e - w) * 0.08
+            lat_pad = (n - s) * 0.08
             polygon_fit_bbox = (w - lon_pad, s - lat_pad,
                                 e + lon_pad, n + lat_pad)
         else:
