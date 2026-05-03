@@ -917,6 +917,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                     debug_overlay=req.debug_overlay,
                     geocoder_bbox=tuple(map_plan.bbox) if map_plan else None,
                     landscape=landscape,
+                    place_type=map_plan.place_type if map_plan else "city",
                 )
                 if poster_bytes:
                     b64 = base64.b64encode(poster_bytes).decode("ascii")
@@ -1072,6 +1073,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                         debug_overlay=req.debug_overlay,
                         geocoder_bbox=tuple(map_plan.bbox) if map_plan else None,
                         landscape=landscape,
+                        place_type=map_plan.place_type if map_plan else "city",
                     )
                 except Exception as e:
                     log.warning(f"Road poster for print failed (non-fatal): {e}")

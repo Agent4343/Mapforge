@@ -723,6 +723,7 @@ def render_map_image(
     clip_to_admin: bool = True,
     debug_overlay: bool = False,
     geocoder_bbox: tuple[float, float, float, float] | None = None,
+    place_type: str = "city",
 ) -> tuple[Image.Image, tuple[float, float]]:
     """Render road geometry directly onto a PIL Image.
 
@@ -1480,7 +1481,17 @@ def render_map_image(
     # don't double-clip.
     if land_rings_px and not apply_ocean_mask and clip_to_admin:
         try:
-            bg_color = theme.get("map_bg", (255, 255, 255))
+            # For islands the area outside the boundary IS the ocean,
+            # so paint it with the water colour instead of the mat.
+            # Cities + inland regions paint mat (the wall-art look
+            # where the polygon silhouette is the visible frame).
+            # `place_type=="lake"` produces a map of a body of water
+            # and follows the same "outside = water" rule.
+            is_water_around = place_type in ("island", "lake")
+            if is_water_around:
+                bg_color = theme.get("water", (167, 199, 231))
+            else:
+                bg_color = theme.get("map_bg", (255, 255, 255))
             SS = 2
             hires_mask = Image.new("L", (img_w * SS, img_h * SS), 255)
             hires_draw = ImageDraw.Draw(hires_mask)
@@ -1509,22 +1520,30 @@ def render_map_image(
             # real wall-art line, and bumped width to 0.22% of
             # canvas (≈ 5 px on the 2400 px render → ~12 px / ~1 mm
             # in print, the threshold for visible detail).
-            outline_color = theme.get(
-                "road_minor", theme.get("border", (140, 140, 140))
-            )
-            outline_width = max(2, int(min(img_w, img_h) * 0.0022))
-            for ring_px in land_rings_px:
-                if len(ring_px) < 3:
-                    continue
-                # No `joint="curve"` here — joint smoothing on a fine
-                # boundary line WOULD round off the very Steeles-Ave
-                # jogs we want visible. Plain mitred joints keep the
-                # angles intact.
-                draw.line(
-                    ring_px + [ring_px[0]],
-                    fill=outline_color,
-                    width=outline_width,
+            # Skip the explicit boundary outline for islands /
+            # lakes — the white-land vs. blue-water contrast already
+            # draws the coastline at full polygon detail. Adding a
+            # mid-grey line on top would compete with that contrast
+            # and read as redundant. Inland cities still get the
+            # outline because their mat/inside transition is too
+            # subtle to read without it.
+            if not is_water_around:
+                outline_color = theme.get(
+                    "road_minor", theme.get("border", (140, 140, 140))
                 )
+                outline_width = max(2, int(min(img_w, img_h) * 0.0022))
+                for ring_px in land_rings_px:
+                    if len(ring_px) < 3:
+                        continue
+                    # No `joint="curve"` here — joint smoothing on a
+                    # fine boundary line WOULD round off the very
+                    # Steeles-Ave jogs we want visible. Plain mitred
+                    # joints keep the angles intact.
+                    draw.line(
+                        ring_px + [ring_px[0]],
+                        fill=outline_color,
+                        width=outline_width,
+                    )
             log.info(
                 "Inland-city clip mask applied: features outside the "
                 "admin boundary erased onto map_bg + boundary outlined"
@@ -1802,6 +1821,7 @@ def generate_road_poster(
     debug_overlay: bool = False,
     geocoder_bbox: tuple[float, float, float, float] | None = None,
     landscape: bool = False,
+    place_type: str = "city",
 ) -> bytes | None:
     """Full pipeline: render roads → compose poster → PNG bytes.
 
@@ -1897,6 +1917,7 @@ def generate_road_poster(
         land_polygon=land_polygon,
         debug_overlay=debug_overlay,
         geocoder_bbox=geocoder_bbox,
+        place_type=place_type,
         # Strict-clip to the admin boundary. Per the wall-art spec
         # (Toronto poster regression: water polygons for Lake Ontario
         # extend across the whole canvas and bleed past the city,
