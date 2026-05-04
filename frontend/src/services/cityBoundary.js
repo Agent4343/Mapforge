@@ -150,3 +150,43 @@ export function donutMaskFromBoundary(boundary) {
     },
   };
 }
+
+/**
+ * Pick canvas orientation that maximises polygon coverage of the
+ * map area. Mirrors the backend's map_controller.pick_canvas_orientation
+ * so the live MapLibre preview swaps to landscape on the same cities
+ * the printed PNG does (Toronto, Calgary, LA).
+ *
+ * Returns `{ landscape, portraitFill, landscapeFill }`. `landscape` is
+ * true when swapping gives >10% better fill than portrait — the same
+ * threshold the backend uses, so near-square cities don't oscillate.
+ */
+export function pickCanvasOrientation(
+  canvasWidthPx,
+  canvasHeightPx,
+  polygonLonSpanDeg,
+  polygonLatSpanDeg,
+  centreLat,
+  swapThreshold = 1.10,
+) {
+  const cosLat = Math.cos((centreLat * Math.PI) / 180);
+  const polyWm = polygonLonSpanDeg * 111320 * Math.max(cosLat, 0.01);
+  const polyHm = polygonLatSpanDeg * 110540;
+  if (polyWm <= 0 || polyHm <= 0) {
+    return { landscape: false, portraitFill: 0, landscapeFill: 0 };
+  }
+
+  const fill = (cw, ch) => {
+    const scale = Math.min(cw / polyWm, ch / polyHm);
+    const used = polyWm * scale * (polyHm * scale);
+    return used / (cw * ch);
+  };
+
+  const portraitFill = fill(canvasWidthPx, canvasHeightPx);
+  const landscapeFill = fill(canvasHeightPx, canvasWidthPx);
+  return {
+    landscape: landscapeFill > portraitFill * swapThreshold,
+    portraitFill,
+    landscapeFill,
+  };
+}
