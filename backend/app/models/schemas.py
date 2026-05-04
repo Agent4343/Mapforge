@@ -264,6 +264,13 @@ class GenerateResponse(BaseModel):
     thumbnail_available: bool = False
     print_png_available: bool = False
     etsy_listing_available: bool = False
+    # `svg_available` is False for wall-art posters (city / community
+    # products): the SVG generator's percentile-based framing differs
+    # from the static-poster path's boundary-clipped output, so we
+    # don't ship an SVG download whose framing doesn't match the
+    # printed poster. CNC products (outline / engraved style) keep
+    # the SVG download for laser / VCarve workflows.
+    svg_available: bool = False
     dxf_available: bool = False
     stl_available: bool = False
     file_id: Optional[str] = None

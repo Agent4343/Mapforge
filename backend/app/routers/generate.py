@@ -996,72 +996,100 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     print_png_key = None
     etsy_key = None
 
+    # Wall-art posters (city / community) are shipped as PNG only —
+    # the SVG generator's percentile-based framing differs from the
+    # static-poster path's boundary-clipped output, so we don't store
+    # an SVG whose framing doesn't match the printed poster. CNC
+    # products (style=outline/engraved) keep the SVG path for laser /
+    # VCarve workflows. SVG is still GENERATED in-memory above so
+    # thumbnail / print PNG fallback / Etsy listing image (which all
+    # consume `result["svg"]`) keep working.
+    is_wall_art_product = (
+        req.product_type.value in ("city", "community")
+        and req.style.value not in ("outline", "engraved")
+    )
+
     if user:
-        svg_key = f"svg/{req.osm_type}_{req.osm_id}_{req.style.value}_{int(board_w)}x{int(board_h)}.svg"
-        try:
-            await store_file(svg_key, result["svg"].encode("utf-8"))
-        except Exception as e:
-            log.error(f"Failed to store SVG: {e}")
-            raise HTTPException(status_code=500, detail="Failed to save generated file. Please try again.")
+        # Common key stem for ALL stored derivatives so the storage
+        # paths stay aligned even when SVG isn't stored.
+        key_stem = (
+            f"{req.osm_type}_{req.osm_id}_{req.style.value}"
+            f"_{int(board_w)}x{int(board_h)}"
+        )
 
-        # Generate CNC-optimized SVG (simplified: major roads only, fewer paths)
-        try:
-            cnc_result = await asyncio.to_thread(
-                generate_svg,
-                processed=processed,
-                location_name=location_name,
-                style=req.style,
-                show_coordinates=req.show_coordinates,
-                font_size_mm=req.font_size_mm,
-                streets_data=streets_data,
-                contour_data=contour_data,
-                water_data=water_data,
-                markers=board_markers,
-                subtitle=req.subtitle,
-                font_family=req.font_family.value,
-                border_style=req.border_style.value,
-                heart_location=heart_mm,
-                output_mode="cnc",
-                color_theme=req.color_theme,
-                product_type=req.product_type.value,
-            )
-            cnc_svg_key = svg_key.replace("svg/", "cnc/").replace(".svg", "_cnc.svg")
-            await store_file(cnc_svg_key, cnc_result["svg"].encode("utf-8"))
-            log.info(f"CNC SVG generated: {cnc_result['path_count']} paths")
-        except Exception as e:
-            log.warning(f"CNC SVG generation failed (non-fatal): {e}")
-            cnc_svg_key = None
-
-        # Generate DXF (CNC-ready vector) alongside SVG
-        try:
-            dxf_bytes = await asyncio.to_thread(
-                generate_dxf,
-                processed=processed,
-                location_name=location_name,
-                show_coordinates=req.show_coordinates,
-                font_size_mm=req.font_size_mm,
-                center_latlon=processed.get("center_latlon"),
-                streets_data=streets_data,
-                markers=board_markers,
-            )
-            dxf_key = svg_key.replace("svg/", "dxf/").replace(".svg", ".dxf")
-            await store_file(dxf_key, dxf_bytes)
-        except Exception as e:
-            log.warning(f"DXF generation failed (non-fatal): {e}")
-
-        # Generate STL 3D mesh when contours are available (bathymetric/topo)
-        if contour_data:
+        if not is_wall_art_product:
+            # CNC / regional / lake / park / province path: store SVG.
+            svg_key = f"svg/{key_stem}.svg"
             try:
-                stl_bytes = await asyncio.to_thread(
-                    generate_stl,
-                    processed=processed,
-                    contour_data=contour_data,
-                )
-                stl_key = svg_key.replace("svg/", "stl/").replace(".svg", ".stl")
-                await store_file(stl_key, stl_bytes)
-                log.info(f"STL generated: {len(stl_bytes)} bytes")
+                await store_file(svg_key, result["svg"].encode("utf-8"))
             except Exception as e:
-                log.warning(f"STL generation failed (non-fatal): {e}")
+                log.error(f"Failed to store SVG: {e}")
+                raise HTTPException(status_code=500, detail="Failed to save generated file. Please try again.")
+
+            # Generate CNC-optimized SVG (simplified: major roads only, fewer paths)
+            try:
+                cnc_result = await asyncio.to_thread(
+                    generate_svg,
+                    processed=processed,
+                    location_name=location_name,
+                    style=req.style,
+                    show_coordinates=req.show_coordinates,
+                    font_size_mm=req.font_size_mm,
+                    streets_data=streets_data,
+                    contour_data=contour_data,
+                    water_data=water_data,
+                    markers=board_markers,
+                    subtitle=req.subtitle,
+                    font_family=req.font_family.value,
+                    border_style=req.border_style.value,
+                    heart_location=heart_mm,
+                    output_mode="cnc",
+                    color_theme=req.color_theme,
+                    product_type=req.product_type.value,
+                )
+                cnc_svg_key = f"cnc/{key_stem}_cnc.svg"
+                await store_file(cnc_svg_key, cnc_result["svg"].encode("utf-8"))
+                log.info(f"CNC SVG generated: {cnc_result['path_count']} paths")
+            except Exception as e:
+                log.warning(f"CNC SVG generation failed (non-fatal): {e}")
+                cnc_svg_key = None
+
+            # Generate DXF (CNC-ready vector) alongside SVG
+            try:
+                dxf_bytes = await asyncio.to_thread(
+                    generate_dxf,
+                    processed=processed,
+                    location_name=location_name,
+                    show_coordinates=req.show_coordinates,
+                    font_size_mm=req.font_size_mm,
+                    center_latlon=processed.get("center_latlon"),
+                    streets_data=streets_data,
+                    markers=board_markers,
+                )
+                dxf_key = f"dxf/{key_stem}.dxf"
+                await store_file(dxf_key, dxf_bytes)
+            except Exception as e:
+                log.warning(f"DXF generation failed (non-fatal): {e}")
+
+            # Generate STL 3D mesh when contours are available (bathymetric/topo)
+            if contour_data:
+                try:
+                    stl_bytes = await asyncio.to_thread(
+                        generate_stl,
+                        processed=processed,
+                        contour_data=contour_data,
+                    )
+                    stl_key = f"stl/{key_stem}.stl"
+                    await store_file(stl_key, stl_bytes)
+                    log.info(f"STL generated: {len(stl_bytes)} bytes")
+                except Exception as e:
+                    log.warning(f"STL generation failed (non-fatal): {e}")
+        else:
+            log.info(
+                "Wall-art product (%s, style=%s) — skipping SVG/DXF/STL "
+                "storage; PNG is the canonical artifact",
+                req.product_type.value, req.style.value,
+            )
 
         # Generate PNG thumbnail for Etsy product mockups
         try:
@@ -1070,7 +1098,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                 result["svg"],
                 background_color=None,  # Print SVG already has mat + background
             )
-            thumbnail_key = svg_key.replace("svg/", "thumbnails/").replace(".svg", ".png")
+            thumbnail_key = f"thumbnails/{key_stem}.png"
             await store_file(thumbnail_key, png_bytes, content_type="image/png")
         except Exception as e:
             log.warning(f"Thumbnail generation failed (non-fatal): {e}")
@@ -1108,7 +1136,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                     log.warning(f"Road poster for print failed (non-fatal): {e}")
 
         if static_poster_bytes:
-            print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
+            print_png_key = f"print/{key_stem}_print.png"
             await store_file(print_png_key, static_poster_bytes, content_type="image/png")
             log.info(f"Print PNG from road poster: {len(static_poster_bytes)} bytes")
         else:
@@ -1121,7 +1149,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                     board_size=req.board_size.value,
                     dpi=req.print_dpi,
                 )
-                print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
+                print_png_key = f"print/{key_stem}_print.png"
                 await store_file(print_png_key, print_bytes, content_type="image/png")
             except Exception as e:
                 log.error(f"Print PNG generation failed: {type(e).__name__}: {e}")
@@ -1130,7 +1158,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         # Generate Etsy listing image (4:3 ratio for Etsy grid)
         try:
             etsy_bytes = await asyncio.to_thread(generate_etsy_listing_image, result["svg"])
-            etsy_key = svg_key.replace("svg/", "etsy/").replace(".svg", "_etsy.png")
+            etsy_key = f"etsy/{key_stem}_etsy.png"
             await store_file(etsy_key, etsy_bytes, content_type="image/png")
         except Exception as e:
             log.warning(f"Etsy listing image generation failed (non-fatal): {e}")
@@ -1200,6 +1228,10 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         thumbnail_available=thumbnail_key is not None,
         print_png_available=print_png_key is not None,
         etsy_listing_available=etsy_key is not None,
+        # SVG file is only stored (and therefore downloadable) for
+        # CNC products. Wall-art posters use PNG as the canonical
+        # download — see the is_wall_art_product gate above.
+        svg_available=svg_key is not None,
         dxf_available=dxf_key is not None,
         stl_available=stl_key is not None,
         file_id=file_id,
@@ -1352,20 +1384,37 @@ async def generate_pin(
     print_png_key = None
     etsy_key = None
 
+    # Pin / name-sign products are wall art unless the customer chose
+    # a CNC cut style (outline / engraved). Skip SVG storage for the
+    # wall-art case so customers don't download a vector whose
+    # framing differs from the printed PNG.
+    is_pin_wall_art = req.style.value not in ("outline", "engraved")
+    key_stem = (
+        f"pin_{req.lat:.4f}_{req.lon:.4f}_{req.style.value}"
+        f"_{int(board_w)}x{int(board_h)}"
+    )
+
     if user:
-        svg_key = f"svg/pin_{req.lat:.4f}_{req.lon:.4f}_{req.style.value}_{int(board_w)}x{int(board_h)}.svg"
-        try:
-            await store_file(svg_key, result["svg"].encode("utf-8"))
-        except Exception as e:
-            log.error(f"Failed to store pin SVG: {e}")
-            raise HTTPException(status_code=500, detail="Failed to save generated file. Please try again.")
+        if not is_pin_wall_art:
+            svg_key = f"svg/{key_stem}.svg"
+            try:
+                await store_file(svg_key, result["svg"].encode("utf-8"))
+            except Exception as e:
+                log.error(f"Failed to store pin SVG: {e}")
+                raise HTTPException(status_code=500, detail="Failed to save generated file. Please try again.")
+        else:
+            log.info(
+                "Wall-art pin (style=%s) — skipping SVG storage; "
+                "PNG is the canonical artifact",
+                req.style.value,
+            )
 
         # Generate thumbnail
         try:
             png_bytes = await asyncio.to_thread(
                 generate_thumbnail, result["svg"], background_color=None
             )
-            thumbnail_key = svg_key.replace("svg/", "thumbnails/").replace(".svg", ".png")
+            thumbnail_key = f"thumbnails/{key_stem}.png"
             await store_file(thumbnail_key, png_bytes, content_type="image/png")
         except Exception as e:
             log.warning(f"Thumbnail generation failed (non-fatal): {e}")
@@ -1380,7 +1429,7 @@ async def generate_pin(
                 board_size=req.board_size.value,
                 dpi=req.print_dpi,
             )
-            print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
+            print_png_key = f"print/{key_stem}_print.png"
             await store_file(print_png_key, print_bytes, content_type="image/png")
         except Exception as e:
             log.error(f"Print PNG generation failed: {type(e).__name__}: {e}")
@@ -1389,7 +1438,7 @@ async def generate_pin(
         # Generate Etsy listing image for pin maps
         try:
             etsy_bytes = await asyncio.to_thread(generate_etsy_listing_image, result["svg"])
-            etsy_key = svg_key.replace("svg/", "etsy/").replace(".svg", "_etsy.png")
+            etsy_key = f"etsy/{key_stem}_etsy.png"
             await store_file(etsy_key, etsy_bytes, content_type="image/png")
         except Exception as e:
             log.warning(f"Etsy listing image generation failed (non-fatal): {e}")
@@ -1442,10 +1491,11 @@ async def generate_pin(
         log.info(f"Preview generated (visitor): pin at {req.lat},{req.lon}")
 
     return GenerateResponse(
-        svg=result["svg"],
+        svg=result["svg"] if not is_pin_wall_art else None,
         thumbnail_available=thumbnail_key is not None,
         print_png_available=print_png_key is not None,
         etsy_listing_available=etsy_key is not None,
+        svg_available=svg_key is not None,
         file_id=file_id,
         location_name=location_name,
         dimensions_mm=(round(board_w, 1), round(board_h, 1)),
