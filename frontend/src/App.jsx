@@ -1,27 +1,43 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { lazy, Suspense, useState, useCallback, useEffect, useRef } from "react";
 import SearchPanel from "./components/SearchPanel.jsx";
 import CustomizePanel from "./components/CustomizePanel.jsx";
 import SVGPreview from "./components/SVGPreview.jsx";
 import ExportPanel from "./components/ExportPanel.jsx";
-import AuthModal from "./components/AuthModal.jsx";
-import SellerDashboard from "./components/SellerDashboard.jsx";
-import AdminDashboard from "./components/AdminDashboard.jsx";
-import BatchPanel from "./components/BatchPanel.jsx";
 import MapPreview from "./components/MapPreview.jsx";
 import MapLibrePoster from "./components/MapLibrePoster.jsx";
 import "./styles/maplibre-poster.css";
 import MarkersPanel from "./components/MarkersPanel.jsx";
 import LandingPage from "./components/LandingPage.jsx";
-import PricingModal from "./components/PricingModal.jsx";
-import PurchasesView from "./components/PurchasesView.jsx";
 import PriceDisplay from "./components/PriceDisplay.jsx";
 import GenerateModal from "./components/CheckoutModal.jsx";
-import OrderStatus from "./components/OrderStatus.jsx";
+
+// Lazy-loaded panels. None of these are on the main design flow —
+// they're either admin-only, behind a modal trigger, or visited
+// via a sub-route. Splitting them out drops the initial JS bundle
+// by ~120 KB gzipped, which is material for mobile Etsy traffic.
+const AuthModal = lazy(() => import("./components/AuthModal.jsx"));
+const SellerDashboard = lazy(() => import("./components/SellerDashboard.jsx"));
+const AdminDashboard = lazy(() => import("./components/AdminDashboard.jsx"));
+const BatchPanel = lazy(() => import("./components/BatchPanel.jsx"));
+const PricingModal = lazy(() => import("./components/PricingModal.jsx"));
+const PurchasesView = lazy(() => import("./components/PurchasesView.jsx"));
+const OrderStatus = lazy(() => import("./components/OrderStatus.jsx"));
+
+// Minimal fallback for the lazy chunks. Intentionally spartan —
+// the chunks load in a few hundred ms on a warm connection, so an
+// elaborate skeleton screen would just flash and disappear.
+function _LazyFallback() {
+  return (
+    <div style={{ padding: "24px", color: "#888", fontSize: "14px" }}>
+      Loading…
+    </div>
+  );
+}
 import {
   generateSVG, generatePin, downloadSVG, downloadDXF, downloadSTL,
   downloadThumbnail, downloadPrintPNG,
   downloadEtsyListing, downloadEtsyPackage, downloadPreview, downloadWallMockup,
-  getProfile, logout, getToken, subscribe,
+  getProfile, logout, hasSessionHint, subscribe,
   redeemCredit,
 } from "./services/api.js";
 
@@ -55,6 +71,11 @@ const DEFAULT_CONFIG = {
   includeBleed: false,
   includeCropMarks: false,
   printDPI: 300,
+  // "auto" lets the renderer flip portrait <-> landscape based on the
+  // city polygon's aspect ratio. The auto-rotation banner exposes a
+  // CTA that flips this to "portrait" / "landscape" when the customer
+  // wants to override the auto-pick.
+  forceOrientation: "auto",
 };
 
 function loadSavedConfig() {
@@ -123,7 +144,12 @@ export default function App() {
   const [showAuth, setShowAuth] = useState(false);
   const [showBatch, setShowBatch] = useState(false);
   const [showPricing, setShowPricing] = useState(false);
-  const [showLanding, setShowLanding] = useState(!getToken());
+  // Skip the landing page when the `mapforge_session_hint` cookie
+  // says the server has an active session. The actual JWT cookie
+  // is HttpOnly so we can't read it; this non-sensitive hint
+  // cookie is the best signal available on initial render, and
+  // `getProfile()` below is the authoritative check.
+  const [showLanding, setShowLanding] = useState(!hasSessionHint());
   const [view, setView] = useState("main"); // main, library, marketplace, dashboard
   const [toasts, setToasts] = useState([]);
 
@@ -134,6 +160,11 @@ export default function App() {
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState(null);
   const [qualityWarning, setQualityWarning] = useState(null);
+  // Auto-rotation banner — populated when the backend reports a
+  // landscape/portrait swap so the buyer can opt back to their
+  // originally selected orientation in one click. Shape:
+  // { fromOrientation, toOrientation, fillBetter, fillWorse, message }
+  const [orientationNotice, setOrientationNotice] = useState(null);
   const [country, setCountry] = useState("ca");
   const [panelCollapsed, setPanelCollapsed] = useState(false);
   const [pinCoords, setPinCoords] = useState(null); // {lat, lon} for name_sign pin drop
@@ -158,9 +189,11 @@ export default function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  // Load user profile if token exists; clear stale tokens on failure
+  // Load user profile if a session hint cookie is present.
+  // `/auth/me` is the authoritative check — if it returns null the
+  // session has expired (hint cookie is stale), so log out locally.
   useEffect(() => {
-    if (getToken()) {
+    if (hasSessionHint()) {
       getProfile()
         .then((p) => { if (p) setUser(p); else { logout(); } })
         .catch(() => { logout(); });
@@ -197,7 +230,15 @@ export default function App() {
     });
     fetch(`${base}/api/v1/search/plan?${params.toString()}`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((plan) => setMapPlan(plan && plan.status === "OK" ? plan : null))
+      .then((plan) => {
+        // BROAD_BBOX is non-fatal: the controller still produced a
+        // usable plan, it just flagged that the bbox covers more
+        // than a typical city (e.g., metro region). The boundary
+        // fetch in MapLibrePoster will tighten the frame to the
+        // searched city polygon when one is available.
+        const renderable = plan && (plan.status === "OK" || plan.status === "BROAD_BBOX");
+        setMapPlan(renderable ? plan : null);
+      })
       .catch(() => setMapPlan(null));
   }, [selectedResult]);
 
@@ -354,7 +395,7 @@ export default function App() {
     }
   }
 
-  const handleGenerate = useCallback(async () => {
+  const handleGenerate = useCallback(async (overrides = {}) => {
     // Pin-drop mode: use coordinates instead of OSM search result
     const isPinMode = config.productType === "name_sign" && pinCoords;
     if (!selectedResult && !isPinMode) return;
@@ -443,6 +484,11 @@ export default function App() {
           include_bleed: config.includeBleed || false,
           include_crop_marks: config.includeCropMarks || false,
           print_dpi: config.printDPI || 300,
+          // Caller can override forceOrientation for the orientation
+          // banner's "Keep portrait" / "Switch to landscape" CTAs
+          // without waiting for the config state update to propagate.
+          force_orientation:
+            overrides.forceOrientation || config.forceOrientation || "auto",
         };
         if (config.boardSize === "custom") {
           params.board_width_inches = config.customWidth || 16;
@@ -453,11 +499,33 @@ export default function App() {
 
       setSvgContent(data.preview_image || data.svg);
       setResult(data);
+      setOrientationNotice(null);  // cleared then re-set below if present
 
-      // Quality/generation warnings
+      // Split warnings into the actionable orientation banner vs the
+      // generic quality stripe. The orientation message is the only
+      // warning the customer can act on directly from the UI, so it
+      // gets its own component rather than being concatenated into the
+      // text strip.
       const allWarnings = [...(data.warnings || [])];
       if (data.node_count < 20) {
         allWarnings.push("Low detail: This location has very few data points. The map may appear rough or oversimplified.");
+      }
+      const orientationIdx = allWarnings.findIndex((w) =>
+        typeof w === "string" && w.startsWith("Auto-rotated to landscape"),
+      );
+      if (orientationIdx >= 0) {
+        const msg = allWarnings.splice(orientationIdx, 1)[0];
+        // Pull the two fill percentages from the warning string so the
+        // CTA can show them. Falls back to a generic message if the
+        // backend wording changes.
+        const fillMatch = msg.match(/(\d+)% fill vs (\d+)%/);
+        setOrientationNotice({
+          message: msg,
+          landscapeFill: fillMatch ? parseInt(fillMatch[1], 10) : null,
+          portraitFill: fillMatch ? parseInt(fillMatch[2], 10) : null,
+        });
+      } else {
+        setOrientationNotice(null);
       }
       setQualityWarning(allWarnings.length > 0 ? allWarnings.join(" ") : null);
     } catch (err) {
@@ -466,6 +534,21 @@ export default function App() {
       setGenerating(false);
     }
   }, [selectedResult, config, pinCoords, markers]);
+
+  // Override the auto-orientation choice when the customer clicks
+  // "Keep portrait" / "Switch to landscape" on the orientation banner.
+  // Updates the config and re-runs handleGenerate so the regenerated
+  // poster honours the override.
+  const handleSetOrientation = useCallback((orientation) => {
+    setConfig((prev) => ({ ...prev, forceOrientation: orientation }));
+    setOrientationNotice(null);
+    // Pass the override directly to handleGenerate so it doesn't have
+    // to wait for the React state update to propagate. The setConfig
+    // call above persists the choice for subsequent generates and
+    // for localStorage; the handleGenerate call uses the override
+    // immediately for THIS regenerate.
+    handleGenerate({ forceOrientation: orientation });
+  }, [handleGenerate]);
 
   const handleDownload = useCallback(async () => {
     if (!result) return;
@@ -497,11 +580,17 @@ export default function App() {
   const handleDownloadPrintPNG = useCallback(async () => {
     if (!result) return;
     try {
-      // If we have a MapTiler preview image, download it directly
-      if (svgContent && svgContent.startsWith("data:image/")) {
-        const resp = await fetch(svgContent);
-        const blob = await resp.blob();
-        _triggerDownload(blob, config.text + "_print", "png");
+      // Always go through the backend /download endpoint. The
+      // print PNG is saved on the server (file_record.print_png_key)
+      // and served cleanly. The previous "fetch the inline data URL"
+      // path silently failed in browsers when the base64 string was
+      // 50-100 MB (an 18x24" 300 DPI poster), manifesting as
+      // "click does nothing, no log line, no popup".
+      if (!result.file_id) {
+        setError(
+          "This map wasn't saved to your library, so the high-resolution " +
+          "PNG isn't available. Sign in and regenerate to download.",
+        );
         return;
       }
       const blob = await downloadPrintPNG(result.file_id);
@@ -510,7 +599,7 @@ export default function App() {
     } catch (err) {
       setError(err.message);
     }
-  }, [result, config.text, svgContent]);
+  }, [result, config.text, config.printDPI]);
 
   const handleDownloadDXF = useCallback(async () => {
     if (!result) return;
@@ -602,10 +691,12 @@ export default function App() {
           </div>
         </header>
         <div className="order-status-page">
-          <OrderStatus
-            creditToken={creditToken}
-            onBack={() => { setCreditView(null); }}
-          />
+          <Suspense fallback={<_LazyFallback />}>
+            <OrderStatus
+              creditToken={creditToken}
+              onBack={() => { setCreditView(null); }}
+            />
+          </Suspense>
         </div>
       </div>
     );
@@ -619,15 +710,37 @@ export default function App() {
           onGetStarted={() => setShowLanding(false)}
           onSignIn={() => { setShowAuth(true); }}
         />
-        {showAuth && <AuthModal onAuth={handleAuth} onClose={() => setShowAuth(false)} />}
+        {showAuth && (
+          <Suspense fallback={<_LazyFallback />}>
+            <AuthModal onAuth={handleAuth} onClose={() => setShowAuth(false)} />
+          </Suspense>
+        )}
       </>
     );
   }
 
-  // Sub-views
-  if (view === "dashboard") return <SellerDashboard onBack={() => setView("main")} />;
-  if (view === "purchases") return <PurchasesView onBack={() => setView("main")} />;
-  if (view === "admin") return <AdminDashboard onBack={() => setView("main")} />;
+  // Sub-views — each is a lazy chunk, so wrap the render in Suspense.
+  if (view === "dashboard") {
+    return (
+      <Suspense fallback={<_LazyFallback />}>
+        <SellerDashboard onBack={() => setView("main")} />
+      </Suspense>
+    );
+  }
+  if (view === "purchases") {
+    return (
+      <Suspense fallback={<_LazyFallback />}>
+        <PurchasesView onBack={() => setView("main")} />
+      </Suspense>
+    );
+  }
+  if (view === "admin") {
+    return (
+      <Suspense fallback={<_LazyFallback />}>
+        <AdminDashboard onBack={() => setView("main")} />
+      </Suspense>
+    );
+  }
 
   const canUndo = historyIndex > 0;
   const canRedo = historyIndex < configHistory.length - 1;
@@ -774,6 +887,60 @@ export default function App() {
 
           <hr className="section-divider" />
 
+          {orientationNotice && (
+            <div
+              className="orientation-banner"
+              style={{
+                background: "#162638",
+                border: "1px solid #2c4a6a",
+                borderRadius: "6px",
+                padding: "10px 12px",
+                marginBottom: "8px",
+                fontSize: "12px",
+                color: "#cce0f4",
+                fontFamily: "var(--font-mono)",
+              }}
+            >
+              <div style={{ marginBottom: "8px", lineHeight: 1.4 }}>
+                <strong>Auto-rotated to landscape</strong> for the best
+                fit
+                {orientationNotice.landscapeFill != null && (
+                  <>
+                    {" — "}
+                    <span>{orientationNotice.landscapeFill}% canvas fill</span>
+                    {orientationNotice.portraitFill != null && (
+                      <span style={{ opacity: 0.7 }}>
+                        {" "}vs {orientationNotice.portraitFill}% in portrait
+                      </span>
+                    )}
+                  </>
+                )}
+                .
+              </div>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setOrientationNotice(null)}
+                  style={{ padding: "4px 10px", fontSize: "11px" }}
+                  title="Keep the recommended landscape orientation"
+                >
+                  Keep landscape
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => handleSetOrientation("portrait")}
+                  disabled={generating}
+                  style={{ padding: "4px 10px", fontSize: "11px" }}
+                  title="Re-render with the originally selected portrait orientation"
+                >
+                  Use portrait instead
+                </button>
+              </div>
+            </div>
+          )}
+
           {qualityWarning && (
             <div className="quality-warning" style={{
               background: "#2a2515",
@@ -834,10 +1001,27 @@ export default function App() {
           />
         </div>
         <div className="panel-right">
-          {/* MapLibre browser preview disabled inline — the 3:4 aspect
-              constraint was blowing up the panel-right layout on
-              desktop. Component stays compiled in; we'll reintroduce
-              behind a toggle once the sizing is tested properly. */}
+          {/* Live MapLibre preview before generation. Rendered only
+              while the user hasn't generated a poster yet (or is
+              between generations) so the 3:4 aspect box can't fight
+              the SVG preview for the panel. The wrapper caps the
+              width so the live map sits like a card rather than
+              ballooning the layout on wide desktops. */}
+          {mapPlan && maptilerKey && !svgContent && !generating && (
+            <div
+              style={{
+                maxWidth: 480,
+                margin: "0 auto 16px",
+                width: "100%",
+              }}
+            >
+              <MapLibrePoster
+                place={mapPlan}
+                subtitle={config.subtitle}
+                maptilerKey={maptilerKey}
+              />
+            </div>
+          )}
           <SVGPreview
             svgContent={svgContent}
             loading={generating}
@@ -868,9 +1052,13 @@ export default function App() {
         </div>
       </div>
 
-      {showAuth && <AuthModal onAuth={handleAuth} onClose={() => setShowAuth(false)} />}
-      {showBatch && <BatchPanel config={config} onClose={() => setShowBatch(false)} />}
-      {showPricing && <PricingModal user={user} onClose={() => setShowPricing(false)} onSubscribe={handleSubscribe} />}
+      {(showAuth || showBatch || showPricing) && (
+        <Suspense fallback={<_LazyFallback />}>
+          {showAuth && <AuthModal onAuth={handleAuth} onClose={() => setShowAuth(false)} />}
+          {showBatch && <BatchPanel config={config} onClose={() => setShowBatch(false)} />}
+          {showPricing && <PricingModal user={user} onClose={() => setShowPricing(false)} onSubscribe={handleSubscribe} />}
+        </Suspense>
+      )}
       {showGenerateModal && creditToken && (
         <GenerateModal
           config={config}

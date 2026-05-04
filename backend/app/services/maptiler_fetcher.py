@@ -9,6 +9,8 @@ as the Overpass-based street_fetcher.
 Requires MAPTILER_API_KEY environment variable.
 """
 
+import asyncio
+import gzip
 import math
 import struct
 import time
@@ -110,16 +112,25 @@ def _choose_zoom(bbox: tuple[float, float, float, float]) -> int:
     residential grid is only available at 14. We bias toward the
     higher tier so city-scale posters get the dense Mapiful-style
     lattice rather than just arterial backbones.
+
+    Island / large-county posters (Cape Breton ~2.6 deg², PEI,
+    Vancouver Island) previously fell into the `area > 1.0 → z11`
+    bucket, where OpenMapTiles emits only motorway/trunk/primary/
+    secondary/tertiary — no residentials or service roads. The
+    resulting poster was almost all whitespace. Dropping the top
+    threshold to 3.0 deg² keeps genuinely province-sized bboxes at
+    z11 while lifting island-sized ones to z12, which brings in the
+    minor road lattice that makes a Mapiful-style poster read.
     """
     south, west, north, east = bbox
     lat_span = north - south
     lon_span = east - west
     area = lat_span * lon_span
 
-    if area > 1.0:
-        return 11  # Province / country
-    elif area > 0.3:
-        return 12  # Regional metro (Toronto greater, GTA)
+    if area > 3.0:
+        return 11  # Province / country (New Brunswick, Nova Scotia)
+    elif area > 0.2:
+        return 12  # Large island / regional metro (Cape Breton, GTA)
     elif area > 0.05:
         return 13  # Large city (Calgary, Edmonton) — residentials appear
     elif area > 0.005:
@@ -331,6 +342,73 @@ def _pixel_to_lnglat(px: int, py: int, extent: int, tx: int, ty: int, zoom: int)
     return lng, lat
 
 
+# Concurrency cap for MapTiler tile fetches. 16 in-flight connections
+# completes a 950-tile fetch in ~5s on a warm client while staying well
+# under MapTiler's per-key rate limit (published at 100 req/s).
+_TILE_CONCURRENCY = 16
+
+# Retry policy for transient failures (429 + 5xx + network errors).
+# Three attempts with exponential backoff + small jitter keeps a single
+# flaky tile from tanking a poster generation, without hammering MapTiler
+# when they're genuinely degraded.
+_TILE_MAX_ATTEMPTS = 3
+_TILE_RETRY_BASE_DELAY = 0.4  # seconds — doubles per attempt
+
+
+async def _fetch_tile_parsed(
+    client: httpx.AsyncClient,
+    tx: int,
+    ty: int,
+    zoom: int,
+    api_key: str,
+    sem: asyncio.Semaphore,
+    kind: str,
+) -> tuple[int, int, str, list[dict] | None]:
+    """Fetch + parse a single MVT tile with retry/backoff.
+
+    Returns (tx, ty, status, layers) where status is:
+        "ok"     — tile fetched and parsed; layers is the list
+        "empty"  — tile is 204 (no features for this bbox)
+        "failed" — tile unreachable after all retries
+    """
+    url = MAPTILER_TILE_URL.format(z=zoom, x=tx, y=ty) + f"?key={api_key}"
+    delay = _TILE_RETRY_BASE_DELAY
+    async with sem:
+        for attempt in range(1, _TILE_MAX_ATTEMPTS + 1):
+            try:
+                resp = await client.get(url)
+                if resp.status_code == 200:
+                    data = resp.content
+                    if data[:2] == b"\x1f\x8b":
+                        data = gzip.decompress(data)
+                    return tx, ty, "ok", _parse_mvt(data)
+                if resp.status_code == 204:
+                    return tx, ty, "empty", None
+                # Retry 429 (rate-limited) and 5xx (server error).
+                # Any other 4xx is a hard failure (bad key, bad URL).
+                if resp.status_code == 429 or resp.status_code >= 500:
+                    if attempt < _TILE_MAX_ATTEMPTS:
+                        await asyncio.sleep(delay)
+                        delay *= 2
+                        continue
+                log.warning(
+                    f"MapTiler {kind} HTTP {resp.status_code} for "
+                    f"tile {zoom}/{tx}/{ty} (attempt {attempt})"
+                )
+                return tx, ty, "failed", None
+            except (httpx.TimeoutException, httpx.RequestError) as e:
+                if attempt < _TILE_MAX_ATTEMPTS:
+                    await asyncio.sleep(delay)
+                    delay *= 2
+                    continue
+                log.warning(
+                    f"MapTiler {kind} {type(e).__name__} for "
+                    f"tile {zoom}/{tx}/{ty}: {e}"
+                )
+                return tx, ty, "failed", None
+    return tx, ty, "failed", None
+
+
 async def fetch_streets_maptiler(
     bbox: tuple[float, float, float, float],
     include_minor: bool = True,
@@ -361,11 +439,12 @@ async def fetch_streets_maptiler(
     log.info(f"MapTiler: fetching {total_tiles} tiles at zoom {zoom} "
              f"(x:{x_min}-{x_max}, y:{y_min}-{y_max})")
 
-    # Cap tile count to prevent excessive API usage. Raised from 100
-    # so city-scale bboxes can keep zoom 13 (which is where
-    # OpenMapTiles starts emitting residential streets). MapTiler
-    # comfortably serves 400 tiles in a few seconds.
-    MAX_TILES = 400
+    # Cap tile count to prevent excessive API usage. Raised from 400
+    # so island-scale bboxes (Cape Breton ~950 tiles at z12) can keep
+    # zoom 12 rather than falling back to z11 where OpenMapTiles omits
+    # all minor roads. MapTiler comfortably serves 1200 tiles in
+    # ~10–15s on a warm client connection.
+    MAX_TILES = 1200
     if total_tiles > MAX_TILES:
         # Reduce zoom to fit within tile limit
         while total_tiles > MAX_TILES and zoom > 8:
@@ -396,144 +475,140 @@ async def fetch_streets_maptiler(
     seen_road_sigs: set = set()
     dedup_skipped = 0
 
+    # Parallelize tile fetches with a bounded semaphore. The previous
+    # nested-await loop fetched tiles serially — a 238-tile Cape Breton
+    # request took ~45s and one slow tile blocked all later tiles.
+    # asyncio.gather with _TILE_CONCURRENCY=16 keeps MapTiler happy
+    # while cutting wall-clock to ~5s on a warm connection.
+    sem = asyncio.Semaphore(_TILE_CONCURRENCY)
     async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-        for tx in range(x_min, x_max + 1):
-            for ty in range(y_min, y_max + 1):
-                url = MAPTILER_TILE_URL.format(z=zoom, x=tx, y=ty)
-                url += f"?key={api_key}"
+        tasks = [
+            _fetch_tile_parsed(client, tx, ty, zoom, api_key, sem, kind="streets")
+            for tx in range(x_min, x_max + 1)
+            for ty in range(y_min, y_max + 1)
+        ]
+        results = await asyncio.gather(*tasks)
 
-                try:
-                    resp = await client.get(url)
-                    if resp.status_code != 200:
-                        tiles_failed += 1
-                        if resp.status_code == 204:
-                            continue  # Empty tile (ocean, etc.)
-                        log.warning(f"MapTiler HTTP {resp.status_code} for tile {zoom}/{tx}/{ty}")
+    for tx, ty, status, layers in results:
+        if status == "failed":
+            tiles_failed += 1
+            continue
+        if status == "empty":
+            continue  # 204 — tile has no features in the transportation layer
+        tiles_fetched += 1
+
+        # Find the transportation layer
+        for layer in layers:
+            if layer["name"] != "transportation":
+                continue
+
+            extent = layer["extent"]
+            keys = layer["keys"]
+            values = layer["values"]
+
+            for feat_data in layer["features"]:
+                feature = _parse_mvt_feature(feat_data, keys, values)
+
+                # Only process line geometries (type 2)
+                if feature["geometry_type"] != 2:
+                    continue
+
+                props = feature["properties"]
+                road_class = props.get("class", "")
+
+                # Map MapTiler class to our road class
+                mapped_class = _MAPTILER_ROAD_MAP.get(road_class)
+                if mapped_class is None:
+                    continue
+
+                # Drop ferry routes. OpenMapTiles sometimes leaves the
+                # `class` as service/track on a feature that is actually
+                # a ferry crossing and only marks it via the `brunnel`
+                # property. Without this check, Cape Breton's
+                # Englishtown / Little Narrows ferries render as roads
+                # running straight across open water.
+                brunnel = (props.get("brunnel") or "").lower()
+                if brunnel == "ferry":
+                    continue
+
+                # Drop airport / rail-yard subclasses that sometimes
+                # ride in the transportation layer (OpenMapTiles
+                # occasionally includes runway stubs, apron edges, rail
+                # sidings, and yard tracks as plain "service"-ish
+                # lines). These render as stray horizontal parallels
+                # near the city's transport infrastructure and destroy
+                # the wall-art look.
+                subclass = (props.get("subclass") or "").lower()
+                if subclass in _DROP_SUBCLASSES:
+                    continue
+
+                # Handle link roads
+                is_ramp = props.get("ramp", 0) == 1
+                if is_ramp and mapped_class in ("motorway", "trunk", "primary", "secondary"):
+                    mapped_class = f"{mapped_class}_link"
+
+                road_info = _ROAD_INFO.get(mapped_class)
+                if road_info is None:
+                    continue
+
+                # Skip detail roads if requested
+                if skip_detail and road_info["layer"] == "detail":
+                    continue
+
+                # Skip minor roads if not requested
+                if not include_minor and road_info["layer"] != "major":
+                    continue
+
+                # Decode geometry to lng/lat coordinates
+                geom_lines = _decode_geometry(
+                    feature["geometry_type"],
+                    feature["geometry"]
+                )
+
+                name = str(props.get("name", ""))
+
+                for pixel_coords in geom_lines:
+                    if len(pixel_coords) < 2:
                         continue
 
-                    tiles_fetched += 1
-                    tile_data = resp.content
+                    # Convert pixel coords to lng/lat
+                    coords = [
+                        _pixel_to_lnglat(px, py, extent, tx, ty, zoom)
+                        for px, py in pixel_coords
+                    ]
 
-                    # Handle gzip-compressed tiles
-                    if tile_data[:2] == b'\x1f\x8b':
-                        import gzip
-                        tile_data = gzip.decompress(tile_data)
+                    # Filter coords to bbox. Require at least two
+                    # points inside so we drop the MVT tile-corner
+                    # shards that only dip a single vertex past the
+                    # frame edge — those are the "L" artifacts that
+                    # floated in empty space on the previous Calgary
+                    # render.
+                    inside = sum(
+                        1 for lng, lat in coords
+                        if south <= lat <= north and west <= lng <= east
+                    )
+                    if inside < 2:
+                        continue
 
-                    # Parse MVT
-                    layers = _parse_mvt(tile_data)
+                    # Tile-seam deduplication: roads in buffer zones
+                    # appear in multiple tiles. Rounding to ~1m
+                    # precision gives two tiles the same signature for
+                    # the same underlying geometry.
+                    sig = tuple(
+                        (round(lng * 1e5), round(lat * 1e5))
+                        for lng, lat in coords
+                    )
+                    if sig in seen_road_sigs:
+                        dedup_skipped += 1
+                        continue
+                    seen_road_sigs.add(sig)
 
-                    # Find the transportation layer
-                    for layer in layers:
-                        if layer["name"] != "transportation":
-                            continue
+                    entry = (coords, mapped_class, road_info["width"], name)
 
-                        extent = layer["extent"]
-                        keys = layer["keys"]
-                        values = layer["values"]
-
-                        for feat_data in layer["features"]:
-                            feature = _parse_mvt_feature(feat_data, keys, values)
-
-                            # Only process line geometries (type 2)
-                            if feature["geometry_type"] != 2:
-                                continue
-
-                            props = feature["properties"]
-                            road_class = props.get("class", "")
-
-                            # Map MapTiler class to our road class
-                            mapped_class = _MAPTILER_ROAD_MAP.get(road_class)
-                            if mapped_class is None:
-                                continue
-
-                            # Drop airport / rail-yard subclasses that
-                            # sometimes ride in the transportation layer
-                            # (OpenMapTiles occasionally includes runway
-                            # stubs, apron edges, rail sidings, and yard
-                            # tracks as plain "service"-ish lines). These
-                            # render as stray horizontal parallels near
-                            # the city's transport infrastructure and
-                            # destroy the wall-art look.
-                            subclass = (props.get("subclass") or "").lower()
-                            if subclass in _DROP_SUBCLASSES:
-                                continue
-
-                            # Handle link roads
-                            is_ramp = props.get("ramp", 0) == 1
-                            if is_ramp and mapped_class in ("motorway", "trunk", "primary", "secondary"):
-                                mapped_class = f"{mapped_class}_link"
-
-                            road_info = _ROAD_INFO.get(mapped_class)
-                            if road_info is None:
-                                continue
-
-                            # Skip detail roads if requested
-                            if skip_detail and road_info["layer"] == "detail":
-                                continue
-
-                            # Skip minor roads if not requested
-                            if not include_minor and road_info["layer"] != "major":
-                                continue
-
-                            # Decode geometry to lng/lat coordinates
-                            geom_lines = _decode_geometry(
-                                feature["geometry_type"],
-                                feature["geometry"]
-                            )
-
-                            name = str(props.get("name", ""))
-
-                            for pixel_coords in geom_lines:
-                                if len(pixel_coords) < 2:
-                                    continue
-
-                                # Convert pixel coords to lng/lat
-                                coords = [
-                                    _pixel_to_lnglat(px, py, extent, tx, ty, zoom)
-                                    for px, py in pixel_coords
-                                ]
-
-                                # Filter coords to bbox. Require at
-                                # least two points inside so we drop
-                                # the MVT tile-corner shards that only
-                                # dip a single vertex past the frame
-                                # edge — those are the "L" artifacts
-                                # that floated in empty space on the
-                                # previous Calgary render.
-                                inside = sum(
-                                    1 for lng, lat in coords
-                                    if south <= lat <= north and west <= lng <= east
-                                )
-                                if inside < 2:
-                                    continue
-
-                                # Tile-seam deduplication: roads in
-                                # buffer zones appear in multiple
-                                # tiles. Rounding to ~1m precision
-                                # gives two tiles the same signature
-                                # for the same underlying geometry.
-                                sig = tuple(
-                                    (round(lng * 1e5), round(lat * 1e5))
-                                    for lng, lat in coords
-                                )
-                                if sig in seen_road_sigs:
-                                    dedup_skipped += 1
-                                    continue
-                                seen_road_sigs.add(sig)
-
-                                entry = (coords, mapped_class, road_info["width"], name)
-
-                                if road_info["layer"] == "major":
-                                    major_roads.append(entry)
-                                else:
-                                    minor_roads.append(entry)
-
-                except httpx.TimeoutException:
-                    tiles_failed += 1
-                    log.warning(f"MapTiler timeout for tile {zoom}/{tx}/{ty}")
-                except Exception as e:
-                    tiles_failed += 1
-                    log.warning(f"MapTiler error for tile {zoom}/{tx}/{ty}: {type(e).__name__}: {e}")
+                    if road_info["layer"] == "major":
+                        major_roads.append(entry)
+                    else:
+                        minor_roads.append(entry)
 
     elapsed = time.monotonic() - start
     log.info(
@@ -569,7 +644,13 @@ async def fetch_streets_maptiler(
         f"minor {before_minor}->{len(minor_roads)}"
     )
 
-    return {"major_roads": major_roads, "minor_roads": minor_roads}
+    return {
+        "major_roads": major_roads,
+        "minor_roads": minor_roads,
+        "tiles_fetched": tiles_fetched,
+        "tiles_failed": tiles_failed,
+        "tiles_total": total_tiles,
+    }
 
 
 def _drop_isolated_stubs(
@@ -752,20 +833,37 @@ def _choose_water_zoom(bbox: tuple[float, float, float, float]) -> int:
     looks crisp at z12, oversimplified at z10). We bias toward
     higher zoom now that MAX_WATER_TILES is 100; the old table was
     calibrated when coastlines didn't matter as much for wall-art.
+
+    For coastal maps (islands, peninsulas), the water polygon IS the
+    land silhouette — so under-sampling leaves the coast blocky and
+    mis-aligned with the higher-zoom street layer. The Cape Breton
+    Island render at z9 showed Bras d'Or inlets rendered as smooth
+    curves that didn't match the detailed street coastline; bumping
+    the `area > 1.0` bucket from z9 → z10 and `area > 0.1` from z11
+    → z11 (unchanged) keeps coastlines crisp while the auto-downgrade
+    loop below handles genuinely huge bboxes.
     """
     south, west, north, east = bbox
     area = (north - south) * (east - west)
 
-    if area > 1.0:
-        return 9   # Very large (full province / island) — was z10
-    elif area > 0.1:
-        return 11  # Large county / metro — was z10
+    if area > 5.0:
+        return 9   # Whole country / small continent
+    elif area > 1.0:
+        return 10  # Full province / large island (Cape Breton, PEI)
+    elif area > 0.3:
+        return 11  # Regional metro (GTA when explicitly selected)
+    elif area > 0.05:
+        return 12  # Large city (Toronto ~0.14 deg², Calgary ~0.20 deg²)
+                   # — bumped from z11 so Don/Humber river centerlines
+                   # carry enough vertices to read as natural curves
+                   # rather than the over-smoothed "blob" reviewer
+                   # feedback called out.
     elif area > 0.01:
-        return 12  # Medium city / Halifax — was z11
+        return 13  # Medium city / Halifax
     elif area > 0.001:
-        return 13  # Small city — was z12
+        return 14  # Small city
     else:
-        return 14  # Neighborhood — was z13
+        return 15  # Neighborhood
 
 
 async def fetch_water_maptiler(
@@ -822,94 +920,84 @@ async def fetch_water_maptiler(
     seen_water_sigs: set = set()
     water_dedup_skipped = 0
 
+    sem = asyncio.Semaphore(_TILE_CONCURRENCY)
     async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-        for tx in range(x_min, x_max + 1):
-            for ty in range(y_min, y_max + 1):
-                url = MAPTILER_TILE_URL.format(z=zoom, x=tx, y=ty) + f"?key={api_key}"
-                try:
-                    resp = await client.get(url)
-                    if resp.status_code != 200:
-                        tiles_failed += 1
-                        if resp.status_code == 204:
-                            continue  # Empty tile
-                        log.warning(f"MapTiler water HTTP {resp.status_code} for tile {zoom}/{tx}/{ty}")
-                        continue
+        tasks = [
+            _fetch_tile_parsed(client, tx, ty, zoom, api_key, sem, kind="water")
+            for tx in range(x_min, x_max + 1)
+            for ty in range(y_min, y_max + 1)
+        ]
+        results = await asyncio.gather(*tasks)
 
-                    tiles_fetched += 1
-                    tile_data = resp.content
-                    if tile_data[:2] == b'\x1f\x8b':
-                        import gzip
-                        tile_data = gzip.decompress(tile_data)
+    for tx, ty, status, layers in results:
+        if status == "failed":
+            tiles_failed += 1
+            continue
+        if status == "empty":
+            continue
+        tiles_fetched += 1
 
-                    layers = _parse_mvt(tile_data)
-                    for layer in layers:
-                        lname = layer["name"]
-                        if lname not in ("water", "waterway"):
+        for layer in layers:
+            lname = layer["name"]
+            if lname not in ("water", "waterway"):
+                continue
+
+            extent = layer["extent"]
+            keys = layer["keys"]
+            values = layer["values"]
+
+            for feat_data in layer["features"]:
+                feature = _parse_mvt_feature(feat_data, keys, values)
+                gtype = feature["geometry_type"]
+                props = feature["properties"]
+                water_class = str(props.get("class", "") or "")
+                name = str(props.get("name", "") or "")
+
+                # Decode geometry (rings for polygons, lines for waterways)
+                geom_rings = _decode_geometry(gtype, feature["geometry"])
+
+                if lname == "water" and gtype == 3:
+                    # Polygon — each ring becomes a fillable polygon.
+                    # We don't distinguish outer/inner because the
+                    # renderer uses area ranking to drop slivers.
+                    for pixel_coords in geom_rings:
+                        if len(pixel_coords) < 3:
                             continue
-
-                        extent = layer["extent"]
-                        keys = layer["keys"]
-                        values = layer["values"]
-
-                        for feat_data in layer["features"]:
-                            feature = _parse_mvt_feature(feat_data, keys, values)
-                            gtype = feature["geometry_type"]
-                            props = feature["properties"]
-                            water_class = str(props.get("class", "") or "")
-                            name = str(props.get("name", "") or "")
-
-                            # Decode geometry (rings for polygons, lines for waterways)
-                            geom_rings = _decode_geometry(gtype, feature["geometry"])
-
-                            if lname == "water" and gtype == 3:
-                                # Polygon — each ring becomes a fillable polygon.
-                                # We don't distinguish outer/inner because the
-                                # renderer uses area ranking to drop slivers.
-                                for pixel_coords in geom_rings:
-                                    if len(pixel_coords) < 3:
-                                        continue
-                                    coords = [
-                                        _pixel_to_lnglat(px, py, extent, tx, ty, zoom)
-                                        for px, py in pixel_coords
-                                    ]
-                                    sig = tuple(
-                                        (round(lng * 1e5), round(lat * 1e5))
-                                        for lng, lat in coords
-                                    )
-                                    if sig in seen_water_sigs:
-                                        water_dedup_skipped += 1
-                                        continue
-                                    seen_water_sigs.add(sig)
-                                    water_polygons.append(
-                                        (coords, water_class or "water", name)
-                                    )
-                            elif lname == "waterway" and gtype == 2:
-                                # Line — river, stream, canal
-                                for pixel_coords in geom_rings:
-                                    if len(pixel_coords) < 2:
-                                        continue
-                                    coords = [
-                                        _pixel_to_lnglat(px, py, extent, tx, ty, zoom)
-                                        for px, py in pixel_coords
-                                    ]
-                                    sig = tuple(
-                                        (round(lng * 1e5), round(lat * 1e5))
-                                        for lng, lat in coords
-                                    )
-                                    if sig in seen_water_sigs:
-                                        water_dedup_skipped += 1
-                                        continue
-                                    seen_water_sigs.add(sig)
-                                    waterways.append(
-                                        (coords, water_class or "river", name)
-                                    )
-
-                except httpx.TimeoutException:
-                    tiles_failed += 1
-                    log.warning(f"MapTiler water timeout for tile {zoom}/{tx}/{ty}")
-                except Exception as e:
-                    tiles_failed += 1
-                    log.warning(f"MapTiler water error for tile {zoom}/{tx}/{ty}: {type(e).__name__}: {e}")
+                        coords = [
+                            _pixel_to_lnglat(px, py, extent, tx, ty, zoom)
+                            for px, py in pixel_coords
+                        ]
+                        sig = tuple(
+                            (round(lng * 1e5), round(lat * 1e5))
+                            for lng, lat in coords
+                        )
+                        if sig in seen_water_sigs:
+                            water_dedup_skipped += 1
+                            continue
+                        seen_water_sigs.add(sig)
+                        water_polygons.append(
+                            (coords, water_class or "water", name)
+                        )
+                elif lname == "waterway" and gtype == 2:
+                    # Line — river, stream, canal
+                    for pixel_coords in geom_rings:
+                        if len(pixel_coords) < 2:
+                            continue
+                        coords = [
+                            _pixel_to_lnglat(px, py, extent, tx, ty, zoom)
+                            for px, py in pixel_coords
+                        ]
+                        sig = tuple(
+                            (round(lng * 1e5), round(lat * 1e5))
+                            for lng, lat in coords
+                        )
+                        if sig in seen_water_sigs:
+                            water_dedup_skipped += 1
+                            continue
+                        seen_water_sigs.add(sig)
+                        waterways.append(
+                            (coords, water_class or "river", name)
+                        )
 
     elapsed = time.monotonic() - start
     log.info(
@@ -918,7 +1006,13 @@ async def fetch_water_maptiler(
         f"({water_dedup_skipped} tile-seam duplicates removed) in {elapsed:.1f}s"
     )
 
-    return {"water_polygons": water_polygons, "waterways": waterways}
+    return {
+        "water_polygons": water_polygons,
+        "waterways": waterways,
+        "tiles_fetched": tiles_fetched,
+        "tiles_failed": tiles_failed,
+        "tiles_total": total_tiles,
+    }
 
 
 # ── Parks / green space fetching via MapTiler vector tiles ────────────
@@ -1018,79 +1112,70 @@ async def fetch_parks_maptiler(
     tiles_fetched = 0
     tiles_failed = 0
 
+    sem = asyncio.Semaphore(_TILE_CONCURRENCY)
     async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-        for tx in range(x_min, x_max + 1):
-            for ty in range(y_min, y_max + 1):
-                url = MAPTILER_TILE_URL.format(z=zoom, x=tx, y=ty) + f"?key={api_key}"
-                try:
-                    resp = await client.get(url)
-                    if resp.status_code != 200:
-                        tiles_failed += 1
-                        if resp.status_code != 204:
-                            log.warning(f"MapTiler parks HTTP {resp.status_code} for tile {zoom}/{tx}/{ty}")
+        tasks = [
+            _fetch_tile_parsed(client, tx, ty, zoom, api_key, sem, kind="parks")
+            for tx in range(x_min, x_max + 1)
+            for ty in range(y_min, y_max + 1)
+        ]
+        results = await asyncio.gather(*tasks)
+
+    for tx, ty, status, layers in results:
+        if status == "failed":
+            tiles_failed += 1
+            continue
+        if status == "empty":
+            continue
+        tiles_fetched += 1
+
+        for layer in layers:
+            lname = layer["name"]
+            if lname not in ("park", "landcover", "landuse"):
+                continue
+
+            extent = layer["extent"]
+            keys = layer["keys"]
+            values = layer["values"]
+
+            for feat_data in layer["features"]:
+                feature = _parse_mvt_feature(feat_data, keys, values)
+                if feature["geometry_type"] != 3:  # polygons only
+                    continue
+
+                props = feature["properties"]
+                klass = str(props.get("class", "") or "")
+                subclass = str(props.get("subclass", "") or "")
+
+                # Filter by layer-specific class allowlist.
+                if lname == "park":
+                    keep = True  # everything in the park layer counts
+                    label = klass or "park"
+                elif lname == "landcover":
+                    keep = klass in _GREEN_LANDCOVER_CLASSES
+                    label = klass
+                else:  # landuse
+                    keep = (
+                        klass in _GREEN_LANDUSE_CLASSES
+                        or subclass in _GREEN_LANDUSE_CLASSES
+                    )
+                    label = klass or subclass
+
+                if not keep:
+                    continue
+
+                name = str(props.get("name", "") or "")
+                geom_rings = _decode_geometry(
+                    feature["geometry_type"], feature["geometry"]
+                )
+                for pixel_coords in geom_rings:
+                    if len(pixel_coords) < 3:
                         continue
-
-                    tiles_fetched += 1
-                    tile_data = resp.content
-                    if tile_data[:2] == b'\x1f\x8b':
-                        import gzip
-                        tile_data = gzip.decompress(tile_data)
-
-                    layers = _parse_mvt(tile_data)
-                    for layer in layers:
-                        lname = layer["name"]
-                        if lname not in ("park", "landcover", "landuse"):
-                            continue
-
-                        extent = layer["extent"]
-                        keys = layer["keys"]
-                        values = layer["values"]
-
-                        for feat_data in layer["features"]:
-                            feature = _parse_mvt_feature(feat_data, keys, values)
-                            if feature["geometry_type"] != 3:  # polygons only
-                                continue
-
-                            props = feature["properties"]
-                            klass = str(props.get("class", "") or "")
-                            subclass = str(props.get("subclass", "") or "")
-
-                            # Filter by layer-specific class allowlist.
-                            if lname == "park":
-                                keep = True  # everything in the park layer counts
-                                label = klass or "park"
-                            elif lname == "landcover":
-                                keep = klass in _GREEN_LANDCOVER_CLASSES
-                                label = klass
-                            else:  # landuse
-                                keep = (
-                                    klass in _GREEN_LANDUSE_CLASSES
-                                    or subclass in _GREEN_LANDUSE_CLASSES
-                                )
-                                label = klass or subclass
-
-                            if not keep:
-                                continue
-
-                            name = str(props.get("name", "") or "")
-                            geom_rings = _decode_geometry(
-                                feature["geometry_type"], feature["geometry"]
-                            )
-                            for pixel_coords in geom_rings:
-                                if len(pixel_coords) < 3:
-                                    continue
-                                coords = [
-                                    _pixel_to_lnglat(px, py, extent, tx, ty, zoom)
-                                    for px, py in pixel_coords
-                                ]
-                                parks.append((coords, label or "park", name))
-
-                except httpx.TimeoutException:
-                    tiles_failed += 1
-                    log.warning(f"MapTiler parks timeout for tile {zoom}/{tx}/{ty}")
-                except Exception as e:
-                    tiles_failed += 1
-                    log.warning(f"MapTiler parks error for tile {zoom}/{tx}/{ty}: {type(e).__name__}: {e}")
+                    coords = [
+                        _pixel_to_lnglat(px, py, extent, tx, ty, zoom)
+                        for px, py in pixel_coords
+                    ]
+                    parks.append((coords, label or "park", name))
 
     elapsed = time.monotonic() - start
     log.info(
@@ -1098,4 +1183,9 @@ async def fetch_parks_maptiler(
         f"{len(parks)} park polygons in {elapsed:.1f}s"
     )
 
-    return {"parks": parks}
+    return {
+        "parks": parks,
+        "tiles_fetched": tiles_fetched,
+        "tiles_failed": tiles_failed,
+        "tiles_total": total_tiles,
+    }

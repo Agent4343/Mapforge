@@ -7,8 +7,6 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,7 +23,9 @@ from app.models.schemas import (
 from app.services.auth import get_current_user, get_optional_user
 from app.services.dxf_generator import generate_dxf
 from app.services.stl_generator import generate_stl
-from app.services.geo_fetch import fetch_area_around_point, fetch_geometry
+from app.services.geo_fetch import (
+    fetch_area_around_point, fetch_geometry, viewport_polygon_from_geocode,
+)
 from app.services.geometry_processor import process_geometry, transform_wgs84_to_board
 from app.services.svg_generator import generate_svg
 from app.services.street_fetcher import fetch_streets
@@ -33,6 +33,7 @@ from app.services.maptiler_fetcher import fetch_streets_maptiler
 from app.services.water_fetcher import fetch_water_features
 from app.services.contour_fetcher import fetch_contour_lines, generate_depth_bands
 from app.services.file_storage import store_file, retrieve_file
+from app.services.ratelimit import limiter
 from app.services.thumbnail_generator import (
     generate_thumbnail, generate_print_image, generate_etsy_listing_image,
     generate_watermarked_preview, generate_wall_mockup, calculate_print_pixels,
@@ -41,7 +42,36 @@ from app.services.thumbnail_generator import (
 )
 
 router = APIRouter(prefix="/api/v1", tags=["generate"])
-limiter = Limiter(key_func=get_remote_address)
+
+
+# Codepoints that the production cairosvg/pango font stack (Liberation
+# Sans / DejaVu fallback) doesn't have a glyph for. Replaced with safe
+# ASCII before the SVG hits cairosvg so on-demand PNG rasterisation
+# doesn't blow up on a single decorative character.
+_CAIRO_UNSAFE_REPLACEMENTS = {
+    " ": " ",   # EM SPACE
+    " ": " ",   # EN SPACE
+    " ": " ",   # THIN SPACE
+    "​": "",    # ZERO WIDTH SPACE
+    "│": "|",   # BOX DRAWINGS LIGHT VERTICAL
+    "─": "-",   # BOX DRAWINGS LIGHT HORIZONTAL
+    "—": "-",   # EM DASH
+    "–": "-",   # EN DASH
+}
+
+
+def _sanitize_svg_for_cairo(svg_text: str) -> str:
+    """Replace cairosvg-unsafe Unicode glyphs with ASCII equivalents.
+
+    Used by the on-demand PNG fallback so older posters in storage
+    (which may contain decorative box-drawings glyphs the production
+    font stack can't render) still rasterise to PNG.
+    """
+    out = svg_text
+    for bad, good in _CAIRO_UNSAFE_REPLACEMENTS.items():
+        if bad in out:
+            out = out.replace(bad, good)
+    return out
 
 
 def _compute_street_viewport(streets_data: dict, transform: dict, bounds_mm: tuple,
@@ -172,6 +202,39 @@ def _check_tier_limits(user: User | None, req: GenerateRequest):
     return
 
 
+# Overall wall-clock ceiling for a single /generate request. Parallel
+# tile fetches at z12 now finish in ~5s on a warm connection, and the
+# subsequent SVG → PNG render is dominated by board-size (10–30s at
+# 600 DPI on a 16x20 board). 90s leaves comfortable headroom for the
+# worst legitimate case and turns a genuinely-stuck pipeline into a
+# 504 instead of a hung worker.
+_GENERATE_TIMEOUT_SEC = 90.0
+
+# Threshold for warning the user that a fetch came back partial. Below
+# 10% failure we don't warn (one flaky tile is normal); above it we
+# surface it so the client can offer a "retry" button rather than
+# silently showing a poster with visible gaps.
+_PARTIAL_FETCH_WARN_THRESHOLD = 0.10
+
+
+def _warn_on_partial_fetch(warnings: list[str], label: str, result: dict) -> None:
+    """Append a warning when a MapTiler fetch has a meaningful failure ratio."""
+    total = result.get("tiles_total") or 0
+    failed = result.get("tiles_failed") or 0
+    if total <= 0 or failed <= 0:
+        return
+    ratio = failed / total
+    if ratio >= _PARTIAL_FETCH_WARN_THRESHOLD:
+        pct = int(ratio * 100)
+        warnings.append(
+            f"{label.title()} data was partial — {pct}% of tiles failed. "
+            f"Map may show gaps; re-generate in a minute to try again."
+        )
+        log.warning(
+            f"{label} fetch partial: {failed}/{total} tiles failed ({pct}%)"
+        )
+
+
 async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession) -> GenerateResponse:
     """Core generation logic shared by single and batch endpoints."""
     warnings: list[str] = []
@@ -214,18 +277,94 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     # rate limits). Falls back to Overpass for anything not bundled.
     log.info(f"Generating {req.product_type.value} for OSM {req.osm_type}/{req.osm_id}")
     geom = None
+    boundary_source = "admin"
     if req.product_type.value == "province" and req.text:
         from app.services.boundary_loader import load_local_province
         geom = load_local_province(req.text)
-    if geom is None:
-        prefer_overpass = req.product_type.value == "province"
-        geom = await fetch_geometry(req.osm_id, req.osm_type, prefer_overpass=prefer_overpass)
-    if geom is None:
+        if geom is not None:
+            boundary_source = "local"
+    # Lookup the geocode record FIRST so its lat/lon can validate any
+    # polygon we fetch. Toronto's Overpass response can be partially
+    # truncated by the 25 s timeout, force-closing into a polygon that
+    # doesn't actually contain downtown — passing the geocode point
+    # in lets fetch_geometry detect that and fall back automatically.
+    from app.services.geo_fetch import fetch_geocode_record
+    geocode_record = await fetch_geocode_record(req.osm_id, req.osm_type)
+    if geocode_record is None:
+        log.warning("Geocode lookup returned None for %s/%s", req.osm_type, req.osm_id)
         raise HTTPException(
-            status_code=404,
-            detail=f"Could not fetch geometry for {req.osm_type}/{req.osm_id}. "
-            "The location may not have polygon data in OpenStreetMap.",
+            status_code=503,
+            detail="Location service temporarily unavailable. Please try again in a moment.",
         )
+
+    if geom is None:
+        # Prefer Overpass for any boundary that needs vertex-accurate
+        # rendering — provinces always, cities/communities now too.
+        # Nominatim's polygon_geojson endpoint returns a pre-simplified
+        # polygon (server-side Douglas-Peucker for performance) which
+        # smooths Toronto's actual ~3000-vertex admin relation down to
+        # ~30 vertices, producing a "clean angled edge" parallelogram
+        # that doesn't match Toronto's real irregular shape. Overpass
+        # fetches raw OSM nodes so the polygon arrives full-detail
+        # and only our 25 m simplification (downstream in
+        # process_geometry) actually gates the output resolution.
+        prefer_overpass = req.product_type.value in (
+            "province", "city", "community", "park", "lake",
+        )
+        try:
+            gc_lat = float(geocode_record.get("lat", 0) or 0)
+            gc_lon = float(geocode_record.get("lon", 0) or 0)
+            validation_pt = (gc_lat, gc_lon) if (gc_lat or gc_lon) else None
+        except (TypeError, ValueError):
+            validation_pt = None
+        geom = await fetch_geometry(
+            req.osm_id, req.osm_type,
+            prefer_overpass=prefer_overpass,
+            validation_point=validation_pt,
+        )
+
+    if geom is None:
+        # Spec #5: "If no boundary exists, use a clean rectangular
+        # viewport around the geocoded place." Build a padded bbox
+        # polygon from the Nominatim boundingbox so we never export a
+        # 404 for a real, geocodable place — only for places that
+        # don't actually exist.
+        log.info(
+            f"No admin polygon for {req.osm_type}/{req.osm_id}; "
+            f"using rectangular viewport fallback"
+        )
+        geom = viewport_polygon_from_geocode(geocode_record)
+        if geom is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Could not fetch geometry or build viewport for "
+                f"{req.osm_type}/{req.osm_id}.",
+            )
+        boundary_source = "viewport"
+
+    # Polygon detail audit — make it trivially verifiable from the
+    # server log that the visible city shape is the actual admin
+    # polygon and not a simplified bbox. A real city admin relation
+    # like Toronto has 1000-3000 vertices; if this prints a vertex
+    # count under ~50 the polygon is server-side simplified (a
+    # symptom of Nominatim's polygon_geojson returning a coarse
+    # version) and the render will look like a clean parallelogram.
+    try:
+        if hasattr(geom, "geoms"):
+            vertex_count = sum(len(p.exterior.coords) for p in geom.geoms)
+            piece_count = len(list(geom.geoms))
+        else:
+            vertex_count = len(geom.exterior.coords)
+            piece_count = 1
+        bounds = geom.bounds  # (minx, miny, maxx, maxy)
+        log.info(
+            "Boundary polygon: source=%s, type=%s, pieces=%d, "
+            "vertices=%d, bounds=(%.4f,%.4f,%.4f,%.4f)",
+            boundary_source, type(geom).__name__, piece_count,
+            vertex_count, bounds[0], bounds[1], bounds[2], bounds[3],
+        )
+    except Exception as e:
+        log.warning(f"Polygon audit log failed: {e}")
 
     # ── Map rendering controller (spec: validate, classify, plan) ─────
     #
@@ -237,20 +376,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     #     geocode point (auto-framer keeps working)
     # Plan status surfaces as a structured error rather than silent
     # fallbacks.
-    from app.services.geo_fetch import fetch_geocode_record
     from app.services.map_controller import plan_render
-    geocode_record = await fetch_geocode_record(req.osm_id, req.osm_type)
-    if geocode_record is None:
-        # Distinct error: upstream Nominatim call failed (timeout /
-        # DNS / rate limit). Without this branch the null propagates
-        # into plan_render → INVALID_MAP_RENDER, and the user sees
-        # "pick a different result" when the actual cause was an
-        # upstream outage. 503 lets the client auto-retry.
-        log.warning("Geocode lookup returned None for %s/%s", req.osm_type, req.osm_id)
-        raise HTTPException(
-            status_code=503,
-            detail="Location service temporarily unavailable. Please try again in a moment.",
-        )
     map_plan = plan_render(
         user_input=req.text or str(req.osm_id),
         geocode=geocode_record,
@@ -267,7 +393,61 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             detail=f"Location '{req.text}' matched multiple places of "
             "similar confidence. Please refine your search (add a province / state).",
         )
+    # Spec step 13 — BROAD_BBOX is non-fatal: we still render, but we
+    # surface the controller's warnings so the client can offer a
+    # "city vs metro" prompt on the next refinement.
+    if map_plan.status == "BROAD_BBOX":
+        warnings.extend(map_plan.warnings)
     log.info("MapController plan: %s", map_plan.to_dict())
+
+    # ── Spec validation gate (real geography, not fake) ───────────────
+    #
+    # Final pre-render check that the geocode + plan + boundary
+    # together describe the place the user actually searched for. We
+    # hard-fail here rather than export a poster of the wrong place.
+    from app.services.map_validator import validate_render_inputs
+    validation = validate_render_inputs(
+        user_input=req.text or "",
+        geocode=geocode_record,
+        plan=map_plan,
+        geometry=geom,
+        boundary_source=boundary_source,
+    )
+    if not validation.ok:
+        log.warning(
+            "Render validation FAILED for '%s': %s",
+            req.text, "; ".join(validation.issues),
+        )
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Map validation failed for '{req.text}': "
+                f"{'; '.join(validation.issues)}. "
+                "Pick a different result from the search suggestions."
+            ),
+        )
+
+    # Spec step 6 (city wall-art rule): "If no boundary can be resolved
+    # → STOP and return error (do not render a fake map)." The
+    # rectangular `viewport` fallback exists for hamlets / pin drops
+    # that have no admin polygon — perfectly fine for a name_sign,
+    # but a city poster rendered from a padded geocoder bbox is
+    # exactly the "fake map" the spec rejects. Refuse the export so
+    # the customer never receives a rectangular pseudo-Toronto.
+    if (
+        req.product_type.value == "city"
+        and boundary_source == "viewport"
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"No municipal boundary could be resolved for "
+                f"'{req.text}'. City wall-art posters require an "
+                "actual administrative polygon — please pick a "
+                "different search result, or switch the product type "
+                "to a region / pin-drop map."
+            ),
+        )
 
     # Process geometry
     try:
@@ -308,6 +488,110 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     # Store geographic extent for scale-aware rendering (used by vintage maps)
     processed["geo_lat_span"] = bounds[3] - bounds[1]
     processed["geo_lon_span"] = bounds[2] - bounds[0]
+
+    # Spec step 7: compute fit-bounds from the boundary geometry, not
+    # from the geocoder bbox or road-sample percentiles. The static-map
+    # auto-framer drifts toward whichever side of the city has more
+    # roads (Toronto's road-density centroid sits north of the lake,
+    # cropping the harbour off the bottom of the poster) — we bypass
+    # it for any product type that has a real admin polygon by passing
+    # an explicit fit_bounds_bbox derived from `geom.bounds`. Spec step
+    # 8: pad in [5%, 10%]; we use map_controller's clamped helper so
+    # the same 7.5% default applies on screen and in print.
+    from app.services.map_controller import (
+        pad_bbox as _pad_bbox,
+        MIN_BBOX_PAD_PCT,
+    )
+    use_polygon_frame = req.product_type.value in (
+        "city", "community", "park", "name_sign"
+    ) or (map_plan and map_plan.use_fit_bounds)
+    if use_polygon_frame:
+        # Padding is tier-aware:
+        #   * Cities / inland places (rectangular bbox tightly bounds
+        #     the polygon): 5% so the city polygon dominates the
+        #     canvas and the surrounding mat area is minimal.
+        #   * Islands and provinces (irregular bbox includes lots of
+        #     ocean / hinterland inside the bounding rectangle): 2%
+        #     so the visible silhouette dominates instead of floating
+        #     inside ocean fill. Reviewer feedback on Cape Breton:
+        #     "the map isn't in the full picture" — the natural-shape
+        #     bbox already overshoots the visible land mass, so any
+        #     padding on top of that reads as wasted canvas.
+        is_island_or_province = (
+            map_plan
+            and map_plan.use_fit_bounds
+            and map_plan.place_type in ("island", "province")
+        )
+        if is_island_or_province:
+            # 8% padding around the polygon's bbox. Tighter than this
+            # (we tried 2%) puts the polygon's outermost vertices
+            # right against the canvas edges — northern Cape Breton
+            # Highlands at the top edge, Sydney coast at the right
+            # edge, southern Isle Madame at the bottom edge — and
+            # the island reads as "cut off" even though no actual
+            # cropping happens. 8% gives enough breathing room that
+            # every coastline sits comfortably inside the frame.
+            # Cities still use the 5% MIN_BBOX_PAD_PCT path because
+            # their polygons fill the bbox and don't need surrounding
+            # ocean to define context.
+            w, s, e, n = bounds[0], bounds[1], bounds[2], bounds[3]
+            lon_pad = (e - w) * 0.08
+            lat_pad = (n - s) * 0.08
+            polygon_fit_bbox = (w - lon_pad, s - lat_pad,
+                                e + lon_pad, n + lat_pad)
+        else:
+            polygon_fit_bbox = _pad_bbox(
+                (bounds[0], bounds[1], bounds[2], bounds[3]),  # W,S,E,N
+                pct=MIN_BBOX_PAD_PCT,
+            )
+    else:
+        polygon_fit_bbox = None
+
+    # ── Canvas orientation (auto / portrait / landscape) ─────────────
+    #
+    # Wide cities (Toronto ~50 km E-W vs ~25 km N-S) leave most of a
+    # portrait poster as vertical whitespace because the fit-bounds
+    # scale is limited by the canvas width. Run the chooser to decide
+    # whether to flip the poster to landscape — Toronto lands at 67%
+    # fill in landscape vs 37% in portrait, so the swap is unambiguous.
+    # Caller can override via `force_orientation` ("portrait" /
+    # "landscape") on the request.
+    from app.services.map_controller import pick_canvas_orientation
+    landscape = False
+    portrait_fill = landscape_fill = 0.0
+    polygon_lon_span = bounds[2] - bounds[0]
+    polygon_lat_span = bounds[3] - bounds[1]
+    centre_lat = 0.5 * (bounds[1] + bounds[3])
+    forced = (req.force_orientation or "auto").lower()
+    # POSTER_SIZES is portrait-keyed (taller than wide); the chooser
+    # treats canvas_w_px as the short dimension for portrait scoring.
+    from app.services.static_map_poster import POSTER_SIZES
+    poster_w_px, poster_h_px = POSTER_SIZES.get("18x24", (5400, 7200))
+    auto_landscape, portrait_fill, landscape_fill = pick_canvas_orientation(
+        canvas_w_px=poster_w_px,
+        canvas_h_px=poster_h_px,
+        polygon_lon_span_deg=polygon_lon_span,
+        polygon_lat_span_deg=polygon_lat_span,
+        centre_lat=centre_lat,
+    )
+    if forced == "portrait":
+        landscape = False
+    elif forced == "landscape":
+        landscape = True
+    else:
+        landscape = auto_landscape
+    if landscape and forced == "auto":
+        warnings.append(
+            f"Auto-rotated to landscape for best fit "
+            f"({landscape_fill * 100:.0f}% fill vs "
+            f"{portrait_fill * 100:.0f}% in portrait). "
+            f"Set force_orientation=portrait to keep the original."
+        )
+    log.info(
+        "Orientation: forced=%s -> %s (portrait_fill=%.2f, landscape_fill=%.2f)",
+        forced, "landscape" if landscape else "portrait",
+        portrait_fill, landscape_fill,
+    )
 
     # Expand the street fetch area beyond the boundary for all street-based maps.
     # This ensures surrounding roads fill the map edges instead of cutting off
@@ -423,6 +707,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             has_data = result and (result.get("major_roads") or result.get("minor_roads"))
             if has_data:
                 log.info("MapTiler street fetch succeeded")
+                _warn_on_partial_fetch(warnings, "streets", result)
                 _cache_overpass(cache_key, result)
                 return result
             else:
@@ -464,6 +749,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                     f"{len(result.get('water_polygons', []))} polygons, "
                     f"{len(result.get('waterways', []))} waterways"
                 )
+                _warn_on_partial_fetch(warnings, "water", result)
                 _cache_overpass(cache_key, result)
                 return result
             log.warning("MapTiler water returned no data — falling back to Overpass")
@@ -656,9 +942,11 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                     color_theme=req.color_theme,
                     parks_data=parks_data,
                     land_polygon=geom,
-                    fit_bounds_bbox=(
-                        map_plan.bbox if map_plan.use_fit_bounds else None
-                    ),
+                    fit_bounds_bbox=polygon_fit_bbox,
+                    debug_overlay=req.debug_overlay,
+                    geocoder_bbox=tuple(map_plan.bbox) if map_plan else None,
+                    landscape=landscape,
+                    place_type=map_plan.place_type if map_plan else "city",
                 )
                 if poster_bytes:
                     b64 = base64.b64encode(poster_bytes).decode("ascii")
@@ -667,8 +955,13 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             except Exception as e:
                 log.warning(f"Road poster failed, falling back to SVG: {e}", exc_info=True)
 
-    # Generate SVG (used as fallback or for non-city_art maps)
-    result = generate_svg(
+    # Generate SVG (used as fallback or for non-city_art maps).
+    # `generate_svg` is pure-CPU Python (shapely + path building + string
+    # assembly) and takes 1–5s on a city-scale request. Running it on
+    # the event loop stalls every other in-flight request; to_thread
+    # keeps uvicorn responsive while this worker renders.
+    result = await asyncio.to_thread(
+        generate_svg,
         processed=processed,
         location_name=location_name,
         style=req.style,
@@ -703,77 +996,109 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     print_png_key = None
     etsy_key = None
 
+    # Wall-art posters (city / community) are shipped as PNG only —
+    # the SVG generator's percentile-based framing differs from the
+    # static-poster path's boundary-clipped output, so we don't store
+    # an SVG whose framing doesn't match the printed poster. CNC
+    # products (style=outline/engraved) keep the SVG path for laser /
+    # VCarve workflows. SVG is still GENERATED in-memory above so
+    # thumbnail / print PNG fallback / Etsy listing image (which all
+    # consume `result["svg"]`) keep working.
+    is_wall_art_product = (
+        req.product_type.value in ("city", "community")
+        and req.style.value not in ("outline", "engraved")
+    )
+
     if user:
-        svg_key = f"svg/{req.osm_type}_{req.osm_id}_{req.style.value}_{int(board_w)}x{int(board_h)}.svg"
-        try:
-            await store_file(svg_key, result["svg"].encode("utf-8"))
-        except Exception as e:
-            log.error(f"Failed to store SVG: {e}")
-            raise HTTPException(status_code=500, detail="Failed to save generated file. Please try again.")
+        # Common key stem for ALL stored derivatives so the storage
+        # paths stay aligned even when SVG isn't stored.
+        key_stem = (
+            f"{req.osm_type}_{req.osm_id}_{req.style.value}"
+            f"_{int(board_w)}x{int(board_h)}"
+        )
 
-        # Generate CNC-optimized SVG (simplified: major roads only, fewer paths)
-        try:
-            cnc_result = generate_svg(
-                processed=processed,
-                location_name=location_name,
-                style=req.style,
-                show_coordinates=req.show_coordinates,
-                font_size_mm=req.font_size_mm,
-                streets_data=streets_data,
-                contour_data=contour_data,
-                water_data=water_data,
-                markers=board_markers,
-                subtitle=req.subtitle,
-                font_family=req.font_family.value,
-                border_style=req.border_style.value,
-                heart_location=heart_mm,
-                output_mode="cnc",
-                color_theme=req.color_theme,
-                product_type=req.product_type.value,
-            )
-            cnc_svg_key = svg_key.replace("svg/", "cnc/").replace(".svg", "_cnc.svg")
-            await store_file(cnc_svg_key, cnc_result["svg"].encode("utf-8"))
-            log.info(f"CNC SVG generated: {cnc_result['path_count']} paths")
-        except Exception as e:
-            log.warning(f"CNC SVG generation failed (non-fatal): {e}")
-            cnc_svg_key = None
-
-        # Generate DXF (CNC-ready vector) alongside SVG
-        try:
-            dxf_bytes = generate_dxf(
-                processed=processed,
-                location_name=location_name,
-                show_coordinates=req.show_coordinates,
-                font_size_mm=req.font_size_mm,
-                center_latlon=processed.get("center_latlon"),
-                streets_data=streets_data,
-                markers=board_markers,
-            )
-            dxf_key = svg_key.replace("svg/", "dxf/").replace(".svg", ".dxf")
-            await store_file(dxf_key, dxf_bytes)
-        except Exception as e:
-            log.warning(f"DXF generation failed (non-fatal): {e}")
-
-        # Generate STL 3D mesh when contours are available (bathymetric/topo)
-        if contour_data:
+        if not is_wall_art_product:
+            # CNC / regional / lake / park / province path: store SVG.
+            svg_key = f"svg/{key_stem}.svg"
             try:
-                stl_bytes = generate_stl(
-                    processed=processed,
-                    contour_data=contour_data,
-                )
-                stl_key = svg_key.replace("svg/", "stl/").replace(".svg", ".stl")
-                await store_file(stl_key, stl_bytes)
-                log.info(f"STL generated: {len(stl_bytes)} bytes")
+                await store_file(svg_key, result["svg"].encode("utf-8"))
             except Exception as e:
-                log.warning(f"STL generation failed (non-fatal): {e}")
+                log.error(f"Failed to store SVG: {e}")
+                raise HTTPException(status_code=500, detail="Failed to save generated file. Please try again.")
+
+            # Generate CNC-optimized SVG (simplified: major roads only, fewer paths)
+            try:
+                cnc_result = await asyncio.to_thread(
+                    generate_svg,
+                    processed=processed,
+                    location_name=location_name,
+                    style=req.style,
+                    show_coordinates=req.show_coordinates,
+                    font_size_mm=req.font_size_mm,
+                    streets_data=streets_data,
+                    contour_data=contour_data,
+                    water_data=water_data,
+                    markers=board_markers,
+                    subtitle=req.subtitle,
+                    font_family=req.font_family.value,
+                    border_style=req.border_style.value,
+                    heart_location=heart_mm,
+                    output_mode="cnc",
+                    color_theme=req.color_theme,
+                    product_type=req.product_type.value,
+                )
+                cnc_svg_key = f"cnc/{key_stem}_cnc.svg"
+                await store_file(cnc_svg_key, cnc_result["svg"].encode("utf-8"))
+                log.info(f"CNC SVG generated: {cnc_result['path_count']} paths")
+            except Exception as e:
+                log.warning(f"CNC SVG generation failed (non-fatal): {e}")
+                cnc_svg_key = None
+
+            # Generate DXF (CNC-ready vector) alongside SVG
+            try:
+                dxf_bytes = await asyncio.to_thread(
+                    generate_dxf,
+                    processed=processed,
+                    location_name=location_name,
+                    show_coordinates=req.show_coordinates,
+                    font_size_mm=req.font_size_mm,
+                    center_latlon=processed.get("center_latlon"),
+                    streets_data=streets_data,
+                    markers=board_markers,
+                )
+                dxf_key = f"dxf/{key_stem}.dxf"
+                await store_file(dxf_key, dxf_bytes)
+            except Exception as e:
+                log.warning(f"DXF generation failed (non-fatal): {e}")
+
+            # Generate STL 3D mesh when contours are available (bathymetric/topo)
+            if contour_data:
+                try:
+                    stl_bytes = await asyncio.to_thread(
+                        generate_stl,
+                        processed=processed,
+                        contour_data=contour_data,
+                    )
+                    stl_key = f"stl/{key_stem}.stl"
+                    await store_file(stl_key, stl_bytes)
+                    log.info(f"STL generated: {len(stl_bytes)} bytes")
+                except Exception as e:
+                    log.warning(f"STL generation failed (non-fatal): {e}")
+        else:
+            log.info(
+                "Wall-art product (%s, style=%s) — skipping SVG/DXF/STL "
+                "storage; PNG is the canonical artifact",
+                req.product_type.value, req.style.value,
+            )
 
         # Generate PNG thumbnail for Etsy product mockups
         try:
-            png_bytes = generate_thumbnail(
+            png_bytes = await asyncio.to_thread(
+                generate_thumbnail,
                 result["svg"],
                 background_color=None,  # Print SVG already has mat + background
             )
-            thumbnail_key = svg_key.replace("svg/", "thumbnails/").replace(".svg", ".png")
+            thumbnail_key = f"thumbnails/{key_stem}.png"
             await store_file(thumbnail_key, png_bytes, content_type="image/png")
         except Exception as e:
             log.warning(f"Thumbnail generation failed (non-fatal): {e}")
@@ -787,7 +1112,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                 lon_span = bounds[2] - bounds[0] if bounds else 0
                 try:
                     from app.services.static_map_poster import generate_road_poster
-                    static_poster_bytes = generate_road_poster(
+                    static_poster_bytes = await asyncio.to_thread(
+                        generate_road_poster,
                         streets_data=streets_data,
                         water_data=water_data,
                         center_lat=center[0],
@@ -800,27 +1126,30 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
                         color_theme=req.color_theme,
                         parks_data=parks_data,
                         land_polygon=geom,
-                        fit_bounds_bbox=(
-                            map_plan.bbox if map_plan.use_fit_bounds else None
-                        ),
+                        fit_bounds_bbox=polygon_fit_bbox,
+                        debug_overlay=req.debug_overlay,
+                        geocoder_bbox=tuple(map_plan.bbox) if map_plan else None,
+                        landscape=landscape,
+                        place_type=map_plan.place_type if map_plan else "city",
                     )
                 except Exception as e:
                     log.warning(f"Road poster for print failed (non-fatal): {e}")
 
         if static_poster_bytes:
-            print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
+            print_png_key = f"print/{key_stem}_print.png"
             await store_file(print_png_key, static_poster_bytes, content_type="image/png")
             log.info(f"Print PNG from road poster: {len(static_poster_bytes)} bytes")
         else:
             try:
-                print_bytes = generate_print_image(
+                print_bytes = await asyncio.to_thread(
+                    generate_print_image,
                     result["svg"],
                     color_theme=req.color_theme,
                     skip_remap=True,
                     board_size=req.board_size.value,
                     dpi=req.print_dpi,
                 )
-                print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
+                print_png_key = f"print/{key_stem}_print.png"
                 await store_file(print_png_key, print_bytes, content_type="image/png")
             except Exception as e:
                 log.error(f"Print PNG generation failed: {type(e).__name__}: {e}")
@@ -828,8 +1157,8 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
 
         # Generate Etsy listing image (4:3 ratio for Etsy grid)
         try:
-            etsy_bytes = generate_etsy_listing_image(result["svg"])
-            etsy_key = svg_key.replace("svg/", "etsy/").replace(".svg", "_etsy.png")
+            etsy_bytes = await asyncio.to_thread(generate_etsy_listing_image, result["svg"])
+            etsy_key = f"etsy/{key_stem}_etsy.png"
             await store_file(etsy_key, etsy_bytes, content_type="image/png")
         except Exception as e:
             log.warning(f"Etsy listing image generation failed (non-fatal): {e}")
@@ -899,6 +1228,10 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         thumbnail_available=thumbnail_key is not None,
         print_png_available=print_png_key is not None,
         etsy_listing_available=etsy_key is not None,
+        # SVG file is only stored (and therefore downloadable) for
+        # CNC products. Wall-art posters use PNG as the canonical
+        # download — see the is_wall_art_product gate above.
+        svg_available=svg_key is not None,
         dxf_available=dxf_key is not None,
         stl_available=stl_key is not None,
         file_id=file_id,
@@ -928,7 +1261,21 @@ async def generate(
         await _maybe_reset_monthly_counter(user, db)
     _check_tier_limits(user, req)
     try:
-        return await _do_generate(req, user, db)
+        return await asyncio.wait_for(
+            _do_generate(req, user, db), timeout=_GENERATE_TIMEOUT_SEC
+        )
+    except asyncio.TimeoutError:
+        log.error(
+            f"Generate timed out after {_GENERATE_TIMEOUT_SEC}s "
+            f"(user={'admin' if user else 'visitor'})"
+        )
+        raise HTTPException(
+            status_code=504,
+            detail=(
+                "Map generation timed out. This is usually a temporary issue "
+                "with one of our tile providers — please try again."
+            ),
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -1004,7 +1351,8 @@ async def generate_pin(
 
     # Generate print poster SVG (the primary and only output)
     location_name = req.label
-    result = generate_svg(
+    result = await asyncio.to_thread(
+        generate_svg,
         processed=processed,
         location_name=location_name,
         style=req.style,
@@ -1036,32 +1384,52 @@ async def generate_pin(
     print_png_key = None
     etsy_key = None
 
+    # Pin / name-sign products are wall art unless the customer chose
+    # a CNC cut style (outline / engraved). Skip SVG storage for the
+    # wall-art case so customers don't download a vector whose
+    # framing differs from the printed PNG.
+    is_pin_wall_art = req.style.value not in ("outline", "engraved")
+    key_stem = (
+        f"pin_{req.lat:.4f}_{req.lon:.4f}_{req.style.value}"
+        f"_{int(board_w)}x{int(board_h)}"
+    )
+
     if user:
-        svg_key = f"svg/pin_{req.lat:.4f}_{req.lon:.4f}_{req.style.value}_{int(board_w)}x{int(board_h)}.svg"
-        try:
-            await store_file(svg_key, result["svg"].encode("utf-8"))
-        except Exception as e:
-            log.error(f"Failed to store pin SVG: {e}")
-            raise HTTPException(status_code=500, detail="Failed to save generated file. Please try again.")
+        if not is_pin_wall_art:
+            svg_key = f"svg/{key_stem}.svg"
+            try:
+                await store_file(svg_key, result["svg"].encode("utf-8"))
+            except Exception as e:
+                log.error(f"Failed to store pin SVG: {e}")
+                raise HTTPException(status_code=500, detail="Failed to save generated file. Please try again.")
+        else:
+            log.info(
+                "Wall-art pin (style=%s) — skipping SVG storage; "
+                "PNG is the canonical artifact",
+                req.style.value,
+            )
 
         # Generate thumbnail
         try:
-            png_bytes = generate_thumbnail(result["svg"], background_color=None)
-            thumbnail_key = svg_key.replace("svg/", "thumbnails/").replace(".svg", ".png")
+            png_bytes = await asyncio.to_thread(
+                generate_thumbnail, result["svg"], background_color=None
+            )
+            thumbnail_key = f"thumbnails/{key_stem}.png"
             await store_file(thumbnail_key, png_bytes, content_type="image/png")
         except Exception as e:
             log.warning(f"Thumbnail generation failed (non-fatal): {e}")
 
         # Generate high-res print PNG from the themed print SVG
         try:
-            print_bytes = generate_print_image(
+            print_bytes = await asyncio.to_thread(
+                generate_print_image,
                 result["svg"],
                 color_theme=req.color_theme,
                 skip_remap=True,
                 board_size=req.board_size.value,
                 dpi=req.print_dpi,
             )
-            print_png_key = svg_key.replace("svg/", "print/").replace(".svg", "_print.png")
+            print_png_key = f"print/{key_stem}_print.png"
             await store_file(print_png_key, print_bytes, content_type="image/png")
         except Exception as e:
             log.error(f"Print PNG generation failed: {type(e).__name__}: {e}")
@@ -1069,8 +1437,8 @@ async def generate_pin(
 
         # Generate Etsy listing image for pin maps
         try:
-            etsy_bytes = generate_etsy_listing_image(result["svg"])
-            etsy_key = svg_key.replace("svg/", "etsy/").replace(".svg", "_etsy.png")
+            etsy_bytes = await asyncio.to_thread(generate_etsy_listing_image, result["svg"])
+            etsy_key = f"etsy/{key_stem}_etsy.png"
             await store_file(etsy_key, etsy_bytes, content_type="image/png")
         except Exception as e:
             log.warning(f"Etsy listing image generation failed (non-fatal): {e}")
@@ -1123,10 +1491,11 @@ async def generate_pin(
         log.info(f"Preview generated (visitor): pin at {req.lat},{req.lon}")
 
     return GenerateResponse(
-        svg=result["svg"],
+        svg=result["svg"] if not is_pin_wall_art else None,
         thumbnail_available=thumbnail_key is not None,
         print_png_available=print_png_key is not None,
         etsy_listing_available=etsy_key is not None,
+        svg_available=svg_key is not None,
         file_id=file_id,
         location_name=location_name,
         dimensions_mm=(round(board_w, 1), round(board_h, 1)),
@@ -1177,14 +1546,32 @@ async def batch_generate(
 
 
 @router.get("/preview/{file_id}")
-async def preview(file_id: str, db: AsyncSession = Depends(get_db)):
-    """Get a cached SVG preview."""
+async def preview(
+    file_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the raw SVG for a generated file.
+
+    Returns the UNWATERMARKED SVG — i.e. the actual product — so it
+    requires authentication and ownership. Watermarked previews
+    (safe to show to marketplace browsers) are served from
+    `/download/{file_id}/preview` and stay unauthenticated. Credit
+    holders download through `/api/v1/orders/download/{token}`,
+    which gates on the redeem token.
+    """
     result = await db.execute(
         select(GeneratedFile).where(GeneratedFile.id == file_id)
     )
     file_record = result.scalar_one_or_none()
     if not file_record:
         raise HTTPException(status_code=404, detail="File not found.")
+
+    # Owner OR admin only. Files with no owner (visitor-generated
+    # previews that were saved for some reason) also require admin.
+    is_owner = file_record.owner_id and file_record.owner_id == user.id
+    if not is_owner and user.tier != "admin":
+        raise HTTPException(status_code=403, detail="You don't own this file.")
 
     svg_bytes = await retrieve_file(file_record.svg_storage_key)
     if svg_bytes is None:
@@ -1221,22 +1608,54 @@ async def download(
         content = None
         if file_record.print_png_key:
             content = await retrieve_file(file_record.print_png_key)
-        # Fallback: render PNG on-demand from stored SVG if pre-rendered PNG
-        # is missing (happens when cairosvg fails during generation)
+        # Fallback: render PNG on-demand from stored SVG if the
+        # pre-rendered PNG is missing (cairosvg failed at generate
+        # time, storage eviction, etc.). Pass through the file's
+        # actual board size so the on-demand output matches what
+        # the user originally generated, not a 16" default.
         if content is None and file_record.svg_storage_key:
             svg_bytes = await retrieve_file(file_record.svg_storage_key)
             if svg_bytes:
+                svg_text = svg_bytes.decode("utf-8", errors="replace")
+                # Strip codepoints that the production cairosvg/pango
+                # font stack can't render (box-drawings glyphs,
+                # zero-width chars, etc.). Older posters in storage
+                # may contain a U+2502 separator that breaks the on-
+                # demand PNG path; this keeps existing files
+                # downloadable without forcing a regenerate.
+                svg_text = _sanitize_svg_for_cairo(svg_text)
                 try:
                     from app.services.thumbnail_generator import generate_print_image
-                    content = generate_print_image(
-                        svg_bytes.decode("utf-8"),
+                    content = await asyncio.to_thread(
+                        generate_print_image,
+                        svg_text,
                         skip_remap=True,
+                        board_size=file_record.board_size,
                     )
-                    log.info(f"On-demand PNG render succeeded for {file_id}")
+                    log.info(
+                        f"On-demand PNG render succeeded for {file_id} "
+                        f"(board_size={file_record.board_size})"
+                    )
                 except Exception as e:
-                    log.error(f"On-demand PNG render failed for {file_id}: {e}")
+                    import traceback
+                    log.error(
+                        f"On-demand PNG render failed for {file_id}: "
+                        f"{type(e).__name__}: {e}\n"
+                        f"{traceback.format_exc()}"
+                    )
         if content is None:
-            raise HTTPException(status_code=404, detail="Print PNG not available for this file.")
+            # Distinguish "we never made a PNG" from "the file vanished":
+            # an admin hitting this almost always means cairosvg failed
+            # at generate time AND failed again on the on-demand retry.
+            # 503 + "regenerate" is more actionable than 404.
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Print PNG could not be rendered for this file. "
+                    "Check the server log for the cairosvg error and "
+                    "regenerate the map."
+                ),
+            )
         media_type = "image/png"
         ext = "png"
     elif format == ExportFormat.dxf:
@@ -1323,7 +1742,9 @@ async def download_preview(
         raise HTTPException(status_code=404, detail="SVG file not found in storage.")
 
     try:
-        preview_bytes = generate_watermarked_preview(svg_bytes.decode("utf-8"))
+        preview_bytes = await asyncio.to_thread(
+            generate_watermarked_preview, svg_bytes.decode("utf-8")
+        )
     except Exception as e:
         log.error(f"Watermarked preview generation failed: {e}")
         raise HTTPException(status_code=500, detail="Preview generation failed.")
@@ -1364,7 +1785,8 @@ async def download_wall_mockup(
         style = "light_wall"
 
     try:
-        mockup_bytes = generate_wall_mockup(
+        mockup_bytes = await asyncio.to_thread(
+            generate_wall_mockup,
             svg_bytes.decode("utf-8"),
             output_width=3000,
             output_height=2400,
@@ -1520,13 +1942,15 @@ async def generate_theme_variants(
                 themed_svg = remap_poster_theme(source_svg, source_theme, theme_key)
 
             # Generate Etsy listing image (2700x2025, 4:3 ratio)
-            etsy_bytes = generate_etsy_listing_image(themed_svg)
+            etsy_bytes = await asyncio.to_thread(generate_etsy_listing_image, themed_svg)
             base_key = file_record.svg_storage_key.replace("svg/", "").replace(".svg", "")
             etsy_key = f"etsy/{base_key}_{theme_key}.png"
             await store_file(etsy_key, etsy_bytes, content_type="image/png")
 
             # Generate thumbnail (2000px)
-            thumb_bytes = generate_thumbnail(themed_svg, background_color=None)
+            thumb_bytes = await asyncio.to_thread(
+                generate_thumbnail, themed_svg, background_color=None
+            )
             thumb_key = f"thumbnails/{base_key}_{theme_key}.png"
             await store_file(thumb_key, thumb_bytes, content_type="image/png")
 

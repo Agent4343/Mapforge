@@ -3,17 +3,26 @@
 import base64
 import hashlib
 import hmac
+import json
+import secrets
 import time
 
 from fastapi import APIRouter, Request, HTTPException
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import async_session
 from app.logging_config import log
-from app.models.db_models import User, Purchase, MarketplaceListing, DesignCredit
-from app.services.payments import verify_webhook_signature, create_transfer
+from app.models.db_models import (
+    DesignCredit,
+    MarketplaceListing,
+    Purchase,
+    User,
+    WebhookEvent,
+)
+from app.services.payments import create_transfer, verify_webhook_signature
 
 router = APIRouter(prefix="/api/v1/webhooks", tags=["webhooks"])
 
@@ -23,6 +32,32 @@ PLAN_TIER_MAP = {
     "price_pro_monthly": "pro",
     "price_pro_annual": "pro",
 }
+
+
+async def _claim_webhook(
+    db: AsyncSession, source: str, event_id: str, event_type: str
+) -> bool:
+    """Reserve this webhook delivery in the dedup log.
+
+    Returns True if we're the first to see this (source, event_id) — the
+    caller should proceed with the work and commit at the end. Returns
+    False if the same event was already processed (duplicate delivery);
+    the caller should immediately return 200 without side effects.
+
+    This inserts + flushes inside the caller's transaction, so the
+    dedup row commits atomically with whatever work the handler does.
+    A crash between the flush and the final commit rolls back BOTH
+    (the dedup row and any partial work), and Etsy/Stripe will
+    re-deliver the webhook on its next retry.
+    """
+    db.add(WebhookEvent(source=source, event_id=event_id, event_type=event_type))
+    try:
+        await db.flush()
+        return True
+    except IntegrityError:
+        await db.rollback()
+        log.info(f"Webhook dedup: {source}:{event_id} already processed")
+        return False
 
 
 @router.post("/stripe")
@@ -37,26 +72,38 @@ async def stripe_webhook(request: Request):
         log.error(f"Stripe webhook verification failed: {type(e).__name__}: {e}")
         raise HTTPException(status_code=400, detail="Invalid webhook signature")
 
+    event_id = str(event.get("id", ""))
     event_type = event.get("type", "")
     data = event.get("data", {}).get("object", {})
 
-    log.info(f"Stripe webhook: {event_type}")
+    if not event_id:
+        raise HTTPException(status_code=400, detail="Missing event id")
+
+    log.info(f"Stripe webhook: {event_type} ({event_id})")
 
     async with async_session() as db:
-        if event_type == "checkout.session.completed":
-            await _handle_checkout_completed(db, data)
-        elif event_type == "customer.subscription.updated":
-            await _handle_subscription_updated(db, data)
-        elif event_type == "customer.subscription.deleted":
-            await _handle_subscription_deleted(db, data)
-        elif event_type == "invoice.payment_failed":
-            await _handle_payment_failed(db, data)
-        elif event_type == "invoice.payment_succeeded":
-            await _handle_payment_succeeded(db, data)
-        elif event_type == "payment_intent.succeeded":
-            await _handle_marketplace_payment(db, data)
-        elif event_type == "account.updated":
-            await _handle_account_updated(db, data)
+        if not await _claim_webhook(db, "stripe", event_id, event_type):
+            return {"status": "ok", "deduplicated": True}
+
+        try:
+            if event_type == "checkout.session.completed":
+                await _handle_checkout_completed(db, data)
+            elif event_type == "customer.subscription.updated":
+                await _handle_subscription_updated(db, data)
+            elif event_type == "customer.subscription.deleted":
+                await _handle_subscription_deleted(db, data)
+            elif event_type == "invoice.payment_failed":
+                await _handle_payment_failed(db, data)
+            elif event_type == "invoice.payment_succeeded":
+                await _handle_payment_succeeded(db, data)
+            elif event_type == "payment_intent.succeeded":
+                await _handle_marketplace_payment(db, data)
+            elif event_type == "account.updated":
+                await _handle_account_updated(db, data)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
 
     return {"status": "ok"}
 
@@ -88,7 +135,6 @@ async def _handle_checkout_completed(db: AsyncSession, data: dict):
 
     user.tier = tier
     user.stripe_subscription_id = subscription_id
-    await db.commit()
     log.info(f"User {user.username} upgraded to {tier}")
 
 
@@ -114,8 +160,6 @@ async def _handle_subscription_updated(db: AsyncSession, data: dict):
     elif status in ("past_due", "unpaid"):
         log.warning(f"Subscription past due for user {user.username}")
 
-    await db.commit()
-
 
 async def _handle_subscription_deleted(db: AsyncSession, data: dict):
     """Handle subscription cancellation — downgrade to free."""
@@ -130,7 +174,6 @@ async def _handle_subscription_deleted(db: AsyncSession, data: dict):
 
     user.tier = "free"
     user.stripe_subscription_id = None
-    await db.commit()
     log.info(f"User {user.username} downgraded to free (subscription cancelled)")
 
 
@@ -153,12 +196,16 @@ async def _handle_payment_succeeded(db: AsyncSession, data: dict):
 
     # Reset monthly generation count on successful subscription renewal
     user.generation_count_this_month = 0
-    await db.commit()
     log.info(f"Monthly count reset for {user.username} on successful payment")
 
 
 async def _handle_marketplace_payment(db: AsyncSession, data: dict):
-    """Handle successful marketplace purchase — transfer funds to seller."""
+    """Handle successful marketplace purchase — transfer funds to seller.
+
+    Uses SELECT ... FOR UPDATE to serialise concurrent webhook deliveries
+    for the same purchase, so two retries can't both create transfers or
+    both increment sale_count.
+    """
     transfer_group = data.get("transfer_group")
     metadata = data.get("metadata", {})
     purchase_id = metadata.get("purchase_id")
@@ -166,8 +213,9 @@ async def _handle_marketplace_payment(db: AsyncSession, data: dict):
     if not purchase_id:
         return
 
+    # Lock the row for the remainder of this transaction.
     result = await db.execute(
-        select(Purchase).where(Purchase.id == purchase_id)
+        select(Purchase).where(Purchase.id == purchase_id).with_for_update()
     )
     purchase = result.scalar_one_or_none()
     if not purchase or purchase.status != "pending":
@@ -188,7 +236,6 @@ async def _handle_marketplace_payment(db: AsyncSession, data: dict):
     if not seller or not seller.stripe_connect_account_id:
         log.warning(f"Seller {listing.seller_id} has no connected account for payout")
         purchase.status = "completed"
-        await db.commit()
         return
 
     # Transfer seller's share to their connected account
@@ -200,13 +247,15 @@ async def _handle_marketplace_payment(db: AsyncSession, data: dict):
                 transfer_group=transfer_group,
             )
             if transfer_id:
-                log.info(f"Transfer {transfer_id} created for seller {seller.username}: ${purchase.seller_payout_cents/100:.2f}")
+                log.info(
+                    f"Transfer {transfer_id} created for seller {seller.username}: "
+                    f"${purchase.seller_payout_cents/100:.2f}"
+                )
         except Exception as e:
             log.error(f"Failed to transfer to seller {seller.username}: {e}")
 
     purchase.status = "completed"
-    listing.sale_count += 1  # increment for async payments that were initially "pending"
-    await db.commit()
+    listing.sale_count += 1
 
 
 async def _handle_account_updated(db: AsyncSession, data: dict):
@@ -223,8 +272,10 @@ async def _handle_account_updated(db: AsyncSession, data: dict):
         return
 
     user.stripe_payouts_enabled = payouts_enabled
-    await db.commit()
-    log.info(f"Account {account_id} updated: payouts={payouts_enabled}, charges={charges_enabled}")
+    log.info(
+        f"Account {account_id} updated: payouts={payouts_enabled}, "
+        f"charges={charges_enabled}"
+    )
 
 
 # =============================================================================
@@ -288,8 +339,11 @@ def _verify_etsy_signature(payload: bytes, headers: dict) -> bool:
 async def etsy_webhook(request: Request):
     """Handle Etsy webhook events (order.paid, order.shipped, etc.).
 
-    Etsy sends real-time notifications when orders are placed, shipped,
-    or cancelled. We sync these events back to the seller's dashboard.
+    Etsy's delivery guarantee is at-least-once: any non-2xx response,
+    transient network error, or handler exception triggers a retry
+    that carries the same `webhook-id` header. The WebhookEvent dedup
+    table downgrades that to exactly-once — a retry returns 200 without
+    re-running any side effects.
     """
     payload = await request.body()
     headers = dict(request.headers)
@@ -297,7 +351,10 @@ async def etsy_webhook(request: Request):
     if not _verify_etsy_signature(payload, headers):
         raise HTTPException(status_code=400, detail="Invalid Etsy webhook signature")
 
-    import json
+    webhook_id = headers.get("webhook-id", "")
+    if not webhook_id:
+        raise HTTPException(status_code=400, detail="Missing webhook-id header")
+
     try:
         event = json.loads(payload)
     except json.JSONDecodeError:
@@ -307,32 +364,48 @@ async def etsy_webhook(request: Request):
     data = event.get("data", event)
     shop_id = str(data.get("shop_id", ""))
 
-    log.info(f"Etsy webhook: {event_type} for shop {shop_id}")
+    log.info(f"Etsy webhook: {event_type} for shop {shop_id} ({webhook_id})")
+
+    # Post-commit side effects (Etsy API message) are queued here so we
+    # don't hold the DB transaction open during a third-party HTTP call.
+    send_message_context: dict | None = None
 
     async with async_session() as db:
-        if event_type == "order.paid":
-            await _handle_etsy_order_paid(db, data, shop_id)
-        elif event_type == "order.canceled":
-            await _handle_etsy_order_canceled(db, data, shop_id)
-        elif event_type == "order.shipped":
-            log.info(f"Etsy order shipped for shop {shop_id}")
-        elif event_type == "order.delivered":
-            log.info(f"Etsy order delivered for shop {shop_id}")
-        else:
-            log.info(f"Unhandled Etsy event: {event_type}")
+        if not await _claim_webhook(db, "etsy", webhook_id, event_type):
+            return {"status": "ok", "deduplicated": True}
+
+        try:
+            if event_type == "order.paid":
+                send_message_context = await _handle_etsy_order_paid(db, data, shop_id)
+            elif event_type == "order.canceled":
+                await _handle_etsy_order_canceled(db, data, shop_id)
+            elif event_type in ("order.shipped", "order.delivered"):
+                log.info(f"Etsy {event_type} for shop {shop_id}")
+            else:
+                log.info(f"Unhandled Etsy event: {event_type}")
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+
+    # Best-effort side effect: send the design link to the buyer via Etsy
+    # message. Runs on a fresh session so a failure here doesn't poison
+    # the webhook transaction (the credit is already committed).
+    if send_message_context:
+        await _send_buyer_message_best_effort(**send_message_context)
 
     return {"status": "ok"}
 
 
-async def _handle_etsy_order_paid(db: AsyncSession, data: dict, shop_id: str):
-    """Handle Etsy order.paid — create a design credit for the customer.
+async def _handle_etsy_order_paid(
+    db: AsyncSession, data: dict, shop_id: str
+) -> dict | None:
+    """Create a design credit for the buyer of an Etsy order.
 
-    When a customer buys on Etsy, we auto-create a DesignCredit with a unique
-    token. The token is included in the Etsy digital download file so the
-    customer can access the design tool and download their custom map.
+    Does NOT commit — the outer webhook handler owns the transaction.
+    Returns a context dict for the best-effort post-commit message send,
+    or None if no message should be sent.
     """
-    import secrets
-
     # Find the seller (your account) who owns this Etsy shop
     result = await db.execute(
         select(User).where(User.etsy_shop_id == shop_id)
@@ -340,7 +413,7 @@ async def _handle_etsy_order_paid(db: AsyncSession, data: dict, shop_id: str):
     seller = result.scalar_one_or_none()
     if not seller:
         log.warning(f"Etsy order.paid: no user found for shop {shop_id}")
-        return
+        return None
 
     # Extract order details from the webhook payload
     receipt_id = str(data.get("receipt_id", data.get("resource_id", "")))
@@ -353,6 +426,24 @@ async def _handle_etsy_order_paid(db: AsyncSession, data: dict, shop_id: str):
         price_cents = int(price_raw.get("amount", 0))
     elif isinstance(price_raw, (int, float)):
         price_cents = int(price_raw * 100)
+
+    # Defense-in-depth: even though webhook-id dedup prevents replays,
+    # check for an existing credit on the same receipt+seller pair. This
+    # guards against the case where Etsy (or a misbehaving integration
+    # test) delivers the same receipt under different webhook-ids.
+    if receipt_id:
+        existing = await db.execute(
+            select(DesignCredit).where(
+                DesignCredit.etsy_receipt_id == receipt_id,
+                DesignCredit.seller_id == seller.id,
+            )
+        )
+        if existing.scalar_one_or_none():
+            log.warning(
+                f"Etsy order.paid: credit already exists for receipt {receipt_id} "
+                f"— skipping (shop {shop_id})"
+            )
+            return None
 
     # Determine product type from listing title (basic heuristic)
     title_lower = (listing_title or "").lower()
@@ -376,7 +467,6 @@ async def _handle_etsy_order_paid(db: AsyncSession, data: dict, shop_id: str):
         status="unused",
     )
     db.add(credit)
-    await db.commit()
 
     frontend_url = settings.FRONTEND_URL or "https://mapforge-production.up.railway.app"
     design_url = f"{frontend_url}?credit={token}"
@@ -386,11 +476,36 @@ async def _handle_etsy_order_paid(db: AsyncSession, data: dict, shop_id: str):
         f"(shop {shop_id}, buyer {buyer_email}): {design_url}"
     )
 
-    # Send the design link to the buyer via Etsy message
     if seller.etsy_access_token and receipt_id:
-        try:
-            from app.services.etsy_client import send_buyer_message, get_valid_token
-            from app.services.app_settings import get_etsy_credentials
+        return {
+            "seller_id": seller.id,
+            "shop_id": shop_id,
+            "receipt_id": receipt_id,
+            "design_url": design_url,
+        }
+    return None
+
+
+async def _send_buyer_message_best_effort(
+    seller_id: str, shop_id: str, receipt_id: str, design_url: str
+) -> None:
+    """Post-commit: send the design link to the buyer via Etsy message.
+
+    Runs on its own session so the webhook transaction is already
+    durable before we make an outbound API call. Any failure here is
+    logged but does not propagate — the seller can send the link
+    manually from the Etsy admin if delivery fails.
+    """
+    try:
+        from app.services.app_settings import get_etsy_credentials
+        from app.services.etsy_client import get_valid_token, send_buyer_message
+
+        async with async_session() as db:
+            seller = (
+                await db.execute(select(User).where(User.id == seller_id))
+            ).scalar_one_or_none()
+            if not seller or not seller.etsy_access_token:
+                return
 
             creds = await get_etsy_credentials(db)
             access_token = await get_valid_token(seller, creds=creds)
@@ -413,11 +528,16 @@ async def _handle_etsy_order_paid(db: AsyncSession, data: dict, shop_id: str):
                 creds=creds,
             )
             if sent:
-                log.info(f"Design link sent to buyer via Etsy message for receipt {receipt_id}")
+                log.info(
+                    f"Design link sent to buyer via Etsy message for receipt {receipt_id}"
+                )
             else:
-                log.warning(f"Could not auto-send design link for receipt {receipt_id} — seller should send manually")
-        except Exception as e:
-            log.warning(f"Failed to send Etsy message for receipt {receipt_id}: {e}")
+                log.warning(
+                    f"Could not auto-send design link for receipt {receipt_id} "
+                    f"— seller should send manually"
+                )
+    except Exception as e:
+        log.warning(f"Failed to send Etsy message for receipt {receipt_id}: {e}")
 
 
 async def _handle_etsy_order_canceled(db: AsyncSession, data: dict, shop_id: str):

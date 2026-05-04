@@ -19,7 +19,10 @@ MAT_PCT = 0.03        # Outer mat border
 MAP_AREA_PCT = 0.80   # Map takes 80% of poster height (Mapiful-style)
 TEXT_AREA_PCT = 0.20  # Text/title takes 20%
 
-# Poster sizes at 300 DPI
+# Poster sizes at 300 DPI. Listed in portrait orientation; the
+# `landscape` flag on generate_road_poster transposes the dimensions
+# at render time so the same size string works for both orientations
+# without parallel "24x18"-style entries.
 POSTER_SIZES = {
     "18x24": (5400, 7200),
     "12x16": (3600, 4800),
@@ -35,23 +38,35 @@ MAP_RENDER_H = 2400
 # ── Color themes ───────────────────────────────────────────────────────
 POSTER_THEMES = {
     "city_art": {
-        # Palette locked to the MapController spec:
-        #   water  = #A7C7E7 (muted blue)
-        #   land   = #F8F8F6 (off-white)
-        #   parks  = #E8EFE7 (very light green)
-        # Mat stays one shade lighter than land so the poster sits
-        # on a visible but subtle backdrop.
-        "bg": (252, 252, 251), "map_bg": (248, 248, 246),
-        "title": (25, 25, 25), "subtitle": (100, 100, 100),
+        # Palette locked to the wall-art spec:
+        #   water       = #A7C7E7 (soft blue)
+        #   land/map_bg = #F5F5F5 (light neutral)
+        #   road_major  = #2B2B2B (bold dark)
+        #   road_minor  = #888888 (mid grey, #777-#999 spec band)
+        # parks  = #E8EFE7 (very light green)
+        # bg + map_bg are deliberately the same colour so the
+        # rectangular map area becomes invisible and the city polygon
+        # is the only visible silhouette on the poster (spec step 12:
+        # "outside the boundary must not be visible"). The clip-to-
+        # admin pass paints outside-polygon with map_bg, which now
+        # equals bg, so there is no rectangular ghost frame around
+        # the city.
+        "bg": (245, 245, 245), "map_bg": (245, 245, 245),  # #F5F5F5
+        "title": (28, 28, 28), "subtitle": (108, 108, 108),
         "border": (200, 200, 200), "line": (180, 180, 180),
-        # Four-tier road hierarchy per the spec: highways dark
-        # charcoal medium thickness, secondary grey thin, local
-        # very light grey. Matches Mapiful's weighting so arterials
-        # read as backbone and residentials as texture.
-        "road_major": (20, 20, 20),    # motorway, trunk
-        "road_arterial": (70, 70, 70), # primary, secondary
-        "road_collector": (125, 125, 125),# tertiary
-        "road_minor": (180, 180, 180), # residential, service
+        # Four-tier road hierarchy. Spec calls for:
+        #   highways  thick/dark   #222-#333   -> (45,45,45)
+        #   arterials medium       #444        -> (68,68,68)
+        #   collector medium-thin  #555-#666   -> (102,102,102)
+        #   local     thin/light   #777-#999   -> (136,136,136) ≈ #888
+        # Reviewer feedback: residentials at #B0B0B0 looked like a
+        # hairline texture, not solid lines, on the F5F5F5 mat. Mid-
+        # grey (#888) puts them squarely in the spec band and reads
+        # as a continuous grid at print scale.
+        "road_major": (43, 43, 43),    # #2B2B2B — motorway, trunk
+        "road_arterial": (68, 68, 68), # #444 — primary, secondary
+        "road_collector": (102, 102, 102), # #666 — tertiary
+        "road_minor": (136, 136, 136), # #888 — residential, service
         "map_mode": "light", "water": (167, 199, 231),   # #A7C7E7
         "water_edge": (110, 150, 190),
         "park": (232, 239, 231),                         # #E8EFE7
@@ -419,28 +434,45 @@ def _auto_frame(
             land_bounds = land_polygon.bounds  # (minx, miny, maxx, maxy)
             lx_min, ly_min = _to_mercator(land_bounds[1], land_bounds[0])
             lx_max, ly_max = _to_mercator(land_bounds[3], land_bounds[2])
-            land_w = (lx_max - lx_min) * 1.5
-            land_h = (ly_max - ly_min) * 1.5
-            if land_w > 0 and needed_w > land_w:
-                needed_w = land_w
-            if land_h > 0 and needed_h > land_h:
-                needed_h = land_h
-            # Recenter on land centroid since the road bbox might have
-            # pulled the centroid out over water.
-            land_cx = (lx_min + lx_max) * 0.5
-            land_cy = (ly_min + ly_max) * 0.5
-            cx = (cx + land_cx) * 0.5
-            cy = (cy + land_cy) * 0.5
+            # Show the full admin polygon with ~8% padding on each
+            # side. Previous "1.5× land bbox" was for a road-centric
+            # frame that allowed the city to overflow into water; the
+            # spec now wants the polygon ITSELF as the framed product
+            # with equal padding all the way around.
+            land_w_raw = lx_max - lx_min
+            land_h_raw = ly_max - ly_min
+            needed_w = land_w_raw * 1.08
+            needed_h = land_h_raw * 1.08
+            # Center exactly on the polygon centroid (Shapely centroid
+            # is the geometric center of mass — accurate even for
+            # irregular shapes like Toronto's L-shape; the road
+            # midpoint and the bbox midpoint can both drift far off
+            # the actual visual center for non-convex city outlines).
+            try:
+                ctr = land_polygon.centroid
+                cx, cy = _to_mercator(ctr.y, ctr.x)
+                centroid_src = "polygon centroid"
+            except Exception:
+                cx = (lx_min + lx_max) * 0.5
+                cy = (ly_min + ly_max) * 0.5
+                centroid_src = "bbox center (centroid fallback)"
             log.info(
-                f"Auto-frame: land bbox clamp "
-                f"{land_w/1.5/1000:.1f}x{land_h/1.5/1000:.1f}km "
-                f"-> viewport limited to 1.5× land"
+                f"Auto-frame: full-boundary fit "
+                f"{land_w_raw/1000:.1f}x{land_h_raw/1000:.1f}km "
+                f"+ 8% padding, centered on {centroid_src}"
             )
         except Exception as e:
             log.warning(f"Land-bbox clamp skipped: {e}")
 
-    # Fit to canvas aspect: take the larger of (width to contain x-span,
-    # width to contain y-span at canvas aspect).
+    # Fit to canvas aspect — letterbox always.
+    #
+    # Per the wall-art spec the FULL admin boundary must be visible
+    # with equal padding on all sides. The viewport is sized to
+    # contain both axes of the land span; whichever axis is shorter
+    # gets equal-margin padding from the canvas. The clip-to-admin
+    # mask paints the empty padding region in the theme's neutral
+    # land colour so it reads as paper around the city silhouette,
+    # not as fake water or fake suburbs.
     w_for_x = needed_w
     w_for_y = needed_h / img_aspect if img_aspect > 0 else needed_w
     meters_wide = max(w_for_x, w_for_y)
@@ -476,6 +508,202 @@ def _auto_frame(
     return new_lat, new_lng, meters_wide
 
 
+# ── Debug audit overlay ──────────────────────────────────────────────
+
+
+def _polygon_principal_axis_deg(polygon) -> float:
+    """Return the polygon's principal axis angle in degrees vs. east.
+
+    Computes the eigenvector of the largest covariance eigenvalue of
+    the polygon's vertices in WGS84 lon/lat space (after metric scaling
+    by cos(lat) so degrees of longitude don't dominate near the poles).
+    Used by the debug overlay to draw the city's natural tilt axis —
+    the line that explains why the polygon "looks rotated" even though
+    no rotation transform is applied anywhere in the rendering code.
+    """
+    try:
+        if hasattr(polygon, "geoms"):
+            polys = list(polygon.geoms)
+        else:
+            polys = [polygon]
+        xs: list[float] = []
+        ys: list[float] = []
+        for p in polys:
+            if not hasattr(p, "exterior") or p.exterior is None:
+                continue
+            for x, y in p.exterior.coords:
+                xs.append(x)
+                ys.append(y)
+        if len(xs) < 3:
+            return 0.0
+        mx = sum(xs) / len(xs)
+        my = sum(ys) / len(ys)
+        cos_lat = math.cos(math.radians(my))
+        # Centred + metric-scaled coordinates
+        cxs = [(x - mx) * cos_lat for x in xs]
+        cys = [(y - my) for y in ys]
+        # 2x2 covariance
+        sxx = sum(cx * cx for cx in cxs) / len(cxs)
+        syy = sum(cy * cy for cy in cys) / len(cys)
+        sxy = sum(cx * cy for cx, cy in zip(cxs, cys)) / len(cxs)
+        # Principal axis angle (degrees from east, +CCW).
+        angle_rad = 0.5 * math.atan2(2 * sxy, sxx - syy)
+        return math.degrees(angle_rad)
+    except Exception:
+        return 0.0
+
+
+def _draw_debug_overlay(
+    img,
+    draw,
+    to_px,
+    *,
+    land_polygon=None,
+    geocoder_bbox: tuple[float, float, float, float] | None = None,
+    pin_lat: float | None = None,
+    pin_lng: float | None = None,
+    img_w: int,
+    img_h: int,
+) -> None:
+    """Paint the audit overlay on top of the rendered map.
+
+    Draws (in order):
+      1. Geocoder bbox outline — blue dashed rectangle
+      2. Admin boundary outline — solid red, ~0.4% of canvas
+      3. Boundary centroid + principal-axis line — magenta
+      4. City-centre cross — green
+      5. North arrow + "N" label — top-left corner, with an
+         on-canvas note if the polygon's principal axis is non-zero
+    """
+    # 1. Geocoder bbox — dashed outline
+    if geocoder_bbox is not None and len(geocoder_bbox) == 4:
+        west, south, east, north = geocoder_bbox
+        corners = [
+            to_px(west, north), to_px(east, north),
+            to_px(east, south), to_px(west, south),
+        ]
+        # Dashed rectangle: short-segment alternation
+        for i in range(4):
+            x1, y1 = corners[i]
+            x2, y2 = corners[(i + 1) % 4]
+            steps = 36
+            for k in range(steps):
+                if k % 2 == 0:
+                    t1 = k / steps
+                    t2 = (k + 1) / steps
+                    draw.line(
+                        [
+                            (x1 + (x2 - x1) * t1, y1 + (y2 - y1) * t1),
+                            (x1 + (x2 - x1) * t2, y1 + (y2 - y1) * t2),
+                        ],
+                        fill=(40, 90, 200), width=3,
+                    )
+
+    # 2. Admin boundary — solid red outline
+    principal_deg = 0.0
+    boundary_centroid_px = None
+    if land_polygon is not None:
+        try:
+            polys = (
+                list(land_polygon.geoms)
+                if hasattr(land_polygon, "geoms")
+                else [land_polygon]
+            )
+            for poly in polys:
+                if not hasattr(poly, "exterior") or poly.exterior is None:
+                    continue
+                ring_px = [to_px(x, y) for x, y in poly.exterior.coords]
+                if len(ring_px) >= 3:
+                    draw.line(
+                        ring_px + [ring_px[0]],
+                        fill=(220, 30, 30), width=4,
+                    )
+            principal_deg = _polygon_principal_axis_deg(land_polygon)
+            try:
+                c = land_polygon.centroid
+                boundary_centroid_px = to_px(c.x, c.y)
+            except Exception:
+                boundary_centroid_px = None
+        except Exception:
+            pass
+
+    # 3. Boundary centroid + principal-axis line (magenta)
+    if boundary_centroid_px is not None:
+        cx, cy = boundary_centroid_px
+        # Length: 35% of canvas
+        L = min(img_w, img_h) * 0.35
+        ang = math.radians(-principal_deg)  # canvas y is flipped
+        dx = math.cos(ang) * L / 2
+        dy = math.sin(ang) * L / 2
+        draw.line(
+            [(cx - dx, cy - dy), (cx + dx, cy + dy)],
+            fill=(200, 30, 200), width=4,
+        )
+        # Centroid dot
+        r = 8
+        draw.ellipse(
+            [cx - r, cy - r, cx + r, cy + r],
+            fill=(200, 30, 200),
+        )
+
+    # 4. City-centre cross (green) — the geocoder pin lat/lon
+    if pin_lat is not None and pin_lng is not None:
+        px, py = to_px(pin_lng, pin_lat)
+        L = 24
+        draw.line([(px - L, py), (px + L, py)], fill=(20, 180, 60), width=4)
+        draw.line([(px, py - L), (px, py + L)], fill=(20, 180, 60), width=4)
+        r = 10
+        draw.ellipse(
+            [px - r, py - r, px + r, py + r],
+            outline=(20, 180, 60), width=4,
+        )
+
+    # 5. North arrow — top-left corner. Always points straight up
+    #    because the canvas is north-up. If you see this arrow tilted
+    #    on the rendered image, that proves a rotation bug; if it's
+    #    vertical, the canvas is north-up by definition.
+    arrow_x = 80
+    arrow_y_base = 120
+    arrow_len = 70
+    arrow_top = (arrow_x, arrow_y_base - arrow_len)
+    arrow_bot = (arrow_x, arrow_y_base)
+    draw.line([arrow_bot, arrow_top], fill=(0, 0, 0), width=6)
+    # Arrowhead (triangle)
+    draw.polygon(
+        [
+            (arrow_top[0] - 12, arrow_top[1] + 18),
+            (arrow_top[0] + 12, arrow_top[1] + 18),
+            arrow_top,
+        ],
+        fill=(0, 0, 0),
+    )
+    # "N" label above the arrow
+    try:
+        font = _load_font(28, bold=True)
+    except Exception:
+        font = None
+    if font is not None:
+        draw.text(
+            (arrow_x - 8, arrow_top[1] - 36), "N",
+            fill=(0, 0, 0), font=font,
+        )
+
+    # On-canvas note: principal axis angle (the geometric truth)
+    try:
+        small = _load_font(20, bold=False)
+    except Exception:
+        small = None
+    if small is not None:
+        note = (
+            f"north-up: yes  bearing=0\n"
+            f"principal axis: {principal_deg:+.1f}° (real geometry)"
+        )
+        draw.multiline_text(
+            (arrow_x + 60, arrow_y_base - arrow_len),
+            note, fill=(60, 60, 60), font=small, spacing=4,
+        )
+
+
 # ── Road rendering ───────────────────────────────────────────────────
 
 def render_map_image(
@@ -493,6 +721,9 @@ def render_map_image(
     parks_data: dict | None = None,
     land_polygon=None,
     clip_to_admin: bool = True,
+    debug_overlay: bool = False,
+    geocoder_bbox: tuple[float, float, float, float] | None = None,
+    place_type: str = "city",
 ) -> tuple[Image.Image, tuple[float, float]]:
     """Render road geometry directly onto a PIL Image.
 
@@ -501,6 +732,14 @@ def render_map_image(
     Returns (image, pin_px) where pin_px is the pixel location of
     (pin_lat, pin_lng) inside the rendered image. When pin coords aren't
     given, defaults to the geographic center of the viewport.
+
+    `debug_overlay=True` draws an audit overlay on top of the finished
+    map: north arrow, admin boundary outline, geocoder bbox outline,
+    centre cross, and the polygon's principal-axis line. Used to verify
+    that the perceived "tilt" is the polygon's natural orientation, not
+    a rotation bug. `geocoder_bbox` (W,S,E,N) is the bbox the geocoder
+    returned, drawn as a dashed rectangle for direct comparison with
+    the boundary outline.
     """
     bg_color = theme.get("map_bg", (255, 255, 255))
     img = Image.new("RGB", (img_w, img_h), bg_color)
@@ -544,9 +783,76 @@ def render_map_image(
                 carved = admin_valid.difference(water_union)
                 if not carved.is_empty:
                     natural_land = carved
-                    log.info("Natural land mask: carved water polygons from admin boundary")
+                    # Diagnostic: vertex counts before/after the
+                    # water carve. Lets us confirm full-detail
+                    # polygons aren't being silently smoothed by
+                    # Shapely's difference operation. Toronto's
+                    # admin polygon should have 1000+ vertices on
+                    # the input side; carving the lake should keep
+                    # that count roughly intact for the northern
+                    # boundary (no water near Steeles).
+                    def _count_verts(g):
+                        if hasattr(g, "geoms"):
+                            return sum(_count_verts(p) for p in g.geoms)
+                        if hasattr(g, "exterior") and g.exterior is not None:
+                            return len(g.exterior.coords) + sum(
+                                len(r.coords) for r in g.interiors
+                            )
+                        return 0
+                    log.info(
+                        "Natural land mask: %d -> %d vertices "
+                        "after water carve",
+                        _count_verts(land_polygon),
+                        _count_verts(natural_land),
+                    )
         except Exception as e:
             log.warning(f"Natural-land carve skipped: {e}")
+
+    # Default framing to natural_land instead of the full admin
+    # polygon. Toronto's admin boundary extends ~2km into Lake
+    # Ontario for the harbour + Toronto Islands; using the unmodified
+    # admin polygon for framing makes the lake-extension drive the
+    # bbox and the city ends up squashed into the bottom 60% of the
+    # poster with empty water filling the rest. natural_land has
+    # the water carved out so the framer sees the urban land bbox.
+    #
+    # When natural_land splits into multiple pieces (multi-island
+    # archipelago, or a city that the carve fragmented because of
+    # internal water bodies) we collapse to the dominant piece ONLY
+    # when it accounts for ≥70% of the total land area. Otherwise
+    # keep the full multi-piece geometry so genuinely two-sided
+    # cities like Halifax (peninsula + Dartmouth, ≈55/45) keep
+    # both sides framed with the harbour between them.
+    #
+    # Pin-containing-piece logic below still runs and refines this
+    # further when a pin is provided.
+    if natural_land is not None:
+        try:
+            framing_land = natural_land
+            pieces = (
+                list(natural_land.geoms)
+                if hasattr(natural_land, "geoms")
+                else [natural_land]
+            )
+            if len(pieces) > 1:
+                total_area = sum(getattr(p, "area", 0.0) for p in pieces)
+                largest = max(pieces, key=lambda p: getattr(p, "area", 0.0))
+                largest_area = getattr(largest, "area", 0.0)
+                if total_area > 0 and largest_area / total_area >= 0.70:
+                    framing_land = largest
+                    log.info(
+                        f"Framing land: {len(pieces)} pieces, dominant "
+                        f"({largest_area / total_area * 100:.0f}% of total) "
+                        f"-> tight bbox to dominant piece"
+                    )
+                else:
+                    log.info(
+                        f"Framing land: {len(pieces)} comparable pieces, "
+                        f"largest is {largest_area / max(total_area, 1e-9) * 100:.0f}% "
+                        f"-> keeping full natural_land bbox"
+                    )
+        except Exception as e:
+            log.warning(f"Largest-piece framing selection skipped: {e}")
 
     # Pick the pin-containing piece for framing. The render mask still
     # uses the full natural_land so multi-island villages keep all
@@ -659,26 +965,19 @@ def render_map_image(
             land_rings_px = []
 
     apply_ocean_mask = False
-    if land_rings_px:
+    if land_rings_px and not clip_to_admin:
+        # Ocean mask path — only used when the caller hasn't asked
+        # for strict admin clipping. Per the wall-art spec, city
+        # posters always strict-clip (outside admin polygon =
+        # neutral background, never water). The ocean mask is
+        # retained here as a fallback for legacy callers that pass
+        # clip_to_admin=False.
         canvas_area = img_w * img_h
         total_land_area = sum(
             abs(_ring_signed_area(r)) for r in land_rings_px
         )
         land_ratio = total_land_area / canvas_area if canvas_area else 0
 
-        # Inland-city guard. The original rule — "any land polygon
-        # covering less than 75% of the canvas is an island/peninsula
-        # and should be clipped" — breaks on inland cities like
-        # Calgary whose admin boundaries follow township section
-        # lines (giving a rectangular staircase outline). Without
-        # this guard we paint the "outside" of the city limits with
-        # water colour and the poster looks like Calgary is floating
-        # in an ocean.
-        #
-        # Real islands/peninsulas always have a LARGE water polygon
-        # (ocean or big lake) nearby — that's the definition of a
-        # coastline. We only apply the mask when water_data contains
-        # at least one polygon that takes up >=8% of the canvas.
         has_large_water = False
         if water_data:
             for coords, _wt, _wn in water_data.get("water_polygons", []):
@@ -693,21 +992,16 @@ def render_map_image(
         if 0 < land_ratio < 0.75 and has_large_water:
             apply_ocean_mask = True
             log.info(
-                f"Ocean mask will be applied post-draw: land "
-                f"{land_ratio*100:.1f}% of canvas ({len(land_rings_px)} polygons), "
-                f"large water polygon detected"
+                f"Ocean mask (legacy path): land "
+                f"{land_ratio*100:.1f}% of canvas, large water polygon "
+                f"detected, clip_to_admin=False"
             )
-        elif 0 < land_ratio < 0.75 and not has_large_water:
-            log.info(
-                f"Ocean mask skipped: land {land_ratio*100:.1f}% "
-                f"but no large water polygon — treating as inland city "
-                f"(admin boundary is not a coastline)"
-            )
-        else:
-            log.info(
-                f"Ocean mask skipped: land {land_ratio*100:.1f}% "
-                f"of canvas (>=75%, treating as inland)"
-            )
+    elif land_rings_px and clip_to_admin:
+        log.info(
+            "Ocean mask suppressed: clip_to_admin=True — strict "
+            "admin clipping renders outside-polygon as neutral "
+            "background per wall-art spec"
+        )
 
     # ── Draw water polygons (inland lakes, rivers, bays) ──
     # Universal "ONE dominant feature" rule: rank water polygons by
@@ -919,12 +1213,13 @@ def render_map_image(
         if bbox_area > 2.0:
             # Province / island: residential grid is noise at this
             # scale so it's dropped; the major/arterial hierarchy
-            # carries the whole poster. Weights bumped 6/4 -> 10/6
-            # so the Trans-Canada / highway 125 / Cabot Trail read
-            # as a clear backbone at 300 DPI instead of hairlines
-            # on an otherwise empty island.
-            minor_mult, major_mult = 5, 10
-            minor_min, major_min = 3, 6
+            # carries the whole poster. The previous 10/6 weights
+            # rendered the Trans-Canada / Hwy 125 / Cabot Trail as
+            # bold black slabs that visually dominated Cape Breton.
+            # Trimmed to 7/4 — backbone reads clearly without
+            # overpowering the island silhouette.
+            minor_mult, major_mult = 4, 7
+            minor_min, major_min = 2, 4
             min_residential_px = 440
             drop_all_residentials = True
         elif bbox_area > 0.5:
@@ -934,17 +1229,23 @@ def render_map_image(
             minor_min, major_min = 3, 5
             min_residential_px = 150
         elif bbox_area > 0.1:
-            # Large city (Calgary, Edmonton): hairline residentials,
-            # secondary avenues visible as a mid-weight tier.
-            # Major weight trimmed 9 -> 8 so primaries don't over-
-            # dominate the village grid on a gallery poster.
+            # Large city (Toronto, Calgary, Edmonton). Reviewer
+            # feedback called the residential grid hairline / not
+            # solid: minor_min lifted 2 -> 3 px so residentials are
+            # ≥ 6.75 px in print (≈ 0.57 mm at 300 DPI on 18″
+            # poster). Combined with the #888 road_minor colour
+            # (was #B0B0B0), the grid now reads as continuous
+            # solid lines instead of a faint texture. major_min
+            # 3 -> 4 so the casing trick still has clean room to
+            # erase minor strokes at intersections.
             minor_mult, major_mult = 4, 8
-            minor_min, major_min = 2, 3
+            minor_min, major_min = 3, 4
             min_residential_px = 90
         elif bbox_area > 0.03:
-            # Medium city / tight metro crop.
+            # Medium city / tight metro crop. Same minor_min lift
+            # so the grid stays solid when zoomed in.
             minor_mult, major_mult = 5, 9
-            minor_min, major_min = 2, 4
+            minor_min, major_min = 3, 4
             min_residential_px = 70
         elif bbox_area > 0.01:
             # Halifax-sized downtown. Primary weight trimmed
@@ -1180,7 +1481,17 @@ def render_map_image(
     # don't double-clip.
     if land_rings_px and not apply_ocean_mask and clip_to_admin:
         try:
-            bg_color = theme.get("map_bg", (255, 255, 255))
+            # For islands the area outside the boundary IS the ocean,
+            # so paint it with the water colour instead of the mat.
+            # Cities + inland regions paint mat (the wall-art look
+            # where the polygon silhouette is the visible frame).
+            # `place_type=="lake"` produces a map of a body of water
+            # and follows the same "outside = water" rule.
+            is_water_around = place_type in ("island", "lake")
+            if is_water_around:
+                bg_color = theme.get("water", (167, 199, 231))
+            else:
+                bg_color = theme.get("map_bg", (255, 255, 255))
             SS = 2
             hires_mask = Image.new("L", (img_w * SS, img_h * SS), 255)
             hires_draw = ImageDraw.Draw(hires_mask)
@@ -1192,9 +1503,50 @@ def render_map_image(
             )
             bg_layer = Image.new("RGB", (img_w, img_h), bg_color)
             img.paste(bg_layer, (0, 0), clip_mask)
+            # Trace the boundary in a visibly dark line directly on top
+            # of the clipped image. Without this, the only "edge"
+            # between the polygon and the mat is the implicit colour
+            # transition — which print + anti-aliasing smooth into a
+            # clean line even when the polygon has 3000 natural
+            # vertices. Drawing the outline explicitly makes the real
+            # boundary's irregularity visible (Steeles Ave's small
+            # jogs, the Etobicoke Creek meander, the Pickering border
+            # zig-zag).
+            #
+            # Reviewer feedback: the previous (200,200,200) on
+            # (245,245,245) outline was 45 RGB units of contrast —
+            # invisible at print scale. Locked to the road_minor
+            # colour (~#888 in city_art) so the boundary reads as a
+            # real wall-art line, and bumped width to 0.22% of
+            # canvas (≈ 5 px on the 2400 px render → ~12 px / ~1 mm
+            # in print, the threshold for visible detail).
+            # Skip the explicit boundary outline for islands /
+            # lakes — the white-land vs. blue-water contrast already
+            # draws the coastline at full polygon detail. Adding a
+            # mid-grey line on top would compete with that contrast
+            # and read as redundant. Inland cities still get the
+            # outline because their mat/inside transition is too
+            # subtle to read without it.
+            if not is_water_around:
+                outline_color = theme.get(
+                    "road_minor", theme.get("border", (140, 140, 140))
+                )
+                outline_width = max(2, int(min(img_w, img_h) * 0.0022))
+                for ring_px in land_rings_px:
+                    if len(ring_px) < 3:
+                        continue
+                    # No `joint="curve"` here — joint smoothing on a
+                    # fine boundary line WOULD round off the very
+                    # Steeles-Ave jogs we want visible. Plain mitred
+                    # joints keep the angles intact.
+                    draw.line(
+                        ring_px + [ring_px[0]],
+                        fill=outline_color,
+                        width=outline_width,
+                    )
             log.info(
                 "Inland-city clip mask applied: features outside the "
-                "admin boundary erased onto map_bg"
+                "admin boundary erased onto map_bg + boundary outlined"
             )
         except Exception as e:
             log.warning(f"Inland-city clip mask failed: {e}", exc_info=True)
@@ -1204,6 +1556,27 @@ def render_map_image(
         pin_px = to_px(pin_lng, pin_lat)
     else:
         pin_px = (img_w / 2, img_h / 2)
+
+    # Audit overlay (spec step 7). Only drawn when explicitly requested
+    # by the caller — debug_overlay=True. Renders on top of the finished
+    # map so the operator can visually confirm:
+    #   * the polygon outline matches the searched city
+    #   * the canvas is north-up (north arrow points straight up)
+    #   * the geocoder bbox vs polygon bbox alignment
+    #   * the city centre lies inside the polygon
+    #   * the polygon's principal axis (real geographic tilt) is what
+    #     reads as "rotation" — and it's not produced by any code, just
+    #     by the city's actual shape.
+    if debug_overlay:
+        _draw_debug_overlay(
+            img, draw, to_px,
+            land_polygon=land_polygon,
+            geocoder_bbox=geocoder_bbox,
+            pin_lat=pin_lat,
+            pin_lng=pin_lng,
+            img_w=img_w,
+            img_h=img_h,
+        )
 
     return img, pin_px
 
@@ -1276,10 +1649,20 @@ def compose_poster(
     show_coordinates: bool = True,
     color_theme: str = "city_art",
     pin_image_px: tuple[float, float] | None = None,
+    landscape: bool = False,
 ) -> bytes:
-    """Compose a print-ready poster from rendered map image + text."""
+    """Compose a print-ready poster from rendered map image + text.
+
+    `landscape=True` swaps the poster dimensions so a wide city like
+    Toronto (50 km E-W vs 25 km N-S) fills the canvas naturally
+    instead of leaving large vertical whitespace in a portrait frame.
+    The 80%-map / 20%-text split below stays intact — text just sits
+    in a wider, shorter band.
+    """
     theme = POSTER_THEMES.get(color_theme, POSTER_THEMES["city_art"])
     poster_w, poster_h = POSTER_SIZES.get(board_size, POSTER_SIZES["18x24"])
+    if landscape and poster_h > poster_w:
+        poster_w, poster_h = poster_h, poster_w
 
     poster = Image.new("RGB", (poster_w, poster_h), theme["bg"])
     draw = ImageDraw.Draw(poster)
@@ -1435,6 +1818,10 @@ def generate_road_poster(
     parks_data: dict | None = None,
     land_polygon=None,
     fit_bounds_bbox: tuple[float, float, float, float] | None = None,
+    debug_overlay: bool = False,
+    geocoder_bbox: tuple[float, float, float, float] | None = None,
+    landscape: bool = False,
+    place_type: str = "city",
 ) -> bytes | None:
     """Full pipeline: render roads → compose poster → PNG bytes.
 
@@ -1443,6 +1830,12 @@ def generate_road_poster(
     `fit_bounds_bbox` (west, south, east, north) overrides the
     auto-framer when provided — used by the MapController for
     islands / provinces whose iconic outline IS the product.
+
+    `debug_overlay=True` paints the audit overlay on top of the map
+    (north arrow, boundary outline, bbox outline, centre cross,
+    principal-axis line). `geocoder_bbox` is the bbox the geocoder
+    returned for the place — drawn dashed so the operator can compare
+    it against the polygon-derived frame.
     """
     theme = POSTER_THEMES.get(color_theme, POSTER_THEMES["city_art"])
     log.info(f"Road poster: area={bbox_area:.4f} theme={color_theme} roads={bool(streets_data)}")
@@ -1469,22 +1862,24 @@ def generate_road_poster(
     auto_compose = True
     if fit_bounds_bbox is not None:
         import math
+        # Spec step 6: when only the geocoder bbox is available,
+        # pad by 5–10%. Centralised in map_controller so all callers
+        # honour the same range and tests can pin the value.
+        from app.services.map_controller import (
+            DEFAULT_BBOX_PAD_PCT, MAX_BBOX_PAD_PCT,
+        )
         west, south, east, north = fit_bounds_bbox
         fit_center_lat = (south + north) * 0.5
         fit_center_lng = (west + east) * 0.5
-        # Visual-balance engine (spec Step 3B): target 75-85% land
-        # coverage. Start at 8% padding, then pick whichever of the
-        # width/height fit produces the tighter frame so the island
-        # dominates regardless of whether the bbox is wide or tall.
         lon_span_deg = abs(east - west)
         lat_span_deg = abs(north - south)
         meters_per_deg_lon = 111_320.0 * math.cos(math.radians(fit_center_lat))
         meters_per_deg_lat = 110_540.0
         bbox_width_m = lon_span_deg * meters_per_deg_lon
         bbox_height_m = lat_span_deg * meters_per_deg_lat
-        pad = 1.08  # 8% default per updated spec (was 12%)
-        # Canvas is square (2400×2400) at render time. Take the
-        # larger of width-fit / height-fit so neither axis clips.
+        # Default 7.5%, capped at 10% per the spec. Take the larger of
+        # width/height fits so neither axis clips on a square canvas.
+        pad = 1.0 + min(MAX_BBOX_PAD_PCT, DEFAULT_BBOX_PAD_PCT)
         viewport_meters = int(max(bbox_width_m, bbox_height_m) * pad)
         auto_compose = False
         land_fill = (
@@ -1495,9 +1890,18 @@ def generate_road_poster(
             f"fit_bounds: bbox {west:.3f},{south:.3f},{east:.3f},{north:.3f} "
             f"-> centre=({fit_center_lat:.4f},{fit_center_lng:.4f}) "
             f"viewport={viewport_meters/1000:.1f}km "
-            f"land_fill={land_fill*100:.1f}%"
+            f"pad={pad:.2f} land_fill={land_fill*100:.1f}%"
         )
 
+    # Spec step 5: clip every rendered layer to the city boundary so
+    # surrounding municipalities (Mississauga / Markham / Vaughan for a
+    # Toronto search) cannot bleed into the poster. The previous build
+    # forced clip_to_admin=False on the `city_art` theme to preserve
+    # the Mapiful-style rectangle look, but that left features from
+    # the broader bbox visible whenever the geocoder returned a metro
+    # polygon. The render_map_image clip mask paints the area outside
+    # the admin polygon with map_bg, which keeps the rectangle frame
+    # *and* matches the searched city.
     map_img, pin_image_px = render_map_image(
         streets_data=streets_data,
         water_data=water_data,
@@ -1511,11 +1915,39 @@ def generate_road_poster(
         auto_compose=auto_compose,
         parks_data=parks_data,
         land_polygon=land_polygon,
-        # Mapiful-style posters frame the full rectangle — admin
-        # boundaries are not part of the look. Keep the ocean mask
-        # (coastal cities need it) but skip the inland-city crop.
-        clip_to_admin=(color_theme != "city_art"),
+        debug_overlay=debug_overlay,
+        geocoder_bbox=geocoder_bbox,
+        place_type=place_type,
+        # Strict-clip to the admin boundary. Per the wall-art spec
+        # (Toronto poster regression: water polygons for Lake Ontario
+        # extend across the whole canvas and bleed past the city,
+        # painting the suburbs above Toronto blue). Inside admin: real
+        # geography (city + its harbour). Outside admin: theme map_bg
+        # (light neutral). When the place is a coastal island /
+        # peninsula and the ocean mask was applied earlier, the inland
+        # clip is bypassed (see render_map_image: the two masks are
+        # mutually exclusive — ocean wins for islands, inland clip
+        # wins for cities).
+        clip_to_admin=True,
     )
+
+    # Spec step 12 — pre-export validation. The render-time validator
+    # only needs the pin pixel position: if it falls outside the
+    # rendered map image we know the searched centre is not in the
+    # final frame. The poster compositor preserves aspect ratio when
+    # cropping the map to the layout area, so a pin that's inside the
+    # render image is guaranteed inside the printed frame too (the
+    # pin-image_px output is rejected by the compositor if it lands
+    # outside the cropped area, which is checked there as well).
+    pin_px_x, pin_px_y = pin_image_px
+    if not (
+        0 <= pin_px_x <= map_img.width and 0 <= pin_px_y <= map_img.height
+    ):
+        log.warning(
+            "Export validation: searched centre fell outside render "
+            f"frame (pin_px={pin_image_px}, render={map_img.size}). "
+            "Auto-frame may have drifted; consider tightening the bbox."
+        )
 
     # Compose into poster — pin draws at true location, not center
     poster_bytes = compose_poster(
@@ -1527,6 +1959,7 @@ def generate_road_poster(
         show_coordinates=show_coordinates,
         color_theme=color_theme,
         pin_image_px=pin_image_px,
+        landscape=landscape,
     )
     log.info(f"Road poster: {len(poster_bytes)} bytes, {road_count} roads")
     return poster_bytes

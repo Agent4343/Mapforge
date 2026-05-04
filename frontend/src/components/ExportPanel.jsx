@@ -449,9 +449,17 @@ export default function ExportPanel({
                   <button className="btn btn-secondary" disabled={!!downloading} onClick={() => handleDownloadWithFeedback(onDownloadPreview, "preview")}>
                     {dlLabel("Watermarked Preview", "preview")}
                   </button>
-                  <button className="btn btn-secondary" disabled={!!downloading} onClick={() => handleDownloadWithFeedback(onDownload, "svg")}>
-                    {dlLabel("SVG Source", "svg")}
-                  </button>
+                  {/* Wall-art posters ship as PNG only — the static
+                      poster path's boundary clipping isn't replicated
+                      in the SVG generator, so we don't expose an SVG
+                      download whose framing wouldn't match the
+                      printed PNG. CNC products (style=outline /
+                      engraved) keep this button via svg_available. */}
+                  {result.svg_available && (
+                    <button className="btn btn-secondary" disabled={!!downloading} onClick={() => handleDownloadWithFeedback(onDownload, "svg")}>
+                      {dlLabel("SVG Source", "svg")}
+                    </button>
+                  )}
                   {result.dxf_available && (
                     <button className="btn btn-secondary" disabled={!!downloading} onClick={() => handleDownloadWithFeedback(onDownloadDXF, "dxf")}>
                       {dlLabel("DXF (VCarve/CAM)", "dxf")}

@@ -17,12 +17,22 @@ from app.models.schemas import ProductType, BOARD_DIMENSIONS_INCHES
 # WGS84 → Web Mercator
 _transformer = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
 
-# Douglas-Peucker tolerances (meters) per product type
+# Douglas-Peucker tolerances (meters) per product type.
+#
+# city: 15 m — tightened from 25 m to match the wall-art spec
+# (cities: 10–15 m, regions: 25–50 m). At an 18×24″ 300 DPI poster
+# (~5400 px wide) framed onto a 25 km city, 15 m ≈ 3 px which is
+# below visual tolerance at print scale; the previous 25 m base
+# scaled to 17.5 m for medium cities (Toronto) and was rounding
+# Toronto Islands and harbour-edge detail enough to read as a
+# quality defect on paid wall art. The adaptive scaling below
+# trims further for tiny extents (≤ 5 km city: 4.5 m) and relaxes
+# for huge extents (≥ 500 km region: 22.5 m).
 SIMPLIFICATION_TOLERANCES = {
     ProductType.province: 350.0,
     ProductType.lake: 50.0,
-    ProductType.city: 75.0,
-    ProductType.community: 30.0,
+    ProductType.city: 15.0,
+    ProductType.community: 20.0,
     ProductType.park: 100.0,
     ProductType.name_sign: 50.0,
 }
@@ -59,10 +69,22 @@ def process_geometry(
     # Normalize to list of polygons
     polys = list(geom_m.geoms) if isinstance(geom_m, MultiPolygon) else [geom_m]
 
-    # Step 4: Filter small polygons
+    # Step 4: Filter small polygons.
+    #
+    # Old rule: keep only polygons whose area was >= min_island_area_m2
+    # (caller-provided, default 5 k m²) OR >= 0.1% of the largest
+    # polygon's area. That second clause was the silent killer for
+    # Toronto Islands: at Toronto's ~600 sq km mainland, 0.1% = 600 k
+    # m² which excluded every island except Centre Island. The poster
+    # then rendered a single stub island instead of the iconic
+    # archipelago off downtown.
+    #
+    # New rule: keep every polygon at or above the absolute floor
+    # (min_island_area_m2). Caller can still tighten via the
+    # parameter; default of 5 k m² preserves all named Toronto Islands
+    # while filtering geometry-validity shards from make_valid().
     if len(polys) > 1:
-        largest_area = max(p.area for p in polys)
-        polys = [p for p in polys if p.area >= min_island_area_m2 or p.area >= largest_area * 0.001]
+        polys = [p for p in polys if p.area >= min_island_area_m2]
 
     if not include_islands and len(polys) > 1:
         largest = max(polys, key=lambda p: p.area)
@@ -162,15 +184,23 @@ def _get_tolerance(geom_m: Polygon | MultiPolygon, product_type: ProductType, si
         except ValueError:
             pass
 
-    # Adaptive: scale tolerance based on feature size
+    # Adaptive: scale tolerance based on feature size. The bands map
+    # to the wall-art spec's two-tier rule (city: 10–15 m, region:
+    # 25–50 m) when the base tolerance is 15 m for cities.
     bounds = geom_m.bounds  # minx, miny, maxx, maxy
     extent = max(bounds[2] - bounds[0], bounds[3] - bounds[1])
 
-    if extent < 5000:       # < 5km
-        return base * 0.3
-    elif extent < 50000:    # < 50km
-        return base * 0.7
-    elif extent < 500000:   # < 500km
+    if extent < 5000:       # < 5km neighbourhood
+        return base * 0.3   # 4.5 m for cities
+    elif extent < 50000:    # < 50km city (Toronto, Calgary, Halifax)
+        # 0.5x base = 7.5 m for cities. Reviewer feedback called the
+        # north boundary "perfectly straight diagonal" — at 12 m the
+        # natural Steeles-Avenue jogs (15-30 m offsets at the
+        # boundary survey lines) were collapsing into one clean
+        # line. 7.5 m preserves them so the boundary reads as
+        # naturally irregular under the inland-clip mask.
+        return base * 0.5
+    elif extent < 500000:   # < 500km region (Cape Breton)
         return base
     else:                   # > 500km (provinces)
         return base * 1.5

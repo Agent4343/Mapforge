@@ -176,6 +176,33 @@ class DesignCredit(Base):
     seller = relationship("User", foreign_keys=[seller_id])
 
 
+class WebhookEvent(Base):
+    """Idempotency log for incoming webhooks (Etsy, Stripe).
+
+    Every webhook delivery is keyed by (source, event_id). A duplicate
+    delivery trips the UNIQUE constraint, which the webhook handler
+    catches as an IntegrityError and returns 200 without re-running any
+    side effects. Combined with a single end-of-handler commit, this
+    makes the whole webhook flow exactly-once.
+
+    `event_id`:
+      * Etsy: `webhook-id` header (guaranteed unique per delivery attempt
+        for a given event; retries keep the same id).
+      * Stripe: `event.id` from the verified Event object.
+    """
+    __tablename__ = "webhook_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source = Column(String(20), nullable=False)
+    event_id = Column(String(255), nullable=False)
+    event_type = Column(String(100), nullable=True)
+    received_at = Column(DateTime(timezone=True), default=_utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("source", "event_id", name="uq_webhook_source_event"),
+    )
+
+
 class AppSettings(Base):
     """Key-value store for application settings (Etsy API keys, etc.).
 

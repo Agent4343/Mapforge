@@ -3,6 +3,22 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { buildMinimalStyle, PALETTE } from "../services/mapStyle.js";
+import {
+  fetchCityBoundary,
+  geoJsonBoundsLngLat,
+  donutMaskFromBoundary,
+} from "../services/cityBoundary.js";
+
+// Poster mat colour (matches static_map_poster.POSTER_THEMES.city_art.bg).
+// The donut mask paints every pixel outside the city with this colour
+// so the live MapLibre preview matches what the backend exports.
+const POSTER_MAT_COLOR = "#F5F5F5";
+
+// Spec step 6: when no admin boundary is available we frame from the
+// geocoder bbox plus a small pad. 7.5% mirrors the backend default
+// (map_controller.DEFAULT_BBOX_PAD_PCT) so screen and printed posters
+// match.
+const FALLBACK_BBOX_PAD_PCT = 0.075;
 
 // ── Framing rules (verbatim from spec) ────────────────────────────────
 
@@ -85,6 +101,7 @@ export default function MapLibrePoster({
   const posterRef = useRef(null);
   const mapRef = useRef(null);
   const markerRef = useRef(null);
+  const boundaryRef = useRef(null);  // last-loaded GeoJSON Feature
   const [mapReady, setMapReady] = useState(false);
   const [mapError, setMapError] = useState(null);
 
@@ -92,6 +109,8 @@ export default function MapLibrePoster({
     if (!mapContainerRef.current || !maptilerKey || !place) return;
 
     setMapError(null);
+    let cancelled = false;
+    boundaryRef.current = null;
     const style = buildMinimalStyle(maptilerKey);
     let map;
     try {
@@ -110,8 +129,30 @@ export default function MapLibrePoster({
 
     mapRef.current = map;
 
-    map.on("load", () => {
-      applyFraming(map, place);
+    // Fetch the boundary in parallel with map load. When it arrives
+    // we re-frame from its GeoJSON bbox and add a subtle outline.
+    // Falls back to the plan bbox when the backend has no polygon.
+    const boundaryPromise = (async () => {
+      if (place.osm_id == null) return null;
+      try {
+        return await fetchCityBoundary(place.osm_id, place.osm_type || "relation");
+      } catch (e) {
+        // Network / 5xx — log and let framing fall back to the bbox.
+        // Do not surface as a blocking error; the poster still renders.
+        // eslint-disable-next-line no-console
+        console.warn("Boundary fetch failed; using bbox fallback:", e);
+        return null;
+      }
+    })();
+
+    map.on("load", async () => {
+      if (cancelled) return;
+      const boundary = await boundaryPromise;
+      if (cancelled) return;
+      boundaryRef.current = boundary;
+      applyFraming(map, place, boundary);
+      applyBoundaryLayer(map, boundary);
+
       if (markerRef.current) {
         markerRef.current.remove();
         markerRef.current = null;
@@ -144,18 +185,24 @@ export default function MapLibrePoster({
     });
 
     return () => {
+      cancelled = true;
       if (markerRef.current) markerRef.current.remove();
       map.remove();
       mapRef.current = null;
+      boundaryRef.current = null;
       setMapReady(false);
     };
   }, [place, maptilerKey]);
 
   // When `place` changes on an existing map, re-frame without rebuild.
+  // We deliberately don't re-fetch the boundary here — the parent
+  // effect tears down and rebuilds the map for a new place, so this
+  // path only runs for in-place updates (e.g. style refresh) where
+  // the cached boundaryRef is still correct.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady || !place) return;
-    applyFraming(map, place);
+    applyFraming(map, place, boundaryRef.current);
   }, [place, mapReady]);
 
   const handleExport = useCallback(() => {
@@ -325,17 +372,117 @@ export default function MapLibrePoster({
 
 // ── Framing helper (applies the MapPlan to a live map instance) ──────
 
-function applyFraming(map, place) {
+function applyFraming(map, place, boundary = null) {
+  // Spec preference order:
+  //   1. Official boundary GeoJSON when we have it (matches the
+  //      searched city precisely; never includes neighbouring metro).
+  //   2. Geocoder bbox + small pad for islands / provinces or when
+  //      no boundary is available.
+  //   3. Center + zoom on the geocode point as the last resort.
+  if (boundary) {
+    const bounds = geoJsonBoundsLngLat(boundary);
+    if (bounds) {
+      map.fitBounds(bounds, {
+        padding: 24,
+        animate: false,
+        bearing: 0,
+        pitch: 0,
+      });
+      return;
+    }
+  }
+
   if (shouldUseFitBounds(place)) {
     const [w, s, e, n] = getAdjustedBounds(place);
     map.fitBounds([[w, s], [e, n]], {
       padding: 16,
       animate: false,
+      bearing: 0,
+      pitch: 0,
     });
-  } else {
-    map.jumpTo({
-      center: [place.lon, place.lat],
-      zoom: place.zoom ?? getSmartZoom(place),
+    return;
+  }
+
+  if (place.bbox && place.bbox.length === 4) {
+    const [w, s, e, n] = place.bbox;
+    const lonSpan = e - w;
+    const latSpan = n - s;
+    const p = FALLBACK_BBOX_PAD_PCT;
+    map.fitBounds(
+      [[w - lonSpan * p, s - latSpan * p], [e + lonSpan * p, n + latSpan * p]],
+      { padding: 16, animate: false, bearing: 0, pitch: 0 },
+    );
+    return;
+  }
+
+  map.jumpTo({
+    center: [place.lon, place.lat],
+    zoom: place.zoom ?? getSmartZoom(place),
+  });
+}
+
+// ── Boundary mask + outline layers ───────────────────────────────────
+//
+// Two GeoJSON sources here:
+//   `city-boundary`  → the raw polygon, used for the thin outline.
+//   `city-mask`      → a "donut" Feature whose outer ring is the
+//                      whole world and whose holes are the city's
+//                      exterior rings. Filled with the poster mat
+//                      colour, this paints every pixel outside the
+//                      city while leaving the interior untouched —
+//                      the Mapiful "outside the boundary must not be
+//                      visible" technique.
+
+const BOUNDARY_SOURCE_ID = "city-boundary";
+const BOUNDARY_LINE_LAYER_ID = "city-boundary-line";
+const BOUNDARY_MASK_SOURCE_ID = "city-mask";
+const BOUNDARY_MASK_LAYER_ID = "city-mask-fill";
+
+function applyBoundaryLayer(map, boundary) {
+  // Remove any previous boundary layers / sources first so a new
+  // search never leaves the old city's mask hanging in the canvas.
+  for (const layerId of [BOUNDARY_MASK_LAYER_ID, BOUNDARY_LINE_LAYER_ID]) {
+    if (map.getLayer(layerId)) map.removeLayer(layerId);
+  }
+  for (const sourceId of [BOUNDARY_MASK_SOURCE_ID, BOUNDARY_SOURCE_ID]) {
+    if (map.getSource(sourceId)) map.removeSource(sourceId);
+  }
+
+  if (!boundary) return;
+
+  map.addSource(BOUNDARY_SOURCE_ID, {
+    type: "geojson",
+    data: boundary,
+  });
+
+  // Donut mask — fill paints the world outside the polygon with the
+  // mat colour. Added BEFORE the outline so the line draws on top.
+  const mask = donutMaskFromBoundary(boundary);
+  if (mask) {
+    map.addSource(BOUNDARY_MASK_SOURCE_ID, {
+      type: "geojson",
+      data: mask,
+    });
+    map.addLayer({
+      id: BOUNDARY_MASK_LAYER_ID,
+      type: "fill",
+      source: BOUNDARY_MASK_SOURCE_ID,
+      paint: {
+        "fill-color": POSTER_MAT_COLOR,
+        "fill-opacity": 1,
+      },
     });
   }
+
+  // Thin outline reads as the wall-art frame on top of the mask.
+  map.addLayer({
+    id: BOUNDARY_LINE_LAYER_ID,
+    type: "line",
+    source: BOUNDARY_SOURCE_ID,
+    paint: {
+      "line-color": "#2A2A2A",
+      "line-width": 1.2,
+      "line-opacity": 0.35,
+    },
+  });
 }

@@ -1,0 +1,16 @@
+# Local development overrides — debug mode, volume mounts, verbose logging.
+# This file is automatically merged by docker-compose (no -f flag needed).
+services:
+  backend:
+    volumes:
+      - ./backend:/app
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - LOG_LEVEL=debug
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  frontend:
+    volumes:
+      - ./frontend:/app
+    environment:
+      - NODE_ENV=development

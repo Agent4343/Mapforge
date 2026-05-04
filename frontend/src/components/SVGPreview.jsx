@@ -1,4 +1,20 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import DOMPurify from "dompurify";
+
+// SVG sanitisation profile. The preview pane renders the backend-
+// generated SVG via dangerouslySetInnerHTML; place names and labels
+// inside that SVG originate from OSM/Nominatim/MapTiler, so if any
+// of those upstream feeds were ever compromised (or the backend
+// template mis-escapes a name) the raw markup could contain <script>
+// tags, event handlers, or xlink:href="javascript:…". DOMPurify in
+// SVG mode strips all of that before React inserts it into the DOM.
+const _SVG_SANITIZE_CONFIG = {
+  USE_PROFILES: { svg: true, svgFilters: true },
+  // Defence-in-depth: drop anything with an interactive side effect
+  // even though the SVG profile already forbids it.
+  FORBID_TAGS: ["script", "foreignObject"],
+  FORBID_ATTR: ["onload", "onerror", "onclick"],
+};
 
 // Color theme definitions matching backend COLOR_THEMES
 const THEME_COLOR_MAPS = {
@@ -244,7 +260,11 @@ export default function SVGPreview({ svgContent, loading, error, colorTheme }) {
             draggable={false}
           />
         ) : (
-          <div dangerouslySetInnerHTML={{ __html: displaySvg }} />
+          <div
+            dangerouslySetInnerHTML={{
+              __html: DOMPurify.sanitize(displaySvg, _SVG_SANITIZE_CONFIG),
+            }}
+          />
         )}
       </div>
       {/* Toolbar - positioned above the preview */}

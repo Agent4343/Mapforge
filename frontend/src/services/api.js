@@ -1,23 +1,42 @@
 /**
  * MapForge — API client with auth support
+ *
+ * Auth is carried by an `HttpOnly; Secure; SameSite=Strict` cookie
+ * (`mapforge_session`) set by the backend on login/register.
+ * Because the cookie is HttpOnly, JavaScript can't read it — the
+ * only "is the user logged in?" answer we have on boot is whether
+ * `GET /auth/me` returns a user. That replaces the pre-cookie
+ * localStorage check.
+ *
+ * We keep an in-memory `authToken` for the same browser session
+ * so any surviving bearer-header consumer (test harnesses, a
+ * non-browser client hitting the same code) works during the
+ * transition. The cookie wins server-side when both are present.
+ * Nothing in this file writes the token to localStorage.
  */
 
 const API_BASE = "/api/v1";
 const TIMEOUT_MS = 30000;
 
-let authToken = localStorage.getItem("mapforge_token") || null;
+let authToken = null;
 
 function setToken(token) {
-  authToken = token;
-  if (token) {
-    localStorage.setItem("mapforge_token", token);
-  } else {
-    localStorage.removeItem("mapforge_token");
-  }
+  authToken = token || null;
 }
 
 function getToken() {
   return authToken;
+}
+
+/**
+ * True if the server has marked this browser as having an active
+ * session. Reads the non-sensitive `mapforge_session_hint` cookie
+ * set by the backend alongside the HttpOnly JWT cookie. Use this
+ * for UI gating on page load (e.g. "skip the landing page") —
+ * NOT for authorisation, which is server-side.
+ */
+function hasSessionHint() {
+  return document.cookie.split("; ").some((c) => c.startsWith("mapforge_session_hint="));
 }
 
 function extractErrorMessage(detail, fallback) {
@@ -42,12 +61,23 @@ async function fetchWithTimeout(url, options = {}) {
   delete options.timeout;
 
   const headers = { ...options.headers };
+  // Bearer header kept as a transition-period fallback. Same-origin
+  // production traffic authenticates via cookie; this still catches
+  // any consumer that set a token in memory during this session.
   if (authToken) {
     headers["Authorization"] = `Bearer ${authToken}`;
   }
 
   try {
-    const resp = await fetch(url, { ...options, headers, signal: controller.signal });
+    const resp = await fetch(url, {
+      ...options,
+      headers,
+      signal: controller.signal,
+      // Send the `mapforge_session` cookie. Same-origin in production
+      // (Railway serves frontend + API under one domain); Vite's dev
+      // proxy for `/api/*` makes this same-origin in dev too.
+      credentials: "include",
+    });
     return resp;
   } catch (err) {
     if (err.name === "AbortError") {
@@ -91,7 +121,16 @@ async function login(email, password) {
   return data;
 }
 
-function logout() {
+async function logout() {
+  // Clear the HttpOnly session cookie server-side. The browser can't
+  // delete HttpOnly cookies itself, so a fire-and-forget POST is
+  // required — swallow any failure (network error shouldn't block
+  // local logout UI).
+  try {
+    await fetchWithTimeout(`${API_BASE}/auth/logout`, { method: "POST" });
+  } catch (_) {
+    /* best-effort */
+  }
   setToken(null);
 }
 
@@ -147,6 +186,22 @@ async function searchLocations(query, country = "ca") {
     `${API_BASE}/search?q=${encodeURIComponent(query)}&country=${encodeURIComponent(country)}&limit=10`
   );
   if (!resp.ok) throw new Error(`Search failed: ${resp.statusText}`);
+  return resp.json();
+}
+
+/**
+ * Fetch a city boundary GeoJSON Feature for an OSM relation.
+ *
+ * Returns the Feature on success, or `null` when the backend has no
+ * polygon for the feature (404). Network or server errors propagate
+ * so callers can decide whether to fall back to the geocoder bbox.
+ */
+async function getCityBoundary(osmId, osmType = "relation") {
+  const resp = await fetchWithTimeout(
+    `${API_BASE}/boundary?osm_id=${encodeURIComponent(osmId)}&osm_type=${encodeURIComponent(osmType)}`,
+  );
+  if (resp.status === 404) return null;
+  if (!resp.ok) throw new Error(`Boundary fetch failed: ${resp.statusText}`);
   return resp.json();
 }
 
@@ -653,8 +708,8 @@ async function downloadCreditFile(token, format = "png") {
 }
 
 export {
-  setToken, getToken, register, login, logout, getProfile, requestPasswordReset, resetPassword, subscribe,
-  searchLocations, generateSVG, generatePin, batchGenerate,
+  setToken, getToken, hasSessionHint, register, login, logout, getProfile, requestPasswordReset, resetPassword, subscribe,
+  searchLocations, getCityBoundary, generateSVG, generatePin, batchGenerate,
   downloadSVG, downloadDXF, downloadSTL, downloadThumbnail, downloadPrintPNG,
   downloadEtsyListing, downloadEtsyPackage, downloadPreview, downloadWallMockup, getPrintSizes,
   getLibrary, deleteLibraryFile, deleteAllLibraryFiles,

@@ -6,6 +6,12 @@ __pycache__/
 venv/
 .env
 
+# Test / coverage artefacts
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+
 # Node
 node_modules/
 dist/

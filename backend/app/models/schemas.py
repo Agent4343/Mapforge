@@ -3,7 +3,7 @@
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ProductType(str, Enum):
@@ -85,14 +85,13 @@ class AuthResponse(BaseModel):
 
 
 class UserProfile(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     email: str
     username: str
     tier: str
     generation_count_this_month: int
-
-    class Config:
-        from_attributes = True
 
 
 # --- Search ---
@@ -206,6 +205,19 @@ class GenerateRequest(BaseModel):
     include_bleed: bool = False
     include_crop_marks: bool = False
     print_dpi: int = Field(300, description="Print DPI (300 standard, 600 high)")
+    # Audit overlay (spec step 7): paints north arrow, boundary
+    # outline, geocoder bbox, centre cross, and principal-axis line
+    # over the rendered map. Used to verify orientation objectively
+    # without rendering the canvas in a browser.
+    debug_overlay: bool = False
+    # Canvas orientation override. "auto" (default) picks portrait or
+    # landscape based on the polygon's aspect ratio so a wide city like
+    # Toronto fills landscape naturally. "portrait" / "landscape" force
+    # the orientation regardless of polygon shape.
+    force_orientation: str = Field(
+        "auto",
+        description="auto | portrait | landscape",
+    )
 
     @field_validator("text")
     @classmethod
@@ -252,6 +264,13 @@ class GenerateResponse(BaseModel):
     thumbnail_available: bool = False
     print_png_available: bool = False
     etsy_listing_available: bool = False
+    # `svg_available` is False for wall-art posters (city / community
+    # products): the SVG generator's percentile-based framing differs
+    # from the static-poster path's boundary-clipped output, so we
+    # don't ship an SVG download whose framing doesn't match the
+    # printed poster. CNC products (outline / engraved style) keep
+    # the SVG download for laser / VCarve workflows.
+    svg_available: bool = False
     dxf_available: bool = False
     stl_available: bool = False
     file_id: Optional[str] = None
@@ -339,6 +358,8 @@ class MultiSizeExportResponse(BaseModel):
 # --- Template Library ---
 
 class LibraryFileResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     location_name: str
     display_text: str
@@ -355,9 +376,6 @@ class LibraryFileResponse(BaseModel):
     has_dxf: bool = False
     is_listed: bool = False
     created_at: str
-
-    class Config:
-        from_attributes = True
 
 
 class LibraryResponse(BaseModel):
@@ -385,6 +403,8 @@ class UpdateListingRequest(BaseModel):
 
 
 class ListingResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     file_id: str
     seller_username: str
@@ -402,9 +422,6 @@ class ListingResponse(BaseModel):
     board_height_mm: float
     province: Optional[str]
     created_at: str
-
-    class Config:
-        from_attributes = True
 
 
 class MarketplaceResponse(BaseModel):

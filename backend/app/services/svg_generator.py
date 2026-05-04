@@ -1136,67 +1136,91 @@ def _generate_print_svg(
     # City Art mode: custom typography — bold sans, wide tracking, DMS coords
     if is_city_art:
         ca_ff = FONT_FAMILIES["sans"]
-        # Title: ~9% of poster height, weight 800, tracking 0.35x
-        ca_title_size = round(board_h * 0.09, 2)
-        ca_title_tracking = round(ca_title_size * 0.35, 2)
+        # Title: ~8.4% of poster height at weight 700 with 0.30x tracking.
+        # Trimmed from 9%/800/0.35 — that combination read as a shouting
+        # billboard. Premium gallery posters use a slightly lighter
+        # weight and tighter tracking so the title sits *with* the map
+        # instead of competing for attention.
+        ca_title_size = round(board_h * 0.084, 2)
+        ca_title_tracking = round(ca_title_size * 0.30, 2)
         ca_title_text = location_name.upper()
         # Auto-shrink title to fit
-        char_w = 0.75
+        char_w = 0.72
         est_w = len(ca_title_text) * (ca_title_size * char_w + ca_title_tracking)
         avail_w = board_w * 0.85
         if est_w > avail_w and len(ca_title_text) > 0:
             shrink = avail_w / est_w
             ca_title_size = round(ca_title_size * shrink, 2)
-            ca_title_tracking = round(ca_title_size * 0.35, 2)
-        ca_sub_size = round(ca_title_size * 0.40, 2)
+            ca_title_tracking = round(ca_title_size * 0.30, 2)
+        ca_sub_size = round(ca_title_size * 0.42, 2)
         ca_coord_size = round(ca_title_size * 0.30, 2)
 
         # Text zone starts below the map
         text_zone_y = map_y + map_h
         text_zone_h = board_h - text_zone_y - board_h * mat_pct
-        text_start_y = round(text_zone_y + text_zone_h * 0.35, 2)
+        text_start_y = round(text_zone_y + text_zone_h * 0.38, 2)
+
+        # Hairline divider between map and text — narrow centered rule
+        # that anchors the typographic block to the map. Same treatment
+        # used by Mapiful and Grafomap on their city posters.
+        divider_y = round(text_zone_y + text_zone_h * 0.16, 2)
+        divider_w = round(board_w * 0.10, 2)
+        divider_x1 = round(text_center_x - divider_w / 2, 2)
+        divider_x2 = round(text_center_x + divider_w / 2, 2)
+        lines.append(
+            f'  <line x1="{divider_x1}" y1="{divider_y}"'
+            f' x2="{divider_x2}" y2="{divider_y}"'
+            f' stroke="{theme["text_primary"]}" stroke-width="0.3"'
+            f' opacity="0.55"/>'
+        )
+        lines.append("")
 
         lines.append('  <g id="poster_text">')
         lines.append(
             f'    <text x="{text_center_x}" y="{text_start_y}"'
             f' text-anchor="middle" font-family="{ca_ff}"'
-            f' font-size="{ca_title_size}" font-weight="800"'
+            f' font-size="{ca_title_size}" font-weight="700"'
             f' letter-spacing="{ca_title_tracking}"'
             f' fill="{theme["text_primary"]}">{_escape_xml(ca_title_text)}</text>'
         )
-        next_y = text_start_y + ca_title_size * 1.1
+        next_y = text_start_y + ca_title_size * 1.25
         if subtitle:
             lines.append(
                 f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
                 f' text-anchor="middle" font-family="{ca_ff}"'
-                f' font-size="{ca_sub_size}" font-weight="300"'
-                f' letter-spacing="{round(ca_sub_size * 0.25, 2)}"'
+                f' font-size="{ca_sub_size}" font-weight="400"'
+                f' letter-spacing="{round(ca_sub_size * 0.30, 2)}"'
                 f' fill="{theme["text_secondary"]}">{_escape_xml(subtitle)}</text>'
             )
-            next_y += ca_sub_size * 1.6
+            next_y += ca_sub_size * 2.0
         if show_coordinates and latlon:
             lat, lon = latlon
             lat_dms = _format_dms(lat, "N", "S")
             lon_dms = _format_dms(lon, "E", "W")
+            # ASCII pipe with double-spaces — the wider letter-spacing on
+            # the text element does the typographic refinement; using a
+            # Unicode box-drawings glyph here can break rasterisation
+            # when the cairosvg fallback font lacks the codepoint.
             coord_text = f"{lat_dms}  |  {lon_dms}"
             lines.append(
                 f'    <text x="{text_center_x}" y="{round(next_y, 2)}"'
                 f' text-anchor="middle" font-family="{ca_ff}"'
-                f' font-size="{ca_coord_size}"'
-                f' letter-spacing="{round(ca_coord_size * 0.15, 2)}"'
+                f' font-size="{ca_coord_size}" font-weight="400"'
+                f' letter-spacing="{round(ca_coord_size * 0.22, 2)}"'
                 f' fill="{theme["text_secondary"]}">{coord_text}</text>'
             )
         lines.append("  </g>")
         lines.append("")
 
-        # Thin poster border — #AAAAAA, 0.5px, 2.5% inset
+        # Thin poster border — softened to #C8C8C8 so the frame whispers
+        # rather than competes with the title. 0.4px hairline, 2.5% inset.
         border_inset = round(min(board_w, board_h) * 0.025, 2)
         lines.append('  <g id="poster_border">')
         lines.append(
             f'    <rect x="{border_inset}" y="{border_inset}"'
             f' width="{round(board_w - 2 * border_inset, 2)}"'
             f' height="{round(board_h - 2 * border_inset, 2)}"'
-            f' fill="none" stroke="#AAAAAA" stroke-width="0.5"/>'
+            f' fill="none" stroke="#C8C8C8" stroke-width="0.4"/>'
         )
         lines.append("  </g>")
         lines.append("")
@@ -1756,6 +1780,7 @@ def _generate_vintage_map_svg(
 
         # Road classes by filtering tier
         detail_classes = {"footway", "cycleway", "path", "steps", "bridleway"}
+        clutter_classes = {"service", "track", "living_street"}
 
         # Scale-based filtering using geographic extent:
         if map_scale == "province":
@@ -2395,13 +2420,16 @@ def _render_print_streets(lines: list[str], streets_data: dict, processed: dict,
 
     # Width multipliers for province vs city scale
     if is_province:
-        # Province: bold, clear highways visible at small scale
+        # Province: clear highway hierarchy at small scale, but trimmed
+        # so motorways don't render as black slabs that dominate the
+        # composition (premium poster look ~ Mapiful: backbone, not
+        # billboard). Casings shaved 20% across the major tiers.
         casing_widths = {
-            "motorway": 3.0, "motorway_link": 2.2,
-            "trunk": 2.6, "trunk_link": 1.8,
-            "primary": 2.0, "primary_link": 1.5,
-            "secondary": 1.5, "secondary_link": 1.1,
-            "tertiary": 1.0, "tertiary_link": 0.8,
+            "motorway": 2.4, "motorway_link": 1.8,
+            "trunk": 2.1, "trunk_link": 1.5,
+            "primary": 1.6, "primary_link": 1.2,
+            "secondary": 1.2, "secondary_link": 0.9,
+            "tertiary": 0.85, "tertiary_link": 0.65,
             "residential": 0.5, "unclassified": 0.5,
             "living_street": 0.5, "service": 0.4, "track": 0.35,
         }
@@ -2532,17 +2560,21 @@ def _render_city_art_streets(lines: list[str], streets_data: dict, processed: di
             "living_street": (0.12, "#C0C0C0"), "service": (0.08, "#C0C0C0"),
         }
     else:
-        # Tightened 4-tier hierarchy: near-black bold arterials on top,
-        # light-grey residential grid underneath. Matches the PNG poster
-        # path so SVG-rendered output has the same Etsy-ready contrast.
+        # Refined 4-tier hierarchy aimed at gallery-quality print: a
+        # premium charcoal (not pure-black) on top tier, with weights
+        # trimmed so motorways read as backbone — not as black slabs
+        # against the cream land. The narrower max-to-min ratio keeps
+        # the road network legible at province scale (Cape Breton,
+        # PEI) without one or two highways visually dominating the
+        # whole composition.
         city_art_styles = {
-            "motorway": (0.55, "#0F0F0F"), "motorway_link": (0.3, "#0F0F0F"),
-            "trunk": (0.5, "#0F0F0F"), "trunk_link": (0.28, "#0F0F0F"),
-            "primary": (0.42, "#0F0F0F"), "primary_link": (0.26, "#0F0F0F"),
-            "secondary": (0.3, "#2A2A2A"), "secondary_link": (0.22, "#2A2A2A"),
-            "tertiary": (0.22, "#5A5A5A"), "tertiary_link": (0.18, "#5A5A5A"),
-            "residential": (0.14, "#A5A5A5"), "unclassified": (0.14, "#A5A5A5"),
-            "living_street": (0.14, "#A5A5A5"), "service": (0.1, "#C0C0C0"),
+            "motorway": (0.42, "#2C2C2C"), "motorway_link": (0.26, "#2C2C2C"),
+            "trunk": (0.38, "#2C2C2C"), "trunk_link": (0.24, "#2C2C2C"),
+            "primary": (0.32, "#3A3A3A"), "primary_link": (0.22, "#3A3A3A"),
+            "secondary": (0.24, "#4A4A4A"), "secondary_link": (0.20, "#4A4A4A"),
+            "tertiary": (0.20, "#6E6E6E"), "tertiary_link": (0.17, "#6E6E6E"),
+            "residential": (0.13, "#AEAEAE"), "unclassified": (0.13, "#AEAEAE"),
+            "living_street": (0.13, "#AEAEAE"), "service": (0.10, "#C6C6C6"),
         }
 
     lines.append('    <g id="streets">')
