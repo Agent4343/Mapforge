@@ -185,7 +185,7 @@ async def get_credit_status(token: str):
 async def download_files(token: str, format: str = Query("png")):
     """Download generated files using the design credit token."""
     from fastapi.responses import StreamingResponse
-    from app.services.file_storage import get_file
+    from app.services.file_storage import retrieve_file
 
     async with async_session() as db:
         result = await db.execute(
@@ -235,7 +235,7 @@ async def download_files(token: str, format: str = Query("png")):
     else:
         raise HTTPException(status_code=400, detail=f"Format '{format}' not available")
 
-    file_data = await get_file(key)
+    file_data = await retrieve_file(key)
     if not file_data:
         raise HTTPException(status_code=404, detail="File data not found in storage")
 
@@ -326,7 +326,12 @@ async def create_credit_manually(
 # ---------------------------------------------------------------------------
 
 async def _fulfill_credit(credit_id: str):
-    """Generate map files for a redeemed design credit."""
+    """Generate map files for a redeemed design credit.
+
+    Runs as a background coroutine.  Uses ``persist_anonymous=True`` so
+    that a ``GeneratedFile`` DB record is always written even though no
+    authenticated user is involved in the credit flow.
+    """
     from app.routers.generate import _do_generate
     from app.models.schemas import GenerateRequest
 
@@ -343,7 +348,7 @@ async def _fulfill_credit(credit_id: str):
         req = GenerateRequest(**design)
 
         async with async_session() as db:
-            gen_response = await _do_generate(req, user=None, db=db)
+            gen_response = await _do_generate(req, user=None, db=db, persist_anonymous=True)
 
         async with async_session() as db:
             result = await db.execute(

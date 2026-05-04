@@ -16,6 +16,7 @@ from app.config import settings
 from app.database import init_db
 from app.logging_config import log
 from app.routers import admin, auth, etsy, generate, library, marketplace, orders, search, webhooks
+from app.routers import drafts, fulfillment
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
@@ -42,6 +43,11 @@ async def lifespan(app: FastAPI):
         from app.services.popular_locations import prefetch_popular_locations
         asyncio.create_task(prefetch_popular_locations(include_us=True))
         log.info("Popular locations pre-fetch started in background")
+
+    # Start background fulfillment polling loop for EtsyPurchase orders
+    import asyncio as _asyncio
+    _asyncio.create_task(fulfillment.start_fulfillment_loop())
+    log.info("Fulfillment polling loop started")
 
     yield
     log.info("MapForge CNC shutting down...")
@@ -103,6 +109,8 @@ app.include_router(marketplace.router)
 app.include_router(etsy.router)
 app.include_router(orders.router)
 app.include_router(webhooks.router)
+app.include_router(drafts.router)
+app.include_router(fulfillment.router)
 
 
 @app.get("/api/v1/config")

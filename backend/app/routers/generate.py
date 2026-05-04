@@ -85,8 +85,21 @@ def _check_tier_limits(user: User | None, req: GenerateRequest):
     return
 
 
-async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession) -> GenerateResponse:
-    """Core generation logic shared by single and batch endpoints."""
+async def _do_generate(
+    req: GenerateRequest,
+    user: User | None,
+    db: AsyncSession,
+    persist_anonymous: bool = False,
+) -> GenerateResponse:
+    """Core generation logic shared by single and batch endpoints.
+
+    When *user* is provided the generated file is stored and attributed to
+    that user.  When *user* is ``None`` **and** *persist_anonymous* is
+    ``True`` the file record is still written to the database (with
+    ``owner_id=None``) so that paid anonymous purchases can reference it.
+    If both are falsy a preview is generated without any DB write (visitor
+    preview mode).
+    """
     warnings: list[str] = []
 
     # Resolve board dimensions
@@ -287,8 +300,10 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
         include_crop_marks=req.include_crop_marks,
     )
 
-    # Store files + generate derivatives (only for authenticated users)
-    # Visitors just get the SVG preview — no file storage needed
+    # Store files + generate derivatives
+    # - Authenticated users: always store
+    # - Anonymous paid orders (persist_anonymous=True): always store
+    # - Visitor previews: skip storage
     board_w, board_h = processed["board_mm"]
     svg_key = None
     dxf_key = None
@@ -297,7 +312,7 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     print_png_key = None
     etsy_key = None
 
-    if user:
+    if user or persist_anonymous:
         svg_key = f"svg/{req.osm_type}_{req.osm_id}_{req.style.value}_{int(board_w)}x{int(board_h)}.svg"
         try:
             await store_file(svg_key, result["svg"].encode("utf-8"))
@@ -377,13 +392,19 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
     # Parse province from location name for filtering
     province = _extract_province(location_name)
 
-    # Save to database (only for authenticated users — visitors just get a preview)
+    # Save to database
+    # - When user is authenticated: always persist and attribute to the user.
+    # - When user is None but persist_anonymous=True (paid anonymous order):
+    #   persist with owner_id=None so the purchase can reference the file.
+    # - Otherwise (visitor preview): skip DB write.
     center = processed.get("center_latlon", (None, None))
     file_id = None
+    should_persist = user is not None or persist_anonymous
 
-    if user:
+    if should_persist:
+        owner_id = user.id if user else None
         file_record = GeneratedFile(
-            owner_id=user.id,
+            owner_id=owner_id,
             osm_id=req.osm_id,
             osm_type=req.osm_type,
             product_type=req.product_type.value,
@@ -407,13 +428,12 @@ async def _do_generate(req: GenerateRequest, user: User | None, db: AsyncSession
             lon=center[1],
         )
         db.add(file_record)
-        # For Maker tier, only count non-province generations against the monthly limit
-        # (provinces are unlimited for Maker). Free and Pro count all generations.
-        is_province_gen = req.product_type.value == "province"
-        if user.tier == "maker" and is_province_gen:
-            pass  # Provinces don't count against Maker's 20/month limit
-        else:
-            user.generation_count_this_month += 1
+        if user:
+            # For Maker tier, only count non-province generations against the monthly limit
+            # (provinces are unlimited for Maker). Free and Pro count all generations.
+            is_province_gen = req.product_type.value == "province"
+            if not (user.tier == "maker" and is_province_gen):
+                user.generation_count_this_month += 1
         try:
             await db.commit()
             await db.refresh(file_record)
