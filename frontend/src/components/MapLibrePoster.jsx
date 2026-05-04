@@ -7,7 +7,15 @@ import {
   fetchCityBoundary,
   geoJsonBoundsLngLat,
   donutMaskFromBoundary,
+  pickCanvasOrientation,
 } from "../services/cityBoundary.js";
+
+// Reference canvas dimensions (matches POSTER_SIZES["18x24"] @ 300 DPI
+// in static_map_poster.py). Only the RATIO matters for the chooser —
+// these values keep the orientation decision identical across screen
+// preview and printed PNG.
+const POSTER_W_REF = 5400;
+const POSTER_H_REF = 7200;
 
 // Poster mat colour (matches static_map_poster.POSTER_THEMES.city_art.bg).
 // The donut mask paints every pixel outside the city with this colour
@@ -104,6 +112,12 @@ export default function MapLibrePoster({
   const boundaryRef = useRef(null);  // last-loaded GeoJSON Feature
   const [mapReady, setMapReady] = useState(false);
   const [mapError, setMapError] = useState(null);
+  // Landscape vs portrait is decided after the boundary GeoJSON
+  // arrives and we know the polygon's true aspect ratio. Mirrors
+  // the backend's pick_canvas_orientation so the live preview's
+  // orientation matches the exported PNG when wide cities (Toronto,
+  // Calgary) flip to landscape.
+  const [isLandscape, setIsLandscape] = useState(false);
 
   useEffect(() => {
     if (!mapContainerRef.current || !maptilerKey || !place) return;
@@ -150,6 +164,33 @@ export default function MapLibrePoster({
       const boundary = await boundaryPromise;
       if (cancelled) return;
       boundaryRef.current = boundary;
+
+      // Decide orientation BEFORE fitBounds so the canvas is the
+      // correct aspect ratio when MapLibre runs its first fit. This
+      // mirrors the backend's pick_canvas_orientation; islands and
+      // provinces (use_fit_bounds=true) keep portrait by default
+      // because the backend's tier-aware padding already handles
+      // their framing in portrait. Inland cities are the case that
+      // benefits — Toronto's polygon flips to landscape and the
+      // live preview matches the printed poster.
+      let nextLandscape = false;
+      if (boundary && !shouldUseFitBounds(place)) {
+        const bounds = geoJsonBoundsLngLat(boundary);
+        if (bounds) {
+          const [[w, s], [e, n]] = bounds;
+          const decision = pickCanvasOrientation(
+            POSTER_W_REF, POSTER_H_REF,
+            Math.abs(e - w), Math.abs(n - s),
+            (s + n) * 0.5,
+          );
+          nextLandscape = decision.landscape;
+        }
+      }
+      setIsLandscape(nextLandscape);
+      // The map container's aspect ratio update triggers a separate
+      // useEffect (below) that calls map.resize() + re-fits bounds.
+      // We still apply framing here so the very first paint isn't a
+      // blank canvas while React schedules the aspect-ratio swap.
       applyFraming(map, place, boundary);
       applyBoundaryLayer(map, boundary);
 
@@ -204,6 +245,24 @@ export default function MapLibrePoster({
     if (!map || !mapReady || !place) return;
     applyFraming(map, place, boundaryRef.current);
   }, [place, mapReady]);
+
+  // When isLandscape flips after the boundary loads, the container's
+  // aspectRatio CSS updates and the canvas physical size changes
+  // accordingly. MapLibre needs an explicit resize() to learn the
+  // new pixel size, then re-fit bounds so the polygon centres in
+  // the new aspect. Without this the polygon stays scaled to the
+  // OLD aspect, leaving asymmetric whitespace on one axis.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    // Defer to next frame so the DOM has applied the aspect change
+    // before MapLibre measures the container.
+    const id = requestAnimationFrame(() => {
+      map.resize();
+      if (place) applyFraming(map, place, boundaryRef.current);
+    });
+    return () => cancelAnimationFrame(id);
+  }, [isLandscape, mapReady, place]);
 
   const handleExport = useCallback(() => {
     if (!mapRef.current || !posterRef.current) return;
@@ -304,7 +363,7 @@ export default function MapLibrePoster({
         style={{
           width: "100%",
           position: "relative",
-          aspectRatio: "3 / 4",
+          aspectRatio: isLandscape ? "4 / 3" : "3 / 4",
           background: PALETTE.land,
         }}
       >
